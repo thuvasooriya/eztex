@@ -1,0 +1,16 @@
+.{
+    .name = .icu,
+    .version = "77.1.0",
+    .fingerprint = 0xd6f8946a64f963fe,
+    .minimum_zig_version = "0.15.2",
+    .dependencies = .{
+        .icu = .{
+            .url = "https://github.com/unicode-org/icu/archive/refs/tags/release-77-1.tar.gz",
+            .hash = "N-V-__8AAGOrnBGugOIb3017joB922hCEBoh_PhGjSDua6HD",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+    },
+}

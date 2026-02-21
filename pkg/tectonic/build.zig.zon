@@ -1,0 +1,34 @@
+.{
+    .name = .tectonic,
+    .version = "0.0.0",
+    .fingerprint = 0x570cf9c9d153493b,
+    .minimum_zig_version = "0.15.2",
+    .dependencies = .{
+        .harfbuzz = .{
+            .path = "../harfbuzz",
+        },
+        .freetype = .{
+            .url = "git+https://github.com/allyourcodebase/freetype#1082522e99fcc2554ca849cf5042878a371b5bd2",
+            .hash = "freetype-2.14.1-C3-WdWqKAADJcxSH2bo9uMDiBAoDcIhOSl1-DADGIIM2",
+        },
+        .zlib = .{
+            .url = "git+https://github.com/allyourcodebase/zlib#c5115f4b69ef660f72a835c6638f80508ef284c7",
+            .hash = "zlib-1.3.1-1-ZZQ7ldENAAA7qJjUXP6E6xnRuV-jDL9dyoJFc_eb3zQ6",
+        },
+        .libpng = .{
+            .url = "git+https://github.com/allyourcodebase/libpng#4783adcb3b8ed0e3d5032a3434059be594755f57",
+            .hash = "libpng-1.6.53-oiaFGtwqAAB2XTxMgi4dG96BUO-0_BtUFtxKraIwq6-w",
+        },
+        .icu = .{
+            .path = "../icu",
+        },
+        .graphite2 = .{
+            .path = "../grphite",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

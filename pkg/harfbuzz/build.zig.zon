@@ -1,0 +1,22 @@
+.{
+    .name = .harfbuzz,
+    .version = "0.0.0",
+    .fingerprint = 0xbd60917c55a3ed44,
+    .minimum_zig_version = "0.15.2",
+    .dependencies = .{
+        .harfbuzz = .{
+            .url = "https://github.com/harfbuzz/harfbuzz/archive/refs/tags/12.2.0.tar.gz",
+            .hash = "N-V-__8AAMMxjgU2rdxXzOEfJ2EOYeDuqCKlh1zh6VN6XtD7",
+        },
+        .freetype = .{
+            .path = "../freetype",
+        },
+        .graphite2 = .{
+            .path = "../grphite",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+    },
+}

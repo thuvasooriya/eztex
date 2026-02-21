@@ -1,0 +1,16 @@
+.{
+    .name = .grphite,
+    .version = "0.0.0",
+    .fingerprint = 0xa35ae776f71af200, // Changing this has security and trust implications.
+    .minimum_zig_version = "0.15.2",
+    .dependencies = .{
+        .graphite = .{
+            .url = "git+https://github.com/silnrsi/graphite#c9bdca92942086eb51c07b02e5ddbcc007ac0569",
+            .hash = "N-V-__8AAC0XdwMhssFbnDunoDa0xB0dN9_bE9nF3o3-f8kx",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+    },
+}

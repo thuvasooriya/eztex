@@ -1,0 +1,23 @@
+# Cloudflare Pages headers
+# https://developers.cloudflare.com/pages/configuration/headers/
+
+# Vite-hashed static assets -- immutable
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# WASM binary -- revalidate every request (content changes with builds)
+/eztex.wasm
+  Cache-Control: public, max-age=0, must-revalidate
+  Content-Type: application/wasm
+
+# SPA shell -- always revalidate
+/index.html
+  Cache-Control: public, max-age=0, must-revalidate
+
+# Icons/images -- cache 1 day
+/*.ico
+  Cache-Control: public, max-age=86400
+/*.svg
+  Cache-Control: public, max-age=86400
+/*.png
+  Cache-Control: public, max-age=86400

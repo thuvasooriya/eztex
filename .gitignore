@@ -1,0 +1,10 @@
+**/zig-out/
+**/.zig-cache/
+ref/
+tmp/
+**/**.pdf
+worker/
+**/node_modules/
+**/.wrangler
+tests/
+**/eztex.wasm

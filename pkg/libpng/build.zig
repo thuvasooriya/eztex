@@ -1,0 +1,89 @@
+const std = @import("std");
+
+// local libpng wrapper -- based on allyourcodebase/libpng build.zig
+// adds wasm SJLJ exception handling flags so libpng's setjmp/longjmp
+// compiles to proper wasm EH intrinsics instead of resolving to trap stubs.
+
+pub fn build(b: *std.Build) !void {
+    const target = b.standardTargetOptions(.{});
+    const optimize = b.standardOptimizeOption(.{});
+
+    const is_wasm = target.result.cpu.arch == .wasm32;
+
+    const upstream = b.dependency("libpng", .{});
+
+    const mod = b.createModule(.{
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+
+    const lib = b.addLibrary(.{
+        .name = "png",
+        .linkage = .static,
+        .root_module = mod,
+    });
+
+    const zlib_dep = b.dependency("zlib", .{ .target = target, .optimize = optimize });
+    mod.linkLibrary(zlib_dep.artifact("z"));
+    mod.addIncludePath(upstream.path(""));
+    mod.addIncludePath(b.path(""));
+
+    var flags: std.ArrayList([]const u8) = .empty;
+    defer flags.deinit(b.allocator);
+
+    try flags.appendSlice(b.allocator, &.{
+        "-DPNG_ARM_NEON_OPT=0",
+        "-DPNG_POWERPC_VSX_OPT=0",
+        "-DPNG_INTEL_SSE_OPT=0",
+        "-DPNG_MIPS_MSA_OPT=0",
+    });
+
+    // wasm: enable exception handling for proper setjmp/longjmp support.
+    // without these flags, libpng's png_setjmp/png_longjmp would resolve to
+    // plain C symbols (trap stubs). with them, the compiler transforms
+    // setjmp/longjmp into __wasm_setjmp/__wasm_longjmp intrinsics that land
+    // in our wasm_sjlj_rt runtime.
+    if (is_wasm) {
+        try flags.appendSlice(b.allocator, &.{
+            "-mexception-handling",
+            "-mllvm",
+            "-wasm-enable-sjlj",
+            "-mllvm",
+            "--wasm-use-legacy-eh=false",
+        });
+    }
+
+    mod.addCSourceFiles(.{
+        .root = upstream.path(""),
+        .files = srcs,
+        .flags = flags.items,
+    });
+
+    lib.installHeader(b.path("pnglibconf.h"), "pnglibconf.h");
+    lib.installHeadersDirectory(
+        upstream.path("."),
+        "",
+        .{ .include_extensions = &.{".h"} },
+    );
+
+    b.installArtifact(lib);
+}
+
+const srcs: []const []const u8 = &.{
+    "png.c",
+    "pngerror.c",
+    "pngget.c",
+    "pngmem.c",
+    "pngpread.c",
+    "pngread.c",
+    "pngrio.c",
+    "pngrtran.c",
+    "pngrutil.c",
+    "pngset.c",
+    "pngtrans.c",
+    "pngwio.c",
+    "pngwrite.c",
+    "pngwtran.c",
+    "pngwutil.c",
+};

@@ -1,0 +1,37 @@
+.{
+    .name = .eztex,
+    .version = "0.0.0",
+    .fingerprint = 0x86dee9b8df515cc0, // Changing this has security and trust implications.
+    .minimum_zig_version = "0.15.2",
+    .dependencies = .{
+        .tectonic = .{
+            .path = "pkg/tectonic",
+        },
+        .harfbuzz = .{
+            .path = "pkg/harfbuzz",
+        },
+        .freetype = .{
+            .path = "pkg/freetype",
+        },
+        .zlib = .{
+            .url = "git+https://github.com/allyourcodebase/zlib#c5115f4b69ef660f72a835c6638f80508ef284c7",
+            .hash = "zlib-1.3.1-1-ZZQ7ldENAAA7qJjUXP6E6xnRuV-jDL9dyoJFc_eb3zQ6",
+        },
+        .libpng = .{
+            .path = "pkg/libpng",
+        },
+        .icu = .{
+            .path = "pkg/icu",
+        },
+        .graphite2 = .{
+            .path = "pkg/grphite",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "stubs",
+        "pkg",
+    },
+}
