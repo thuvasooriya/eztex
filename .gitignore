@@ -3,7 +3,7 @@
 ref/
 tmp/
 **/**.pdf
-worker/
+/worker/
 **/node_modules/
 **/.wrangler
 tests/
