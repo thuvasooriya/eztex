@@ -28,6 +28,10 @@ const [last_elapsed, set_last_elapsed] = createSignal<string | null>(null);
 let worker: Worker | null = null;
 let prev_pdf_url: string | null = null;
 
+// imperative compile-done callback -- used by watch_controller
+let _on_compile_done_cb: (() => void) | null = null;
+function on_compile_done(cb: () => void) { _on_compile_done_cb = cb; }
+
 // detect ?debug=1 query param for debug mode passthrough to worker
 const _debug = typeof window !== "undefined" && new URLSearchParams(window.location.search).has("debug");
 
@@ -85,6 +89,7 @@ function handle_message(e: MessageEvent) {
           set_status_text("Success");
         }
       });
+      _on_compile_done_cb?.();
       break;
     }
   }
@@ -129,6 +134,7 @@ export const worker_client = {
   compile,
   clear_cache,
   clear_logs,
+  on_compile_done,
   // signals (read-only)
   status,
   status_text,

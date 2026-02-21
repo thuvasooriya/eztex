@@ -34,6 +34,11 @@ This is a test document compiled with \\textbf{eztex} --- XeLaTeX in WebAssembly
   const [current_file, set_current_file] = createSignal("main.tex");
   const [main_file, set_main_file] = createSignal("main.tex");
 
+  // imperative change callback -- used by watch_controller to avoid SolidJS reactive churn
+  let _on_change_cb: (() => void) | null = null;
+  function on_change(cb: () => void) { _on_change_cb = cb; }
+  function _notify() { _on_change_cb?.(); }
+
   function file_names(): string[] {
     return Object.keys(files).sort((a, b) => {
       // main file first, then alphabetical
@@ -46,21 +51,23 @@ This is a test document compiled with \\textbf{eztex} --- XeLaTeX in WebAssembly
   function add_file(name: string, content: string = "") {
     set_files(produce((f) => { f[name] = content; }));
     set_current_file(name);
+    _notify();
   }
 
   function remove_file(name: string) {
-    if (name === main_file()) return; // can't remove main
+    if (name === main_file()) return;
     const names = Object.keys(files);
     if (names.length <= 1) return;
     set_files(produce((f) => { delete f[name]; }));
     if (current_file() === name) {
       set_current_file(main_file());
     }
+    _notify();
   }
 
   function rename_file(old_name: string, new_name: string) {
     if (old_name === new_name) return;
-    if (files[new_name] !== undefined) return; // name taken
+    if (files[new_name] !== undefined) return;
     const content = files[old_name];
     set_files(produce((f) => {
       f[new_name] = content;
@@ -68,10 +75,12 @@ This is a test document compiled with \\textbf{eztex} --- XeLaTeX in WebAssembly
     }));
     if (current_file() === old_name) set_current_file(new_name);
     if (main_file() === old_name) set_main_file(new_name);
+    _notify();
   }
 
   function update_content(name: string, content: string) {
     set_files(produce((f) => { f[name] = content; }));
+    _notify();
   }
 
   function get_content(name: string): string {
@@ -87,17 +96,16 @@ This is a test document compiled with \\textbf{eztex} --- XeLaTeX in WebAssembly
 
   function load_files(new_files: Record<string, string>) {
     set_files(new_files);
-    // auto-detect main
     const names = Object.keys(new_files);
     const main_candidates = ["main.tex", "paper.tex", "thesis.tex", "document.tex"];
     let detected = names.find((n) => main_candidates.includes(n));
     if (!detected) {
-      // find first file with \documentclass
       detected = names.find((n) => new_files[n].includes("\\documentclass"));
     }
     if (!detected) detected = names[0];
     set_main_file(detected);
     set_current_file(detected);
+    _notify();
   }
 
   return {
@@ -114,6 +122,7 @@ This is a test document compiled with \\textbf{eztex} --- XeLaTeX in WebAssembly
     get_content,
     clear_all,
     load_files,
+    on_change,
   };
 }
 

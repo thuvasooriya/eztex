@@ -1,5 +1,6 @@
-import { type Component, Show, createSignal, createEffect, onCleanup } from "solid-js";
+import { type Component, Show, onCleanup } from "solid-js";
 import { worker_client } from "../lib/worker_client";
+import { create_watch_controller } from "../lib/watch_controller";
 import { read_zip, write_zip } from "../lib/zip_utils";
 import type { ProjectStore } from "../lib/project_store";
 
@@ -22,27 +23,27 @@ const Logo: Component = () => (
 );
 
 const Toolbar: Component<Props> = (props) => {
-  const [watch_enabled, set_watch_enabled] = createSignal(false);
-  let compile_timeout: ReturnType<typeof setTimeout>;
-  let skip_first = true;
   let zip_input_ref: HTMLInputElement | undefined;
   let folder_input_ref: HTMLInputElement | undefined;
+
+  // watch controller -- imperative state machine, no SolidJS reactive scheduling
+  const watch = create_watch_controller({
+    get_files: () => props.store.files,
+    get_main: () => props.store.main_file(),
+    is_ready: () => worker_client.ready() && !worker_client.compiling(),
+    compile: (req) => worker_client.compile(req),
+  });
+
+  // wire imperative callbacks (not reactive effects)
+  props.store.on_change(() => watch.notify_change());
+  worker_client.on_compile_done(() => watch.notify_compile_done());
+
+  onCleanup(() => watch.cleanup());
 
   function handle_compile() {
     const files = { ...props.store.files };
     worker_client.compile({ files, main: props.store.main_file() });
   }
-
-  // watch mode: auto-compile on content changes
-  createEffect(() => {
-    void props.store.get_content(props.store.current_file());
-    if (skip_first) { skip_first = false; return; }
-    if (!watch_enabled() || !worker_client.ready() || worker_client.compiling()) return;
-    clearTimeout(compile_timeout);
-    compile_timeout = setTimeout(handle_compile, 1500);
-  });
-
-  onCleanup(() => clearTimeout(compile_timeout));
 
   // file actions (moved from FilePanel)
   function handle_add() {
@@ -159,14 +160,17 @@ const Toolbar: Component<Props> = (props) => {
           </button>
         </Show>
         <button
-          class={`toolbar-toggle watch ${watch_enabled() ? "active" : ""}`}
-          onClick={() => set_watch_enabled(!watch_enabled())}
-          title={watch_enabled() ? "Disable auto-compile" : "Enable auto-compile"}
+          class={`toolbar-toggle watch ${watch.enabled() ? "active" : ""}`}
+          onClick={() => watch.toggle()}
+          title={watch.enabled() ? "Disable auto-compile" : "Enable auto-compile"}
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
             <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
             <circle cx="12" cy="12" r="3" />
           </svg>
+          <Show when={watch.dirty()}>
+            <span class="watch-dirty-dot" />
+          </Show>
         </button>
         <button
           class="toolbar-btn primary"

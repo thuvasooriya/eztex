@@ -199,6 +199,21 @@ body {
   animation: icon-glow 2.5s ease-in-out infinite;
 }
 
+.toolbar-toggle.watch {
+  position: relative;
+}
+
+.watch-dirty-dot {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--yellow);
+  pointer-events: none;
+}
+
 @keyframes icon-glow {
   0%, 100% { filter: drop-shadow(0 0 2px rgba(158, 206, 106, 0.4)); }
   50% { filter: drop-shadow(0 0 6px rgba(158, 206, 106, 0.8)); }
