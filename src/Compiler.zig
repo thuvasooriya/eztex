@@ -135,12 +135,38 @@ fn diag_write_stderr(text: []const u8) void {
     iface.flush() catch {};
 }
 
+fn diag_write_with_severity(text: []const u8, comptime severity: []const u8) void {
+    var buf: [4096]u8 = undefined;
+    var w = Log.stderr_writer(&buf);
+    const iface = &w.interface;
+    if (!is_wasm) {
+        // detect TTY for ANSI color on native
+        const tty_conf = std.io.tty.detectConfig(fs.File.stderr());
+        const use_color = tty_conf != .no_color;
+        if (use_color) {
+            const color = if (comptime std.mem.eql(u8, severity, "error")) "\x1b[1;31m" else "\x1b[1;33m";
+            iface.writeAll(color) catch {};
+            iface.writeAll(severity) catch {};
+            iface.writeAll(":\x1b[0m ") catch {};
+        } else {
+            iface.writeAll(severity) catch {};
+            iface.writeAll(": ") catch {};
+        }
+    } else {
+        iface.writeAll(severity) catch {};
+        iface.writeAll(": ") catch {};
+    }
+    iface.writeAll(text) catch {};
+    iface.writeByte('\n') catch {};
+    iface.flush() catch {};
+}
+
 fn on_diag_warning(text: []const u8) void {
-    _ = text;
+    diag_write_with_severity(text, "warning");
 }
 
 fn on_diag_error(text: []const u8) void {
-    _ = text;
+    diag_write_with_severity(text, "error");
 }
 
 fn on_diag_info(text: []const u8) void {
@@ -706,6 +732,12 @@ pub fn compile(opts: *const CompileConfig, loaded_config: ?Config) u8 {
 
         if (!xetex_succeeded(last_xetex_result)) {
             Log.log("eztex", .info, "xetex failed on pass {d} (exit code {d})", .{ pass + 1, last_xetex_result });
+            // retrieve fatal error message from C engine (longjmp-based errors)
+            const err_msg = _ttbc_get_error_message();
+            const msg_slice = std.mem.span(err_msg);
+            if (msg_slice.len > 0) {
+                diag_write_with_severity(msg_slice, "error");
+            }
             break;
         }
 
