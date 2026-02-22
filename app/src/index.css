@@ -145,6 +145,8 @@ body {
   color: var(--bg-dark);
   border-color: var(--accent);
   font-weight: 600;
+  min-width: 120px;
+  justify-content: center;
 }
 
 .toolbar-btn.primary:hover {
@@ -332,6 +334,7 @@ body {
   height: 100%;
   background: var(--bg-dark);
   overflow: hidden;
+  user-select: none;
 }
 
 .file-list {
@@ -454,6 +457,9 @@ body {
 
 .rename-input {
   flex: 1;
+  min-width: 0;
+  box-sizing: border-box;
+  width: 100%;
   background: var(--bg-dark);
   border: 1px solid var(--accent);
   border-radius: var(--radius-sm);
@@ -509,6 +515,37 @@ body {
 
 .editor-cm-container .cm-editor {
   height: 100%;
+}
+
+.binary-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: 8px;
+  color: var(--fg-dark);
+  user-select: none;
+}
+
+.binary-placeholder-icon {
+  opacity: 0.4;
+}
+
+.binary-placeholder-name {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 14px;
+  color: var(--fg-muted);
+}
+
+.binary-placeholder-label {
+  font-size: 12px;
+  opacity: 0.5;
+}
+
+.file-icon.binary {
+  color: var(--fg-dark);
+  opacity: 0.7;
 }
 
 /* === preview === */
@@ -568,33 +605,76 @@ body {
   gap: 2px;
 }
 
-/* === preview floating download === */
-.preview-download-btn {
+.upload-menu-wrapper {
+  position: relative;
+}
+
+.upload-dropdown {
   position: absolute;
-  top: 8px;
-  right: 8px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border: none;
-  border-radius: var(--radius-md);
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 200;
   background: var(--bg-lighter);
-  color: var(--fg-muted);
-  cursor: pointer;
-  transition: all var(--transition);
-  opacity: 0;
-  z-index: 2;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px;
+  min-width: 150px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
 }
 
-.preview-content:hover .preview-download-btn {
-  opacity: 1;
-}
-
-.preview-download-btn:hover {
-  background: var(--bg-highlight);
+.upload-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 4px;
+  background: none;
   color: var(--fg);
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.upload-dropdown-item:hover {
+  background: rgba(122, 162, 247, 0.15);
+}
+
+.upload-dropdown-item.danger-item {
+  color: var(--red);
+}
+
+.upload-dropdown-item.danger-item:hover {
+  background: rgba(247, 118, 142, 0.12);
+}
+
+.logo-menu-wrapper {
+  position: relative;
+}
+
+.logo-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+}
+
+.logo-dropdown {
+  left: 4px;
+}
+
+/* === image preview === */
+.image-preview {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  display: block;
+  margin: auto;
+  padding: 16px;
+  box-sizing: border-box;
 }
 
 /* === cache pill (bottom-left) === */
@@ -879,4 +959,78 @@ body {
     margin: 3px;
     border-radius: var(--radius-md);
   }
+}
+
+/* === context menu === */
+.ctx-menu {
+  z-index: 300;
+  background: var(--bg-lighter);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px;
+  min-width: 140px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+.ctx-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.ctx-menu-item:hover {
+  background: rgba(122, 162, 247, 0.15);
+}
+
+.ctx-menu-item.danger:hover {
+  background: rgba(247, 118, 142, 0.15);
+  color: var(--red);
+}
+
+/* === OS drag-drop overlay === */
+.file-panel.drag-over {
+  outline: 2px dashed var(--accent);
+  outline-offset: -2px;
+  background: rgba(122, 162, 247, 0.05);
+}
+
+/* === tree view: drag-drop + folders === */
+.file-item.dragging {
+  opacity: 0.4;
+}
+
+.folder-item.drop-target {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+  background: rgba(122, 162, 247, 0.1);
+}
+
+.file-list.drop-target-root {
+  background: rgba(122, 162, 247, 0.03);
+}
+
+.folder-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  color: var(--fg-dark);
+  flex-shrink: 0;
+  transition: color 150ms;
+}
+
+.folder-item:hover .folder-chevron {
+  color: var(--fg-muted);
 }

@@ -25,6 +25,7 @@ import {
   send_ready,
   send_cache_status,
   format_size,
+  type ProjectFiles,
 } from "./protocol.ts";
 import * as opfs from "./opfs.ts";
 import * as wasm_api from "./wasm_api.ts";
@@ -39,7 +40,7 @@ let cached_index_text: Uint8Array | null = null;
 
 // -- WASI filesystem builder --
 
-function build_wasi_fs(user_files: Record<string, string> | null): {
+function build_wasi_fs(user_files: ProjectFiles | null): {
   root_map: Map<string, WasiFile | Directory>;
   tmp_map: Map<string, WasiFile | Directory>;
 } {
@@ -65,7 +66,7 @@ function build_wasi_fs(user_files: Record<string, string> | null): {
   // write user files into WASI filesystem (null for format generation)
   const user_count = Object.keys(user_files || {}).length;
   for (const [name, content] of Object.entries(user_files || {})) {
-    const bytes = typeof content === "string" ? encoder.encode(content) : new Uint8Array(content as unknown as ArrayBuffer);
+    const bytes = typeof content === "string" ? encoder.encode(content) : new Uint8Array(content);
     root_map.set(name, new WasiFile(bytes));
   }
 
@@ -167,7 +168,7 @@ function make_fetch_env(): {
         // 4. cache in OPFS (fire-and-forget, async is fine here since data is already in memory)
         opfs.cache_file(name, data);
 
-        log("fetch", "info", `fetched ${name} (${format_size(data.byteLength)})`);
+        dbg("fetch", `fetched ${name} (${format_size(data.byteLength)})`);
       }
 
       // write data into WASM memory
@@ -217,7 +218,7 @@ interface RunResult {
 
 function run_wasm(
   wasi_args: string[],
-  user_files: Record<string, string> | null,
+  user_files: ProjectFiles | null,
   classify_stderr: boolean = false,
 ): RunResult {
   const label = wasi_args[1] ?? "wasm";
@@ -282,7 +283,7 @@ function run_wasm(
 async function generate_format(): Promise<boolean> {
   if (!wasm_module || !cached_files) return false;
 
-  log("fmt", "info", "generating xelatex.fmt via initex (fetch-on-open)...");
+  dbg("fmt", "generating xelatex.fmt via initex (fetch-on-open)...");
   send_status("Generating format...", "loading");
   send_progress(0);
   const t0 = performance.now();
@@ -297,7 +298,7 @@ async function generate_format(): Promise<boolean> {
     const elapsed = ((performance.now() - t0) / 1000).toFixed(2);
     log("fmt", "info", `generated xelatex.fmt (${format_size(fmt_copy.byteLength)}) in ${elapsed}s`);
     if (fetch_stats.fetches > 0) {
-      log("fmt", "info", `fetched ${fetch_stats.fetches} files on-demand (${format_size(fetch_stats.fetch_bytes)}), ${fetch_stats.cache_hits} cache hits`);
+      dbg("fmt", `fetched ${fetch_stats.fetches} files on-demand (${format_size(fetch_stats.fetch_bytes)}), ${fetch_stats.cache_hits} cache hits`);
     }
     opfs.cache_file("xelatex.fmt", fmt_copy);
     return true;
@@ -306,7 +307,7 @@ async function generate_format(): Promise<boolean> {
   const elapsed = ((performance.now() - t0) / 1000).toFixed(2);
   log("fmt", "warn", `format generation failed (exit code ${exit_code}) in ${elapsed}s`);
   if (fetch_stats.fetches > 0) {
-    log("fmt", "info", `fetched ${fetch_stats.fetches} files on-demand before failure`);
+    dbg("fmt", `fetched ${fetch_stats.fetches} files on-demand before failure`);
   }
   return false;
 }
@@ -316,19 +317,15 @@ async function generate_format(): Promise<boolean> {
 export async function init(): Promise<void> {
   send_status("Loading WASM...", "loading");
   dbg("init", "engine.init() starting");
+  const t0_total = performance.now();
 
   // step 1: compile WASM + fetch ITAR index in parallel.
-  // index fetch uses OPFS cache or a hardcoded URL fallback so it does NOT
-  // need api_instance (which requires the compiled WASM module).
   const wasm_promise = (async () => {
-    log("init", "info", "loading eztex.wasm...");
     dbg("init", "fetching /eztex.wasm...");
-    // no-cache ensures revalidation when the binary changes (dev cache busting)
     const wasm_resp = await fetch("/eztex.wasm", { cache: "no-cache" });
     if (!wasm_resp.ok) throw new Error("failed to fetch eztex.wasm");
     dbg("init", `wasm response: ${wasm_resp.status}, content-length=${wasm_resp.headers.get("content-length")}`);
     wasm_module = await WebAssembly.compileStreaming(Promise.resolve(wasm_resp));
-    log("init", "info", "wasm module compiled");
     dbg("init", "WebAssembly.compileStreaming complete");
   })();
 
@@ -336,7 +333,7 @@ export async function init(): Promise<void> {
     try {
       return await bundle.fetch_itar_index();
     } catch (e) {
-      log("index", "warn", `failed to fetch: ${(e as Error).message}`);
+      log("init", "warn", `index fetch failed: ${(e as Error).message}`);
       return null;
     }
   })();
@@ -360,10 +357,6 @@ export async function init(): Promise<void> {
         js_request_index() { return -1; },
       },
     });
-    // initialize WASI so self.inst is set (needed for fd_write/stderr).
-    // does NOT call _start -- api_instance is used for direct export calls only.
-    // cast: tsc -b doesn't resolve `initialize` from the default re-export typings,
-    // but the method exists at runtime (verified in wasi.d.ts + dist/wasi.js).
     (wasi as any).initialize(api_inst);
     wasm_api.set_instance(api_inst);
     if (DEBUG) wasm_api.enable_zig_debug();
@@ -377,24 +370,21 @@ export async function init(): Promise<void> {
   send_status("Loading index...", "loading");
   const index_bytes = await index_bytes_promise;
   if (index_bytes) {
-    cached_index_text = index_bytes; // cached for eztex_fetch_index extern (per-compile instances)
+    cached_index_text = index_bytes;
     const ok = wasm_api.load_index(index_bytes);
-    if (ok) {
-      log("index", "info", `loaded into WASM (${format_size(index_bytes.byteLength)})`);
-    } else {
-      log("index", "warn", "failed to parse index in WASM");
-    }
+    dbg("index", `pushed to WASM: ${ok ? "ok" : "failed"} (${format_size(index_bytes.byteLength)})`);
+    if (!ok) log("init", "warn", "failed to parse index in WASM");
   }
 
   // step 4: get init file list from Zig comptime data
   const version = wasm_api.cache_version();
-  log("cache", "info", `version: ${version}`);
+  dbg("cache", `version: ${version}`);
 
   const init_keys = wasm_api.query_seed_init();
   const init_total = init_keys.length;
-  log("init", "info", `seed init list: ${init_total} files from Zig`);
+  dbg("init", `seed init list: ${init_total} files from Zig`);
 
-  // progress tracking -- reset on each phase to avoid stale counter
+  // progress tracking
   let phase_loaded = 0;
   let phase_total = init_total;
   function seed_tick(_name: string): void {
@@ -409,16 +399,14 @@ export async function init(): Promise<void> {
   const cache_hit = await opfs.load_init(version, init_keys, cached_files, seed_tick);
 
   if (!cache_hit) {
-    // reset counter -- opfs may have partially ticked before failing
     phase_loaded = 0;
     phase_total = init_total;
     send_cache_status("downloading", "fetching init files...");
     await bundle.batch_fetch(init_keys, cached_files, 6, seed_tick);
 
-    // write to OPFS in background
     if (opfs.supported) {
       opfs.write_all(cached_files, version).catch((e: Error) => {
-        log("cache", "warn", `background write failed: ${e.message}`);
+        dbg("cache", `background write failed: ${e.message}`);
       });
     }
   }
@@ -428,8 +416,7 @@ export async function init(): Promise<void> {
 
   // step 7: generate format if not available
   if (!cached_files.has("xelatex.fmt")) {
-    log("fmt", "info", "no format file found, generating on first launch...");
-    // seed format cache with progress tracking
+    dbg("fmt", "no format file found, generating on first launch...");
     const fmt_keys = wasm_api.query_seed_format();
     const fmt_needed = fmt_keys.filter((f) => !cached_files!.has(f));
     if (fmt_needed.length > 0) {
@@ -441,23 +428,23 @@ export async function init(): Promise<void> {
         send_progress(Math.round((clamped / phase_total) * 100));
         send_status(`Seeding format cache ${clamped}/${phase_total}`, "loading");
       }
-      const fmt_already = fmt_keys.length - fmt_needed.length;
-      log("seed", "info", `seeding ${fmt_needed.length}/${fmt_keys.length} format dependencies${fmt_already > 0 ? ` (${fmt_already} already cached)` : ""}...`);
+      dbg("seed", `seeding ${fmt_needed.length}/${fmt_keys.length} format dependencies`);
       send_status(`Seeding format cache 0/${fmt_needed.length}`, "loading");
       const t0 = performance.now();
       await bundle.batch_fetch(fmt_needed, cached_files, 6, fmt_tick);
       const elapsed = ((performance.now() - t0) / 1000).toFixed(2);
-      log("seed", "info", `format seed complete in ${elapsed}s`);
+      dbg("seed", `format seed complete in ${elapsed}s`);
     } else if (fmt_keys.length > 0) {
-      log("seed", "info", `all ${fmt_keys.length} format files already cached`);
+      dbg("seed", `all ${fmt_keys.length} format files already cached`);
     }
     send_status("Generating format...", "loading");
     await generate_format();
   }
 
+  const total_elapsed = ((performance.now() - t0_total) / 1000).toFixed(2);
   log(
     "init", "info",
-    `ready: ${cached_files.size} files loaded, index ${wasm_api.is_index_loaded() ? "loaded" : "missing"} (${format_size(bundle.index_bytes_len)})`,
+    `ready in ${total_elapsed}s: ${cached_files.size} files, index ${wasm_api.is_index_loaded() ? "ok" : "missing"}${cache_hit ? " (cached)" : ""}`,
   );
   send_status("Ready", "success");
   send_progress(100);
@@ -466,7 +453,7 @@ export async function init(): Promise<void> {
 
 // -- resolve main file --
 
-function resolve_main(user_files: Record<string, string>, main?: string): string {
+function resolve_main(user_files: ProjectFiles, main?: string): string {
   if (main) return main;
   const names = Object.keys(user_files);
   if (names.length === 1) return names[0];
@@ -481,7 +468,7 @@ function resolve_main(user_files: Record<string, string>, main?: string): string
 
 // -- compile (single run, fetch-on-open) --
 
-export async function compile(user_files: Record<string, string>, main?: string): Promise<void> {
+export async function compile(user_files: ProjectFiles, main?: string): Promise<void> {
   if (!wasm_module || !cached_files) {
     log("eztex", "error", "engine not ready");
     return;
@@ -489,7 +476,7 @@ export async function compile(user_files: Record<string, string>, main?: string)
 
   const main_file = resolve_main(user_files, main);
   send_status("Compiling...", "loading");
-  log("eztex", "info", `compiling ${main_file} (${Object.keys(user_files).length} file(s))...`);
+  dbg("eztex", `compiling ${main_file} (${Object.keys(user_files).length} file(s))...`);
 
   const t0 = performance.now();
 
@@ -501,24 +488,24 @@ export async function compile(user_files: Record<string, string>, main?: string)
     if (fmt_inode && fmt_inode.data && fmt_inode.data.byteLength > 0) {
       const fmt_copy = new Uint8Array(fmt_inode.data);
       cached_files.set("xelatex.fmt", fmt_copy);
-      log("fmt", "info", `generated xelatex.fmt (${format_size(fmt_copy.byteLength)}), caching to OPFS`);
+      dbg("fmt", `generated xelatex.fmt (${format_size(fmt_copy.byteLength)}), caching to OPFS`);
       opfs.cache_file("xelatex.fmt", fmt_copy);
     }
 
     const elapsed = ((performance.now() - t0) / 1000).toFixed(2);
 
     if (fetch_stats.fetches > 0) {
-      log("fetch", "info", `fetched ${fetch_stats.fetches} files on-demand (${format_size(fetch_stats.fetch_bytes)}), ${fetch_stats.cache_hits} cache hits`);
+      dbg("fetch", `fetched ${fetch_stats.fetches} files on-demand (${format_size(fetch_stats.fetch_bytes)}), ${fetch_stats.cache_hits} cache hits`);
     }
 
     if (exit_code === 0) {
       const pdf_name = main_file.replace(/\.tex$/, ".pdf");
-      log("eztex", "info", `compilation succeeded in ${elapsed}s`);
+      log("eztex", "info", `compiled ${main_file} in ${elapsed}s`);
       send_status(`Done (${elapsed}s)`, "success");
 
       const pdf_inode = root_map.get(pdf_name) as WasiFile | undefined;
       if (pdf_inode && pdf_inode.data) {
-        log("eztex", "info", `output: ${pdf_name} (${format_size(pdf_inode.data.length)})`);
+        dbg("eztex", `output: ${pdf_name} (${format_size(pdf_inode.data.length)})`);
         send_complete(pdf_inode.data, elapsed);
       } else {
         log("eztex", "warn", `no PDF output found (expected ${pdf_name})`);

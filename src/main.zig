@@ -83,12 +83,6 @@ const Command = enum {
     version,
 };
 
-const PassMode = union(enum) {
-    auto,
-    single,
-    fixed: u8,
-};
-
 const Format = enum {
     latex,
     plain,
@@ -112,13 +106,9 @@ const Options = struct {
     command: Command = .help,
     input_file: ?[]const u8 = null,
     output_file: ?[]const u8 = null,
-    pass_mode: PassMode = .auto,
     format: Format = .latex,
     keep_intermediates: bool = false,
     verbose: bool = false,
-
-    // xdvipdfmx
-    paper: []const u8 = "letter",
 
     // cache override (native only, for testing/alternate locations)
     cache_dir: ?[]const u8 = null,
@@ -134,10 +124,8 @@ const Options = struct {
 
     const CliSet = packed struct {
         output_file: bool = false,
-        pass_mode: bool = false,
         format: bool = false,
         keep_intermediates: bool = false,
-        paper: bool = false,
         deterministic: bool = false,
         synctex: bool = false,
     };
@@ -147,13 +135,6 @@ const Options = struct {
         if (!self.cli_set.output_file) {
             if (config.output) |o| self.output_file = o;
         }
-        if (!self.cli_set.pass_mode) {
-            if (config.passes) |p| self.pass_mode = switch (p) {
-                .auto => .auto,
-                .single => .single,
-                .fixed => |n| .{ .fixed = n },
-            };
-        }
         if (!self.cli_set.format) {
             if (config.format) |f| self.format = switch (f) {
                 .latex => .latex,
@@ -162,9 +143,6 @@ const Options = struct {
         }
         if (!self.cli_set.keep_intermediates) {
             if (config.keep_intermediates) |k| self.keep_intermediates = k;
-        }
-        if (!self.cli_set.paper) {
-            if (config.paper) |p| self.paper = p;
         }
         if (!self.cli_set.deterministic) {
             if (config.deterministic) |d| self.deterministic = d;
@@ -283,29 +261,7 @@ fn parse_args() Options {
     }
 
     while (args.next()) |arg| {
-        if (std.mem.eql(u8, arg, "--single-pass")) {
-            opts.pass_mode = .single;
-            opts.cli_set.pass_mode = true;
-        } else if (std.mem.eql(u8, arg, "--passes")) {
-            if (args.next()) |val| {
-                const n = std.fmt.parseInt(u8, val, 10) catch {
-                    Log.log("eztex", .err, "--passes requires a number (1-10), got '{s}'", .{val});
-                    opts.command = .help;
-                    return opts;
-                };
-                if (n == 0 or n > 10) {
-                    Log.log("eztex", .err, "--passes must be between 1 and 10", .{});
-                    opts.command = .help;
-                    return opts;
-                }
-                opts.pass_mode = .{ .fixed = n };
-                opts.cli_set.pass_mode = true;
-            } else {
-                Log.log("eztex", .err, "--passes requires a value", .{});
-                opts.command = .help;
-                return opts;
-            }
-        } else if (std.mem.eql(u8, arg, "--output") or std.mem.eql(u8, arg, "-o")) {
+        if (std.mem.eql(u8, arg, "--output") or std.mem.eql(u8, arg, "-o")) {
             opts.output_file = args.next();
             opts.cli_set.output_file = true;
             if (opts.output_file == null) {
@@ -335,15 +291,6 @@ fn parse_args() Options {
             }
         } else if (std.mem.eql(u8, arg, "--verbose") or std.mem.eql(u8, arg, "-v")) {
             opts.verbose = true;
-        } else if (std.mem.eql(u8, arg, "--paper")) {
-            if (args.next()) |val| {
-                opts.paper = val;
-                opts.cli_set.paper = true;
-            } else {
-                Log.log("eztex", .err, "--paper requires a value (e.g. letter, a4, 210mm,297mm)", .{});
-                opts.command = .help;
-                return opts;
-            }
         } else if (std.mem.eql(u8, arg, "--cache-dir")) {
             if (args.next()) |val| {
                 opts.cache_dir = val;
@@ -397,9 +344,6 @@ fn print_usage() void {
         \\compile options:
         \\  --output, -o <file.pdf>     output path (default: <input>.pdf)
         \\  --format <latex|plain>      TeX format (default: latex)
-        \\  --paper <spec>              paper size for PDF (default: letter)
-        \\  --single-pass               force single xetex pass
-        \\  --passes <n>                force exactly n xetex passes (1-10)
         \\  --deterministic             reproducible output (stable tags + timestamps)
         \\  --synctex                   enable synctex source references
         \\  --keep-intermediates        keep .aux, .log, .xdv files
@@ -415,9 +359,8 @@ fn print_usage() void {
         \\
         \\examples:
         \\  eztex compile paper.tex
-        \\  eztex compile paper.tex --passes 3
         \\  eztex compile paper.tex -o output.pdf --verbose
-        \\  eztex paper.tex --single-pass --keep-intermediates
+        \\  eztex paper.tex --keep-intermediates
         \\  eztex compile ./my-thesis/
         \\  eztex compile project.zip
         \\  eztex compile                          (uses main from eztex.zon)
@@ -478,6 +421,10 @@ fn xetex_succeeded(result: c_int) bool {
 
 // -- engine invocation --
 
+fn current_build_date(deterministic: bool) u64 {
+    return if (deterministic) 1 else @as(u64, @intCast(std.time.timestamp()));
+}
+
 fn run_xetex(world: *bridge.World, input_file: []const u8, format: Format, _: bool, opts: *const Options) c_int {
     set_engine_var(.synctex, opts.synctex);
     set_engine_var(.halt_on_error, true);
@@ -494,7 +441,7 @@ fn run_xetex(world: *bridge.World, input_file: []const u8, format: Format, _: bo
         @ptrCast(world),
         format.dump_name(),
         input_name_z,
-        if (opts.deterministic) 1 else 0,
+        current_build_date(opts.deterministic),
     );
 
     Log.dbg("eztex", "xetex returned: {d}", .{result});
@@ -504,7 +451,6 @@ fn run_xetex(world: *bridge.World, input_file: []const u8, format: Format, _: bo
 fn run_xdvipdfmx(world: *bridge.World, xdv_name: []const u8, pdf_name: []const u8, _: bool, opts: *const Options) c_int {
     var xdv_buf: [512]u8 = undefined;
     var pdf_buf: [512]u8 = undefined;
-    var paper_buf: [128]u8 = undefined;
 
     @memcpy(xdv_buf[0..xdv_name.len], xdv_name);
     xdv_buf[xdv_name.len] = 0;
@@ -514,23 +460,11 @@ fn run_xdvipdfmx(world: *bridge.World, xdv_name: []const u8, pdf_name: []const u
     pdf_buf[pdf_name.len] = 0;
     const pdf_z: [*:0]const u8 = pdf_buf[0..pdf_name.len :0];
 
-    if (opts.paper.len == 0) {
-        Log.log("eztex", .err, "--paper must be non-empty", .{});
-        return 1;
-    }
-    if (opts.paper.len >= paper_buf.len) {
-        Log.log("eztex", .err, "--paper value too long (max {d} bytes)", .{paper_buf.len - 1});
-        return 1;
-    }
-    @memcpy(paper_buf[0..opts.paper.len], opts.paper);
-    paper_buf[opts.paper.len] = 0;
-    const paper_z: [*:0]const u8 = paper_buf[0..opts.paper.len :0];
-
     const config = XdvipdfmxConfig{
-        .paperspec = paper_z,
+        .paperspec = "letter",
         .enable_compression = 1,
         .deterministic_tags = if (opts.deterministic) 1 else 0,
-        .build_date = if (opts.deterministic) 1 else 0,
+        .build_date = current_build_date(opts.deterministic),
     };
 
     Log.log("eztex", .info, "calling xdvipdfmx('{s}' -> '{s}')...", .{ xdv_name, pdf_name });
@@ -1198,24 +1132,21 @@ fn do_compile(opts: *const Options, loaded_config: ?Config) u8 {
 
     setup_world(format, verbose, opts.cache_dir);
 
-    // apply bundle URL/digest override from config if present
+    // apply bundle URL override from config if present
     if (loaded_config) |config| {
         const bundle = config.effective_bundle();
         const bs = bridge.get_bundle_store();
         const is_custom_url = !std.mem.eql(u8, bundle.url, Config.default_bundle_url);
         const is_custom_index = !std.mem.eql(u8, bundle.index_url, Config.default_index_url);
-        const is_custom_digest = !std.mem.eql(u8, bundle.digest, &Config.default_bundle_digest);
         if (is_custom_url or is_custom_index) {
+            const digest = Config.digest_from_url(bundle.url);
             bs.url = bundle.url;
-            Host.init(null, bundle.url, bundle.index_url, bs.digest);
+            bs.digest = digest;
+            Host.init(null, bundle.url, bundle.index_url, digest);
             Log.dbg("eztex", "bundle URL override: {s}", .{bundle.url});
             if (is_custom_index) {
                 Log.dbg("eztex", "index URL override: {s}", .{bundle.index_url});
             }
-        }
-        if (is_custom_digest) {
-            bs.digest = bundle.digest;
-            Log.dbg("eztex", "bundle digest override: {s}", .{bundle.digest});
         }
     }
 
@@ -1235,13 +1166,8 @@ fn do_compile(opts: *const Options, loaded_config: ?Config) u8 {
 
     world.set_output_dir(".");
 
-    // determine pass count
-    const max_passes: u8 = switch (opts.pass_mode) {
-        .single => 1,
-        .fixed => |n| n,
-        .auto => Options.max_auto_passes,
-    };
-    const is_auto = opts.pass_mode == .auto;
+    // auto-pass: run up to max_auto_passes, stop when aux stabilizes
+    const max_passes: u8 = Options.max_auto_passes;
 
     // intermediate files use jobname (basename), since output_dir is "."
     var aux_path_buf: [512]u8 = undefined;
@@ -1259,12 +1185,7 @@ fn do_compile(opts: *const Options, loaded_config: ?Config) u8 {
     var bibtex_ran: bool = false;
 
     while (pass < max_passes) : (pass += 1) {
-        // display pass info
-        if (is_auto) {
-            Log.log("eztex", .info, "pass {d} (auto, max {d})...", .{ pass + 1, max_passes });
-        } else {
-            Log.log("eztex", .info, "pass {d}/{d}...", .{ pass + 1, max_passes });
-        }
+        Log.log("eztex", .info, "pass {d} (auto, max {d})...", .{ pass + 1, max_passes });
 
         // reset I/O handles between passes (keep bundle/search config)
         if (pass > 0) reset_world_io();
@@ -1280,9 +1201,6 @@ fn do_compile(opts: *const Options, loaded_config: ?Config) u8 {
         if (last_xetex_result == HISTORY_WARNING_ISSUED) {
             Log.dbg("eztex", "pass {d} completed with warnings", .{pass + 1});
         }
-
-        // fixed/single mode: just run the requested number of passes
-        if (!is_auto) continue;
 
         // auto mode: compare aux file after this pass to the previous pass
         const curr_aux = read_file_contents(aux_path);

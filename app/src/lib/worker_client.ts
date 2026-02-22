@@ -2,6 +2,7 @@
 // spawns a module worker and exposes signals for status/progress/logs/pdf
 
 import { createSignal, batch } from "solid-js";
+import type { ProjectFiles } from "./project_store";
 
 export type LogEntry = {
   msg: string;
@@ -12,7 +13,7 @@ export type LogEntry = {
 export type WorkerStatus = "idle" | "loading" | "compiling" | "success" | "error";
 
 export type CompileRequest = {
-  files: Record<string, string>;
+  files: ProjectFiles;
   main?: string;
 };
 
@@ -69,6 +70,7 @@ function handle_message(e: MessageEvent) {
         set_status_text("Ready");
         set_progress(100);
       });
+      _on_ready_cb?.();
       break;
     case "complete": {
       const pdf_data = data.pdf;
@@ -129,12 +131,24 @@ function clear_cache() {
   append_log("[ui] cache clear requested", "log-info");
 }
 
+function restore_pdf_url(url: string) {
+  if (prev_pdf_url) URL.revokeObjectURL(prev_pdf_url);
+  prev_pdf_url = url;
+  set_pdf_url(url);
+}
+
+// imperative ready callback -- used by App for auto-compile on load
+let _on_ready_cb: (() => void) | null = null;
+function on_ready(cb: () => void) { _on_ready_cb = cb; }
+
 export const worker_client = {
   init: init_worker,
   compile,
   clear_cache,
   clear_logs,
   on_compile_done,
+  on_ready,
+  restore_pdf_url,
   // signals (read-only)
   status,
   status_text,

@@ -1,4 +1,3 @@
-# eztex project commands
 help:
     just --list
 
@@ -6,7 +5,7 @@ help:
 build:
     zig build
 
-# build WASM binary and copy to app/public/
+# build wasm binary and copy to app/public/
 build-wasm:
     zig build wasm
 
@@ -16,16 +15,17 @@ run file:
 
 # run test suite
 test:
-    bash tests/run_tests.sh
-
-# clean build artifacts
-clean:
-    rm -rf zig-out .zig-cache
+    zig build test
+    zig build test-integtation
 
 app-dev: build-wasm
     cd app && bun dev
 
 app-build: build-wasm
     cd app && bun run build
+
+git-push:
+    jj bookmark move main --to @
+    jj git push -b main
 
 alias ad := app-dev

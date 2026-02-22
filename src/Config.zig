@@ -12,11 +12,7 @@ const Config = @This();
 // compilation target
 entry: ?[]const u8 = null,
 output: ?[]const u8 = null,
-paper: ?[]const u8 = null,
 format: ?Format = null,
-
-// pass control
-passes: ?Passes = null,
 
 // feature toggles
 synctex: ?bool = null,
@@ -30,17 +26,9 @@ bundle: ?Bundle = null,
 files: ?[]const []const u8 = null,
 
 pub const Format = enum { latex, plain };
-pub const Passes = union(enum) {
-    auto,
-    single,
-    fixed: u8,
-};
-pub const CachePolicy = enum { auto, always, refresh };
 pub const Bundle = struct {
     url: ?[]const u8 = null,
     index: ?[]const u8 = null,
-    digest: ?[]const u8 = null,
-    cache: CachePolicy = .auto,
 };
 
 pub const filename = "eztex.zon";
@@ -73,8 +61,6 @@ pub fn default() Config {
 pub const ResolvedBundle = struct {
     url: []const u8,
     index_url: []const u8,
-    digest: []const u8,
-    cache: CachePolicy,
 };
 
 // resolve effective bundle settings: fill in defaults for any null fields.
@@ -83,9 +69,21 @@ pub fn effective_bundle(self: Config) ResolvedBundle {
     return .{
         .url = b.url orelse default_bundle_url,
         .index_url = b.index orelse default_index_url,
-        .digest = b.digest orelse &default_bundle_digest,
-        .cache = b.cache,
     };
+}
+
+// compute digest from a URL at runtime (SHA-256 hex). uses a static buffer.
+var runtime_digest_buf: [64]u8 = undefined;
+pub fn digest_from_url(url: []const u8) []const u8 {
+    if (std.mem.eql(u8, url, default_bundle_url)) return &default_bundle_digest;
+    var hash: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(url, &hash, .{});
+    const hex_chars = "0123456789abcdef";
+    for (hash, 0..) |byte, i| {
+        runtime_digest_buf[i * 2] = hex_chars[byte >> 4];
+        runtime_digest_buf[i * 2 + 1] = hex_chars[byte & 0x0f];
+    }
+    return &runtime_digest_buf;
 }
 
 // load config from directory, or return defaults if no config file found.
@@ -139,7 +137,6 @@ test "load valid config" {
     const content: [:0]const u8 =
         \\.{
         \\    .entry = "thesis.tex",
-        \\    .paper = "a4",
         \\    .synctex = true,
         \\}
     ;
@@ -155,13 +152,12 @@ test "load valid config" {
     defer c.deinit(allocator);
 
     try std.testing.expectEqualStrings("thesis.tex", c.entry.?);
-    try std.testing.expectEqualStrings("a4", c.paper.?);
     try std.testing.expect(c.synctex.? == true);
     try std.testing.expect(c.format == null);
     try std.testing.expect(c.deterministic == null);
 }
 
-test "load config with format and passes" {
+test "load config with format" {
     const allocator = std.testing.allocator;
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
@@ -169,7 +165,6 @@ test "load config with format and passes" {
     const content: [:0]const u8 =
         \\.{
         \\    .format = .plain,
-        \\    .passes = .single,
         \\}
     ;
     try tmp_dir.dir.writeFile(.{ .sub_path = filename, .data = content });
@@ -183,7 +178,6 @@ test "load config with format and passes" {
     defer c.deinit(allocator);
 
     try std.testing.expect(c.format.? == .plain);
-    try std.testing.expect(std.meta.activeTag(c.passes.?) == .single);
 }
 
 test "malformed config returns null" {
@@ -210,8 +204,6 @@ test "load config with bundle" {
         \\    .entry = "paper.tex",
         \\    .bundle = .{
         \\        .url = "https://example.com/bundle.tar",
-        \\        .digest = "abc123",
-        \\        .cache = .always,
         \\    },
         \\}
     ;
@@ -229,8 +221,6 @@ test "load config with bundle" {
     try std.testing.expect(c.bundle != null);
     const b = c.bundle.?;
     try std.testing.expectEqualStrings("https://example.com/bundle.tar", b.url.?);
-    try std.testing.expectEqualStrings("abc123", b.digest.?);
-    try std.testing.expect(b.cache == .always);
 }
 
 test "load config with bundle url only" {
@@ -258,6 +248,18 @@ test "load config with bundle url only" {
     try std.testing.expect(c.bundle != null);
     const b = c.bundle.?;
     try std.testing.expectEqualStrings("https://example.com/custom.tar", b.url.?);
-    try std.testing.expect(b.digest == null);
-    try std.testing.expect(b.cache == .auto);
+    try std.testing.expect(b.index == null);
+}
+
+test "digest_from_url returns default for default URL" {
+    const d = digest_from_url(default_bundle_url);
+    try std.testing.expectEqualStrings(&default_bundle_digest, d);
+}
+
+test "digest_from_url returns deterministic hash for custom URL" {
+    const d1 = digest_from_url("https://example.com/bundle.tar");
+    try std.testing.expect(d1.len == 64);
+    // calling again with same URL should produce same result
+    const d2 = digest_from_url("https://example.com/bundle.tar");
+    try std.testing.expectEqualStrings(d1, d2);
 }

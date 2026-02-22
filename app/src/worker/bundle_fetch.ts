@@ -7,7 +7,7 @@
 // parallel with WASM compilation). Once api_instance exists, the Zig
 // comptime URLs are cached and used for all subsequent calls.
 
-import { send_log, format_size, dbg } from "./protocol.ts";
+import { format_size, dbg } from "./protocol.ts";
 import * as opfs from "./opfs.ts";
 import * as wasm_api from "./wasm_api.ts";
 
@@ -41,7 +41,7 @@ export async function fetch_itar_index(): Promise<Uint8Array | null> {
       const cached = await opfs.read(dir, "_itar_index.bin");
       if (cached) {
         index_bytes_len = cached.byteLength;
-        send_log(`[index] loaded from OPFS (${format_size(cached.byteLength)})`);
+        dbg("index", `loaded from OPFS (${format_size(cached.byteLength)})`);
         return cached;
       }
     } catch {
@@ -49,13 +49,13 @@ export async function fetch_itar_index(): Promise<Uint8Array | null> {
     }
   }
 
-  send_log("[index] fetching ITAR index...");
+  dbg("index", "fetching ITAR index from network...");
   const index_url = get_index_url();
   dbg("index", `fetching: ${index_url}`);
   const resp = await fetch(index_url, { signal: AbortSignal.timeout(30000) });
   if (!resp.ok) throw new Error(`index fetch failed: ${resp.status}`);
   const compressed = new Uint8Array(await resp.arrayBuffer());
-  send_log(`[index] downloaded ${format_size(compressed.byteLength)} compressed`);
+  dbg("index", `downloaded ${format_size(compressed.byteLength)} compressed`);
 
   // decompress gzip via browser DecompressionStream
   const ds = new DecompressionStream("gzip");
@@ -84,9 +84,68 @@ function request_timeout(length: number): number {
   return 20_000 + Math.ceil(length / 100_000) * 1_000;
 }
 
+// merge adjacent Range entries to reduce HTTP request count.
+// entries must be pre-sorted by offset. merges when gap <= max_gap
+// and combined size <= max_range_size.
+interface MergedRange {
+  names: string[];
+  offsets: number[];     // per-file offset within merged response
+  lengths: number[];     // per-file original length
+  range_start: number;   // byte offset in bundle
+  range_length: number;  // total bytes to fetch
+}
+
+function merge_ranges(
+  entries: { name: string; offset: bigint; length: number }[],
+  max_gap: number = 65536,
+  max_range_size: number = 2 * 1024 * 1024,
+): MergedRange[] {
+  if (entries.length === 0) return [];
+
+  // sort by offset
+  const sorted = [...entries].sort((a, b) => (a.offset < b.offset ? -1 : a.offset > b.offset ? 1 : 0));
+
+  const merged: MergedRange[] = [];
+  let cur: MergedRange = {
+    names: [sorted[0].name],
+    offsets: [0],
+    lengths: [sorted[0].length],
+    range_start: Number(sorted[0].offset),
+    range_length: sorted[0].length,
+  };
+
+  for (let i = 1; i < sorted.length; i++) {
+    const entry = sorted[i];
+    const entry_start = Number(entry.offset);
+    const cur_end = cur.range_start + cur.range_length;
+    const gap = entry_start - cur_end;
+    const new_length = (entry_start - cur.range_start) + entry.length;
+
+    if (gap <= max_gap && new_length <= max_range_size) {
+      // merge into current range
+      cur.names.push(entry.name);
+      cur.offsets.push(entry_start - cur.range_start);
+      cur.lengths.push(entry.length);
+      cur.range_length = new_length;
+    } else {
+      // start new range
+      merged.push(cur);
+      cur = {
+        names: [entry.name],
+        offsets: [0],
+        lengths: [entry.length],
+        range_start: entry_start,
+        range_length: entry.length,
+      };
+    }
+  }
+  merged.push(cur);
+  return merged;
+}
+
 // batch fetch files by name via Range requests
 // resolves each name to (offset, length) via Zig's eztex_index_lookup
-// retries failed fetches up to 2 times with exponential backoff
+// uses range merging for efficiency, retries failed fetches
 export async function batch_fetch(
   names: string[],
   cached_files: Map<string, Uint8Array>,
@@ -114,7 +173,6 @@ export async function batch_fetch(
 
   if (skipped.length > 0) {
     dbg("batch", `${skipped.length} files not in index: ${skipped.slice(0, 10).join(", ")}${skipped.length > 10 ? "..." : ""}`);
-    send_log(`[batch] ${skipped.length} file(s) not in index (will fetch on demand)`, "log-warn");
   }
   if (already_cached.length > 0) {
     dbg("batch", `${already_cached.length} files already cached`);
@@ -128,40 +186,109 @@ export async function batch_fetch(
   let failed = 0;
   const opfs_queue: { name: string; data: Uint8Array }[] = [];
 
+  // merge adjacent ranges for fewer HTTP requests
+  const ranges = merge_ranges(plan);
+  dbg("batch", `merged ${plan.length} files into ${ranges.length} range requests`);
+
   // first pass: fetch all with concurrency pool
-  const failed_entries = await run_fetch_pass(plan, cached_files, opfs_queue, concurrency, tick);
+  const failed_entries = await run_merged_fetch_pass(ranges, cached_files, opfs_queue, concurrency, tick);
   fetched = plan.length - failed_entries.length;
 
-  // retry failed entries with lower concurrency and exponential backoff
+  // retry failed entries individually with lower concurrency
   if (failed_entries.length > 0) {
-    send_log(`[batch] retrying ${failed_entries.length} failed files...`);
-    for (let attempt = 0; attempt < 2 && failed_entries.length > 0; attempt++) {
-      const delay = 1000 * (attempt + 1); // 1s, 2s
+    dbg("batch", `retrying ${failed_entries.length} failed files...`);
+    const individual_plan = failed_entries.map(e => ({
+      name: e.name, offset: BigInt(e.offset), length: e.length,
+    }));
+    for (let attempt = 0; attempt < 2 && individual_plan.length > 0; attempt++) {
+      const delay = 1000 * (attempt + 1);
       await new Promise((r) => setTimeout(r, delay));
-      const still_failed = await run_fetch_pass(failed_entries, cached_files, opfs_queue, 2, tick);
-      fetched += failed_entries.length - still_failed.length;
-      failed_entries.length = 0;
-      failed_entries.push(...still_failed);
+      const still_failed = await run_fetch_pass(individual_plan, cached_files, opfs_queue, 2, tick);
+      fetched += individual_plan.length - still_failed.length;
+      individual_plan.length = 0;
+      individual_plan.push(...still_failed);
     }
-    failed = failed_entries.length;
+    failed = individual_plan.length;
     if (failed > 0) {
-      const names_str = failed_entries.map((e) => e.name).join(", ");
-      send_log(`[batch] permanent failures: ${names_str}`, "log-warn");
+      const names_str = individual_plan.map((e) => e.name).join(", ");
+      dbg("batch", `permanent failures: ${names_str}`);
     }
   }
 
   const elapsed = (performance.now() - t0).toFixed(0);
-  if (fetched > 0 || failed > 0) {
-    send_log(`[batch] ${fetched} fetched, ${failed} failed in ${elapsed}ms`);
-  }
+  dbg("batch", `${fetched} fetched, ${failed} failed in ${elapsed}ms (${ranges.length} requests)`);
 
-  // flush OPFS writes after all fetches complete (avoids contention during fetch)
+  // flush OPFS writes after all fetches complete
   if (opfs_queue.length > 0) {
     flush_opfs(opfs_queue);
   }
 }
 
-// run a single fetch pass over entries with a concurrency pool
+// fetch merged ranges with a concurrency pool, split response into individual files
+async function run_merged_fetch_pass(
+  ranges: MergedRange[],
+  cached_files: Map<string, Uint8Array>,
+  opfs_queue: { name: string; data: Uint8Array }[],
+  concurrency: number,
+  tick?: (name: string) => void,
+): Promise<{ name: string; offset: number; length: number }[]> {
+  let idx = 0;
+  const failures: { name: string; offset: number; length: number }[] = [];
+  const url = get_bundle_url();
+
+  async function worker(): Promise<void> {
+    while (true) {
+      const i = idx++;
+      if (i >= ranges.length) break;
+      const range = ranges[i];
+      const range_end = range.range_start + range.range_length - 1;
+      const timeout = request_timeout(range.range_length);
+
+      try {
+        const resp = await fetch(url, {
+          headers: { Range: `bytes=${range.range_start}-${range_end}` },
+          signal: AbortSignal.timeout(timeout),
+        });
+        if (!resp.ok && resp.status !== 206) throw new Error(`status ${resp.status}`);
+        const buf = new Uint8Array(await resp.arrayBuffer());
+
+        // split merged response into individual files
+        for (let j = 0; j < range.names.length; j++) {
+          const name = range.names[j];
+          if (cached_files.has(name)) continue;
+          const data = buf.slice(range.offsets[j], range.offsets[j] + range.lengths[j]);
+          cached_files.set(name, data);
+          opfs_queue.push({ name, data });
+          if (tick) tick(name);
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        dbg("fetch", `merged range failed (${range.names.length} files, offset=${range.range_start}, len=${range.range_length}): ${msg}`);
+        // add all files in this range as individual failures for retry
+        for (let j = 0; j < range.names.length; j++) {
+          if (!cached_files.has(range.names[j])) {
+            failures.push({
+              name: range.names[j],
+              offset: range.range_start + range.offsets[j],
+              length: range.lengths[j],
+            });
+          }
+        }
+        if (tick) {
+          for (const name of range.names) {
+            if (!cached_files.has(name)) tick(name + " (retry)");
+          }
+        }
+      }
+    }
+  }
+
+  const workers = Array.from({ length: Math.min(concurrency, ranges.length) }, () => worker());
+  await Promise.all(workers);
+  return failures;
+}
+
+// run a single fetch pass over individual entries with a concurrency pool
 // returns the list of entries that failed
 async function run_fetch_pass(
   entries: { name: string; offset: bigint; length: number }[],
@@ -172,7 +299,7 @@ async function run_fetch_pass(
 ): Promise<{ name: string; offset: bigint; length: number }[]> {
   let idx = 0;
   const failures: { name: string; offset: bigint; length: number }[] = [];
-  const url = get_bundle_url(); // resolve once, reuse for all requests
+  const url = get_bundle_url();
 
   async function worker(): Promise<void> {
     while (true) {

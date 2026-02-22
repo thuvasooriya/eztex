@@ -1,4 +1,4 @@
-import { type Component, onMount, onCleanup, createEffect, on } from "solid-js";
+import { type Component, onMount, onCleanup, createEffect, on, Show, createSignal, createMemo } from "solid-js";
 import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightSpecialChars, drawSelection } from "@codemirror/view";
 import { EditorState } from "@codemirror/state";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
@@ -13,10 +13,29 @@ import {
 import { stex } from "@codemirror/legacy-modes/mode/stex";
 import { tags } from "@lezer/highlight";
 import type { ProjectStore } from "../lib/project_store";
+import { is_binary } from "../lib/project_store";
 
 type Props = {
   store: ProjectStore;
 };
+
+const IMAGE_EXTS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"]);
+
+function get_image_mime(name: string): string | null {
+  const dot = name.lastIndexOf(".");
+  if (dot < 0) return null;
+  const ext = name.slice(dot).toLowerCase();
+  if (!IMAGE_EXTS.has(ext)) return null;
+  const map: Record<string, string> = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".svg": "image/svg+xml",
+  };
+  return map[ext] ?? null;
+}
 
 const tokyo_night_theme = EditorView.theme({
   "&": {
@@ -103,11 +122,44 @@ const Editor: Component<Props> = (props) => {
   let view: EditorView | undefined;
   let updating_from_outside = false;
 
+  const current_is_binary = () => is_binary(props.store.current_file());
+
+  const image_mime = createMemo(() => {
+    const name = props.store.current_file();
+    if (!current_is_binary()) return null;
+    return get_image_mime(name);
+  });
+
+  const [image_url, set_image_url] = createSignal<string | null>(null);
+
+  createEffect(
+    on(
+      () => ({ file: props.store.current_file(), mime: image_mime() }),
+      ({ file, mime }) => {
+        // revoke previous blob url
+        const prev = image_url();
+        if (prev) URL.revokeObjectURL(prev);
+        set_image_url(null);
+
+        if (!mime) return;
+        const content = props.store.get_content(file);
+        if (!(content instanceof Uint8Array)) return;
+        const blob = new Blob([content.buffer as ArrayBuffer], { type: mime });
+        set_image_url(URL.createObjectURL(blob));
+      },
+    ),
+  );
+
+  onCleanup(() => {
+    const url = image_url();
+    if (url) URL.revokeObjectURL(url);
+  });
+
   onMount(() => {
     if (!container_ref) return;
 
     const state = EditorState.create({
-      doc: props.store.get_content(props.store.current_file()) ?? "",
+      doc: props.store.get_text_content(props.store.current_file()) ?? "",
       extensions: [
         lineNumbers(),
         highlightActiveLine(),
@@ -141,11 +193,11 @@ const Editor: Component<Props> = (props) => {
 
   createEffect(
     on(
-      () => props.store.current_file(),
-      () => {
+      () => [props.store.current_file(), props.store.revision()] as const,
+      ([file]) => {
         if (!view) return;
         updating_from_outside = true;
-        const content = props.store.get_content(props.store.current_file()) ?? "";
+        const content = current_is_binary() ? "" : (props.store.get_text_content(file) ?? "");
         view.dispatch({
           changes: { from: 0, to: view.state.doc.length, insert: content },
         });
@@ -160,7 +212,26 @@ const Editor: Component<Props> = (props) => {
 
   return (
     <div class="editor-pane">
-      <div class="editor-cm-container" ref={container_ref} />
+      <Show when={current_is_binary()}>
+        <Show
+          when={image_url()}
+          fallback={
+            <div class="binary-placeholder">
+              <span class="binary-placeholder-icon">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+                  <polyline points="14 2 14 8 20 8" />
+                </svg>
+              </span>
+              <span class="binary-placeholder-name">{props.store.current_file()}</span>
+              <span class="binary-placeholder-label">Binary file -- not editable</span>
+            </div>
+          }
+        >
+          <img src={image_url()!} class="image-preview" alt={props.store.current_file()} />
+        </Show>
+      </Show>
+      <div class="editor-cm-container" ref={container_ref} style={{ display: current_is_binary() ? "none" : undefined }} />
     </div>
   );
 };

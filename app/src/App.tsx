@@ -1,6 +1,7 @@
 import { type Component, onMount, onCleanup, createSignal, Show } from "solid-js";
 import { worker_client } from "./lib/worker_client";
 import { create_project_store } from "./lib/project_store";
+import { save_project, load_project, load_pdf } from "./lib/project_persist";
 import Toolbar from "./components/Toolbar";
 import ProgressBar from "./components/ProgressBar";
 import FilePanel from "./components/FilePanel";
@@ -11,14 +12,24 @@ import CachePill from "./components/CachePill";
 import ResizeHandle from "./components/ResizeHandle";
 
 const NARROW_BREAKPOINT = 900;
+const PREVIEW_WIDTH_KEY = "eztex_preview_width";
+
+function get_initial_preview_width(): number {
+  const stored = localStorage.getItem(PREVIEW_WIDTH_KEY);
+  const max_w = window.innerWidth - 400;
+  if (stored) {
+    const v = parseInt(stored, 10);
+    if (!isNaN(v)) return Math.max(200, Math.min(max_w, v));
+  }
+  const available = window.innerWidth - 200 - 8;
+  return Math.max(200, Math.min(max_w, Math.floor(available / 2)));
+}
 
 const App: Component = () => {
   const store = create_project_store();
 
   const [file_panel_width, set_file_panel_width] = createSignal(200);
-  const [preview_width, set_preview_width] = createSignal(
-    Math.max(400, Math.floor(window.innerWidth * 0.35)),
-  );
+  const [preview_width, set_preview_width] = createSignal(get_initial_preview_width());
   const [files_visible, set_files_visible] = createSignal(true);
   const [preview_visible, set_preview_visible] = createSignal(true);
   const [is_narrow, set_is_narrow] = createSignal(window.innerWidth < NARROW_BREAKPOINT);
@@ -39,8 +50,39 @@ const App: Component = () => {
     }
   }
 
-  onMount(() => {
+  onMount(async () => {
+    // start engine loading in parallel with OPFS reads
     worker_client.init();
+
+    // wait for both project + PDF restore before registering on_ready
+    const [saved, pdf_bytes] = await Promise.all([load_project(), load_pdf()]);
+
+    let pdf_restored = false;
+    if (saved && Object.keys(saved).length > 0) {
+      store.load_files(saved);
+    }
+    if (pdf_bytes && pdf_bytes.length > 0) {
+      const url = URL.createObjectURL(new Blob([pdf_bytes.buffer as ArrayBuffer], { type: "application/pdf" }));
+      worker_client.restore_pdf_url(url);
+      pdf_restored = true;
+    }
+
+    // auto-compile when engine becomes ready (if no PDF was restored)
+    worker_client.on_ready(() => {
+      if (!pdf_restored) {
+        const files = { ...store.files };
+        worker_client.compile({ files, main: store.main_file() });
+      }
+    });
+
+    // auto-save project on changes (debounced)
+    let save_timer: ReturnType<typeof setTimeout> | undefined;
+    store.on_change(() => {
+      if (save_timer !== undefined) clearTimeout(save_timer);
+      save_timer = setTimeout(() => {
+        save_project(store.files).catch(() => {});
+      }, 1000);
+    });
 
     const on_resize = () => {
       const narrow = window.innerWidth < NARROW_BREAKPOINT;
@@ -72,7 +114,11 @@ const App: Component = () => {
   }
 
   function handle_preview_resize(delta: number) {
-    set_preview_width((w) => Math.max(250, Math.min(900, w - delta)));
+    set_preview_width((w) => {
+      const next = Math.max(250, Math.min(900, w - delta));
+      localStorage.setItem(PREVIEW_WIDTH_KEY, String(next));
+      return next;
+    });
   }
 
   const workspace_class = () => {
@@ -140,7 +186,7 @@ const App: Component = () => {
         </div>
       </Show>
 
-      <CachePill />
+      <CachePill store={store} />
       <StatusPill />
     </div>
   );

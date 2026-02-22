@@ -9,9 +9,12 @@ export type WorkerOutMsg =
   | { type: "ready" }
   | { type: "complete"; pdf: Uint8Array | null; elapsed: string };
 
+export type FileContent = string | Uint8Array;
+export type ProjectFiles = Record<string, FileContent>;
+
 export type WorkerInMsg =
   | { type: "init" }
-  | { type: "compile"; files: Record<string, string>; main?: string }
+  | { type: "compile"; files: ProjectFiles; main?: string }
   | { type: "clear_cache" };
 
 // debug flag: set via ?debug=1 query param (passed from main thread) or EZTEX_DEBUG env

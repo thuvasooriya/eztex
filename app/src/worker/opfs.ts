@@ -2,10 +2,7 @@
 // persists support files and format across browser sessions
 // uses nested OPFS directories matching the original path structure
 
-import { send_log, send_cache_status, format_size } from "./protocol.ts";
-
-const encoder = new TextEncoder();
-const decoder = new TextDecoder();
+import { send_cache_status, format_size, dbg } from "./protocol.ts";
 
 export const supported: boolean =
   typeof navigator !== "undefined" &&
@@ -73,6 +70,9 @@ async function write_nested(base: FileSystemDirectoryHandle, key: string, data: 
   await write(resolved[0], resolved[1], data);
 }
 
+const encoder = new TextEncoder();
+const decoder = new TextDecoder();
+
 export async function read_meta(dir: FileSystemDirectoryHandle): Promise<Record<string, unknown> | null> {
   const raw = await read(dir, "_metadata.json");
   if (!raw) return null;
@@ -94,10 +94,10 @@ export async function clear(): Promise<void> {
     const root = await navigator.storage.getDirectory();
     await root.removeEntry("eztex-cache", { recursive: true });
     cache_dir = null;
-    send_log("[cache] OPFS cache cleared");
+    dbg("cache", "OPFS cache cleared");
     send_cache_status("cleared");
   } catch (e) {
-    send_log(`[cache] clear failed: ${(e as Error).message}`, "log-warn");
+    dbg("cache", `clear failed: ${(e as Error).message}`);
   }
 }
 
@@ -120,7 +120,7 @@ export async function load_init(
   tick: (name: string) => void,
 ): Promise<boolean> {
   if (!supported) {
-    send_log("[cache] OPFS not supported, using network only");
+    dbg("cache", "OPFS not supported");
     send_cache_status("unsupported");
     return false;
   }
@@ -130,21 +130,20 @@ export async function load_init(
     const meta = await read_meta(dir);
 
     if (!meta || meta.version !== version) {
-      const reason = !meta ? "no cache found" : "version mismatch";
-      send_log(`[cache] ${reason}, will download from network`);
+      const reason = !meta ? "no cache" : "version mismatch";
+      dbg("cache", `miss: ${reason}`);
       send_cache_status("miss", reason);
       return false;
     }
 
     send_cache_status("loading", "reading from OPFS cache...");
-    send_log(`[cache] found OPFS cache (v${version})`);
     const t0 = performance.now();
     let all_ok = true;
 
     for (const key of init_keys) {
       const data = await read_nested(dir, key);
       if (!data) {
-        send_log(`[cache] missing: ${key}, falling back to network`, "log-warn");
+        dbg("cache", `missing: ${key}, falling back to network`);
         all_ok = false;
         break;
       }
@@ -162,9 +161,7 @@ export async function load_init(
 
       const cache_ms = (performance.now() - t0).toFixed(0);
       const bonus = cached_files.size - init_keys.length;
-      send_log(
-        `[cache] loaded ${init_keys.length} init files${bonus > 0 ? ` + ${bonus} cached on_demand` : ""} from OPFS in ${cache_ms}ms`,
-      );
+      dbg("cache", `loaded ${init_keys.length} init files${bonus > 0 ? ` + ${bonus} extra` : ""} in ${cache_ms}ms`);
       send_cache_status("hit", `${cached_files.size} files from cache (${cache_ms}ms)`);
       return true;
     }
@@ -172,7 +169,7 @@ export async function load_init(
     cached_files.clear();
     return false;
   } catch (e) {
-    send_log(`[cache] OPFS error: ${(e as Error).message}, falling back to network`, "log-warn");
+    dbg("cache", `OPFS error: ${(e as Error).message}`);
     send_cache_status("error", (e as Error).message);
     return false;
   }
@@ -223,8 +220,8 @@ export async function write_all(
   });
 
   const elapsed = (performance.now() - t0).toFixed(0);
-  send_log(`[cache] wrote ${files.size} files (${format_size(total_bytes)}) to OPFS in ${elapsed}ms`);
-  send_cache_status("cached", `${files.size} files (${format_size(total_bytes)}) saved`);
+  dbg("cache", `wrote ${files.size} files (${format_size(total_bytes)}) to OPFS in ${elapsed}ms`);
+  send_cache_status("cached", `${files.size} files saved`);
 }
 
 // load xelatex.fmt from OPFS if available
@@ -235,7 +232,7 @@ export async function load_format(cached_files: Map<string, Uint8Array>): Promis
     const fmt_data = await read(dir, "xelatex.fmt");
     if (fmt_data) {
       cached_files.set("xelatex.fmt", fmt_data);
-      send_log(`[cache] loaded xelatex.fmt from OPFS (${format_size(fmt_data.byteLength)})`);
+      dbg("cache", `loaded xelatex.fmt from OPFS (${format_size(fmt_data.byteLength)})`);
     }
   } catch {
     // non-critical

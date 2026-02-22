@@ -1,15 +1,28 @@
 // project file store -- manages the in-memory file tree for multi-file projects
 
 import { createSignal } from "solid-js";
-import { createStore, produce } from "solid-js/store";
+import { createStore, produce, reconcile } from "solid-js/store";
 
-export type ProjectFile = {
-  name: string;
-  content: string;
-};
+export type FileContent = string | Uint8Array;
+export type ProjectFiles = Record<string, FileContent>;
+
+const BINARY_EXTS = new Set([
+  "png", "jpg", "jpeg", "gif", "bmp", "svg", "ico", "webp",
+  "ttf", "otf", "woff", "woff2",
+  "pdf", "eps", "ps",
+]);
+
+export function is_binary(name: string): boolean {
+  const ext = name.split(".").pop()?.toLowerCase() ?? "";
+  return BINARY_EXTS.has(ext);
+}
+
+export function is_text_ext(name: string): boolean {
+  return !is_binary(name);
+}
 
 export function create_project_store() {
-  const [files, set_files] = createStore<Record<string, string>>({
+  const [files, set_files] = createStore<ProjectFiles>({
     "main.tex": `\\documentclass{article}
 \\usepackage{amsmath}
 
@@ -33,6 +46,7 @@ This is a test document compiled with \\textbf{eztex} --- XeLaTeX in WebAssembly
 
   const [current_file, set_current_file] = createSignal("main.tex");
   const [main_file, set_main_file] = createSignal("main.tex");
+  const [revision, set_revision] = createSignal(0);
 
   // imperative change callback -- used by watch_controller to avoid SolidJS reactive churn
   let _on_change_cb: (() => void) | null = null;
@@ -48,7 +62,7 @@ This is a test document compiled with \\textbf{eztex} --- XeLaTeX in WebAssembly
     });
   }
 
-  function add_file(name: string, content: string = "") {
+  function add_file(name: string, content: FileContent = "") {
     set_files(produce((f) => { f[name] = content; }));
     set_current_file(name);
     _notify();
@@ -78,32 +92,44 @@ This is a test document compiled with \\textbf{eztex} --- XeLaTeX in WebAssembly
     _notify();
   }
 
-  function update_content(name: string, content: string) {
+  function update_content(name: string, content: FileContent) {
     set_files(produce((f) => { f[name] = content; }));
     _notify();
   }
 
-  function get_content(name: string): string {
+  function get_content(name: string): FileContent {
     return files[name] ?? "";
+  }
+
+  function get_text_content(name: string): string {
+    const c = files[name];
+    if (c instanceof Uint8Array) return "";
+    return c ?? "";
   }
 
   function clear_all() {
     const default_content = "\\documentclass{article}\n\\begin{document}\nHello world.\n\\end{document}\n";
-    set_files({ "main.tex": default_content });
+    set_files(reconcile({ "main.tex": default_content }));
     set_current_file("main.tex");
     set_main_file("main.tex");
+    set_revision(r => r + 1);
+    _notify();
   }
 
-  function load_files(new_files: Record<string, string>) {
-    set_files(new_files);
+  function load_files(new_files: ProjectFiles) {
+    set_files(reconcile(new_files));
     const names = Object.keys(new_files);
     const main_candidates = ["main.tex", "paper.tex", "thesis.tex", "document.tex"];
     let detected = names.find((n) => main_candidates.includes(n));
     if (!detected) {
-      detected = names.find((n) => new_files[n].includes("\\documentclass"));
+      detected = names.find((n) => {
+        const c = new_files[n];
+        return typeof c === "string" && c.includes("\\documentclass");
+      });
     }
     if (!detected) detected = names[0];
     set_main_file(detected);
+    set_revision(r => r + 1);
     set_current_file(detected);
     _notify();
   }
@@ -114,12 +140,14 @@ This is a test document compiled with \\textbf{eztex} --- XeLaTeX in WebAssembly
     set_current_file,
     main_file,
     set_main_file,
+    revision,
     file_names,
     add_file,
     remove_file,
     rename_file,
     update_content,
     get_content,
+    get_text_content,
     clear_all,
     load_files,
     on_change,

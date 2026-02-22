@@ -46,8 +46,28 @@ pub fn build(b: *std.Build) void {
         wasm_step.dependOn(&copy.step);
     }
 
-    // -- test step: flate bridge (native only) --
+    // -- unit tests (native only) --
     if (!is_wasm) {
+        const test_step = b.step("test", "Run all unit tests");
+
+        // pure zig modules (no C deps)
+        const pure_test_srcs: []const []const u8 = &.{
+            "src/Config.zig",
+            "src/MainDetect.zig",
+            "src/Watcher.zig",
+        };
+        for (pure_test_srcs) |src| {
+            const mod = b.createModule(.{
+                .root_source_file = b.path(src),
+                .target = target,
+                .optimize = optimize,
+            });
+            const t = b.addTest(.{ .root_module = mod });
+            const run_t = b.addRunArtifact(t);
+            test_step.dependOn(&run_t.step);
+        }
+
+        // flate tests (needs zlib)
         const zlib_dep = b.dependency("zlib", .{
             .target = target,
             .optimize = optimize,
@@ -66,8 +86,31 @@ pub fn build(b: *std.Build) void {
             .root_module = flate_test_mod,
         });
         const run_flate_tests = b.addRunArtifact(flate_tests);
-        const test_step = b.step("test-flate", "Run Flate bridge tests");
         test_step.dependOn(&run_flate_tests.step);
+
+        // keep test-flate as standalone alias
+        const flate_step = b.step("test-flate", "Run Flate bridge tests");
+        flate_step.dependOn(&run_flate_tests.step);
+    }
+
+    // -- integration test runner (native only) --
+    if (!is_wasm) {
+        const runner_exe = b.addExecutable(.{
+            .name = "test-runner",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("tests/runner.zig"),
+                .target = target,
+                .optimize = optimize,
+            }),
+        });
+
+        const run_runner = b.addRunArtifact(runner_exe);
+        run_runner.addArtifactArg(exe); // argv[1]: path to built eztex binary
+        run_runner.addArg(b.pathFromRoot("tests")); // argv[2]: tests directory
+        if (b.args) |args| run_runner.addArgs(args);
+
+        const integration_step = b.step("test-integration", "Run integration tests");
+        integration_step.dependOn(&run_runner.step);
     }
 }
 

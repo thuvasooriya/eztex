@@ -1,7 +1,13 @@
 import { type Component, createSignal, onMount, createEffect, Show } from "solid-js";
 import { worker_client } from "../lib/worker_client";
+import { clear_project } from "../lib/project_persist";
+import type { ProjectStore } from "../lib/project_store";
 
-const CachePill: Component = () => {
+type Props = {
+  store: ProjectStore;
+};
+
+const CachePill: Component<Props> = (props) => {
   const [cache_bytes, set_cache_bytes] = createSignal(0);
   const [clearing, set_clearing] = createSignal(false);
 
@@ -53,8 +59,12 @@ const CachePill: Component = () => {
   async function handle_clear() {
     set_clearing(true);
     try {
-      await worker_client.clear_cache();
+      await Promise.all([
+        worker_client.clear_cache(),
+        clear_project(),
+      ]);
     } catch { /* noop */ }
+    props.store.clear_all();
     await estimate_opfs();
     set_clearing(false);
   }

@@ -1,8 +1,11 @@
-import { type Component, Show, onCleanup } from "solid-js";
+import { type Component, Show, onCleanup, createSignal, createEffect } from "solid-js";
 import { worker_client } from "../lib/worker_client";
 import { create_watch_controller } from "../lib/watch_controller";
 import { read_zip, write_zip } from "../lib/zip_utils";
 import type { ProjectStore } from "../lib/project_store";
+import { is_binary, is_text_ext } from "../lib/project_store";
+import type { ProjectFiles } from "../lib/project_store";
+import { save_pdf, clear_project, clear_bundle_cache } from "../lib/project_persist";
 
 type Props = {
   store: ProjectStore;
@@ -25,6 +28,50 @@ const Logo: Component = () => (
 const Toolbar: Component<Props> = (props) => {
   let zip_input_ref: HTMLInputElement | undefined;
   let folder_input_ref: HTMLInputElement | undefined;
+  let file_input_ref: HTMLInputElement | undefined;
+  let upload_btn_ref: HTMLDivElement | undefined;
+  let new_btn_ref: HTMLDivElement | undefined;
+  let logo_btn_ref: HTMLDivElement | undefined;
+
+  const [show_upload_menu, set_show_upload_menu] = createSignal(false);
+  const [show_new_menu, set_show_new_menu] = createSignal(false);
+  const [show_logo_menu, set_show_logo_menu] = createSignal(false);
+
+  // close upload menu on click outside
+  createEffect(() => {
+    if (!show_upload_menu()) return;
+    const handler = (e: MouseEvent) => {
+      if (upload_btn_ref && !upload_btn_ref.contains(e.target as Node)) {
+        set_show_upload_menu(false);
+      }
+    };
+    document.addEventListener("click", handler);
+    onCleanup(() => document.removeEventListener("click", handler));
+  });
+
+  // close new menu on click outside
+  createEffect(() => {
+    if (!show_new_menu()) return;
+    const handler = (e: MouseEvent) => {
+      if (new_btn_ref && !new_btn_ref.contains(e.target as Node)) {
+        set_show_new_menu(false);
+      }
+    };
+    document.addEventListener("click", handler);
+    onCleanup(() => document.removeEventListener("click", handler));
+  });
+
+  // close logo menu on click outside
+  createEffect(() => {
+    if (!show_logo_menu()) return;
+    const handler = (e: MouseEvent) => {
+      if (logo_btn_ref && !logo_btn_ref.contains(e.target as Node)) {
+        set_show_logo_menu(false);
+      }
+    };
+    document.addEventListener("click", handler);
+    onCleanup(() => document.removeEventListener("click", handler));
+  });
 
   // watch controller -- imperative state machine, no SolidJS reactive scheduling
   const watch = create_watch_controller({
@@ -36,7 +83,17 @@ const Toolbar: Component<Props> = (props) => {
 
   // wire imperative callbacks (not reactive effects)
   props.store.on_change(() => watch.notify_change());
-  worker_client.on_compile_done(() => watch.notify_compile_done());
+  worker_client.on_compile_done(() => {
+    watch.notify_compile_done();
+    // persist PDF to OPFS after successful compile
+    const url = worker_client.pdf_url();
+    if (url) {
+      fetch(url)
+        .then((r) => r.arrayBuffer())
+        .then((buf) => save_pdf(new Uint8Array(buf)))
+        .catch(() => {});
+    }
+  });
 
   onCleanup(() => watch.cleanup());
 
@@ -46,10 +103,20 @@ const Toolbar: Component<Props> = (props) => {
   }
 
   // file actions (moved from FilePanel)
-  function handle_add() {
-    const name = prompt("File name (e.g. chapter1.tex):");
+  function handle_add_file() {
+    const name = prompt("File name (e.g. chapter1.tex or chapters/intro.tex):");
     if (!name || name.trim() === "") return;
     props.store.add_file(name.trim());
+  }
+
+  function handle_add_folder() {
+    const prev = props.store.current_file();
+    const name = prompt("Folder name (e.g. chapters):");
+    if (!name || !name.trim()) return;
+    let folder = name.trim().replace(/\/$/, "");
+    props.store.add_file(folder + "/.gitkeep");
+    // restore current file so .gitkeep doesn't open in editor
+    props.store.set_current_file(prev);
   }
 
   async function handle_zip_upload(e: Event) {
@@ -70,19 +137,40 @@ const Toolbar: Component<Props> = (props) => {
     const input = e.target as HTMLInputElement;
     const file_list = input.files;
     if (!file_list || file_list.length === 0) return;
-    const files: Record<string, string> = {};
+    const files: ProjectFiles = {};
     for (const file of Array.from(file_list)) {
       const path = file.webkitRelativePath || file.name;
       const parts = path.split("/");
       const name = parts.length > 1 ? parts.slice(1).join("/") : parts[0];
       if (name.startsWith(".") || name.startsWith("__MACOSX")) continue;
-      const ext = name.split(".").pop()?.toLowerCase() ?? "";
-      const text_exts = new Set(["tex", "sty", "cls", "bib", "bst", "def", "cfg", "txt", "md"]);
-      if (!text_exts.has(ext)) continue;
-      const content = await file.text();
-      files[name] = content;
+      if (is_binary(name)) {
+        const buf = await file.arrayBuffer();
+        files[name] = new Uint8Array(buf);
+      } else if (is_text_ext(name)) {
+        files[name] = await file.text();
+      }
     }
-    if (Object.keys(files).length === 0) { alert("No .tex files found in folder."); return; }
+    if (Object.keys(files).length === 0) { alert("No supported files found in folder."); return; }
+    props.store.load_files(files);
+    input.value = "";
+  }
+
+  async function handle_file_upload(e: Event) {
+    const input = e.target as HTMLInputElement;
+    const file_list = input.files;
+    if (!file_list || file_list.length === 0) return;
+    const files: ProjectFiles = {};
+    for (const file of Array.from(file_list)) {
+      const name = file.name;
+      if (name.startsWith(".")) continue;
+      if (is_binary(name)) {
+        const buf = await file.arrayBuffer();
+        files[name] = new Uint8Array(buf);
+      } else if (is_text_ext(name)) {
+        files[name] = await file.text();
+      }
+    }
+    if (Object.keys(files).length === 0) { alert("No supported files found."); return; }
     props.store.load_files(files);
     input.value = "";
   }
@@ -97,10 +185,44 @@ const Toolbar: Component<Props> = (props) => {
     URL.revokeObjectURL(url);
   }
 
+  async function handle_reset() {
+    if (!confirm("Reset everything? This deletes all project files and cached bundles.")) return;
+    set_show_logo_menu(false);
+    await clear_project();
+    await clear_bundle_cache();
+    window.location.reload();
+  }
+
+  function handle_download_pdf() {
+    const url = worker_client.pdf_url();
+    if (!url) return;
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "output.pdf";
+    a.click();
+  }
+
   return (
     <header class="toolbar">
       <div class="toolbar-left">
-        <Logo />
+        <div class="logo-menu-wrapper" ref={logo_btn_ref}>
+          <button class="logo-btn" title="eztex menu" onClick={() => set_show_logo_menu(v => !v)}>
+            <Logo />
+          </button>
+          <Show when={show_logo_menu()}>
+            <div class="upload-dropdown logo-dropdown">
+              <button class="upload-dropdown-item danger-item" onClick={handle_reset}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <polyline points="3 6 5 6 21 6" />
+                  <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" />
+                  <path d="M10 11v6M14 11v6" />
+                  <path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2" />
+                </svg>
+                Reset everything
+              </button>
+            </div>
+          </Show>
+        </div>
         <div class="toolbar-divider" />
         <Show when={props.on_toggle_files}>
           <button
@@ -116,36 +238,78 @@ const Toolbar: Component<Props> = (props) => {
           </button>
         </Show>
         <div class="toolbar-file-actions">
-            <button class="toolbar-toggle" title="New file" onClick={handle_add}>
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                <line x1="12" y1="5" x2="12" y2="19" />
-                <line x1="5" y1="12" x2="19" y2="12" />
-              </svg>
-            </button>
-            <button class="toolbar-toggle" title="Upload zip" onClick={() => zip_input_ref?.click()}>
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
-                <polyline points="17 8 12 3 7 8" />
-                <line x1="12" y1="3" x2="12" y2="15" />
-              </svg>
-            </button>
-            <button class="toolbar-toggle" title="Upload folder" onClick={() => folder_input_ref?.click()}>
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z" />
-              </svg>
+            <div class="upload-menu-wrapper" ref={new_btn_ref}>
+              <button class="toolbar-toggle" title="New file or folder" onClick={() => set_show_new_menu(v => !v)}>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <line x1="12" y1="5" x2="12" y2="19" />
+                  <line x1="5" y1="12" x2="19" y2="12" />
+                </svg>
+              </button>
+              <Show when={show_new_menu()}>
+                <div class="upload-dropdown">
+                  <button class="upload-dropdown-item" onClick={() => { handle_add_file(); set_show_new_menu(false); }}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                      <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+                      <polyline points="14 2 14 8 20 8" />
+                    </svg>
+                    New File
+                  </button>
+                  <button class="upload-dropdown-item" onClick={() => { handle_add_folder(); set_show_new_menu(false); }}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                      <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z" />
+                    </svg>
+                    New Folder
+                  </button>
+                </div>
+              </Show>
+            </div>
+            <div class="upload-menu-wrapper" ref={upload_btn_ref}>
+              <button class="toolbar-toggle" title="Upload files or folder" onClick={() => set_show_upload_menu(v => !v)}>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+                  <polyline points="17,8 12,3 7,8"/>
+                  <line x1="12" y1="3" x2="12" y2="15"/>
+                </svg>
+              </button>
+              <Show when={show_upload_menu()}>
+                <div class="upload-dropdown">
+                  <button class="upload-dropdown-item" onClick={() => { file_input_ref?.click(); set_show_upload_menu(false); }}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                      <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+                      <polyline points="14 2 14 8 20 8" />
+                    </svg>
+                    Upload Files
+                  </button>
+                  <button class="upload-dropdown-item" onClick={() => { folder_input_ref?.click(); set_show_upload_menu(false); }}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                      <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z" />
+                    </svg>
+                    Upload Folder
+                  </button>
+                </div>
+              </Show>
+            </div>
+            <button class="toolbar-toggle" title="Import zip" onClick={() => zip_input_ref?.click()}>
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-package-open-icon lucide-package-open"><path d="M12 22v-9"/><path d="M15.17 2.21a1.67 1.67 0 0 1 1.63 0L21 4.57a1.93 1.93 0 0 1 0 3.36L8.82 14.79a1.655 1.655 0 0 1-1.64 0L3 12.43a1.93 1.93 0 0 1 0-3.36z"/><path d="M20 13v3.87a2.06 2.06 0 0 1-1.11 1.83l-6 3.08a1.93 1.93 0 0 1-1.78 0l-6-3.08A2.06 2.06 0 0 1 4 16.87V13"/><path d="M21 12.43a1.93 1.93 0 0 0 0-3.36L8.83 2.2a1.64 1.64 0 0 0-1.63 0L3 4.57a1.93 1.93 0 0 0 0 3.36l12.18 6.86a1.636 1.636 0 0 0 1.63 0z"/></svg>
             </button>
             <button class="toolbar-toggle" title="Download zip" onClick={handle_download_zip}>
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
-                <polyline points="7 10 12 15 17 10" />
-                <line x1="12" y1="15" x2="12" y2="3" />
-              </svg>
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-package-icon lucide-package"><path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z"/><path d="M12 22V12"/><polyline points="3.29 7 12 12 20.71 7"/><path d="m7.5 4.27 9 5.15"/></svg>
             </button>
           </div>
         <input ref={zip_input_ref} type="file" accept=".zip" style={{ display: "none" }} onChange={handle_zip_upload} />
+        <input ref={file_input_ref} type="file" multiple accept=".tex,.bib,.sty,.cls,.png,.jpg,.jpeg,.gif,.webp,.svg,.ttf,.otf,.woff,.woff2,.pdf" style={{ display: "none" }} onChange={handle_file_upload} />
         <input ref={folder_input_ref} type="file" {...{ webkitdirectory: true } as any} style={{ display: "none" }} onChange={handle_folder_upload} />
       </div>
       <div class="toolbar-right">
+        <Show when={worker_client.pdf_url()}>
+          <button class="toolbar-toggle" title="Download PDF" onClick={handle_download_pdf}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="7,10 12,15 17,10"/>
+              <line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+          </button>
+        </Show>
         <Show when={props.on_toggle_preview}>
           <button
             class={`toolbar-toggle ${props.preview_visible ? "active" : ""}`}

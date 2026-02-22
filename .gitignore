@@ -2,9 +2,7 @@
 **/.zig-cache/
 ref/
 tmp/
-**/**.pdf
 /worker/
 **/node_modules/
-**/.wrangler
-tests/
+tests/tmp/
 **/eztex.wasm

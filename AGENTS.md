@@ -1,13 +1,6 @@
 # RULES
 
-This is a very large codebase with lot's of files. You MUST be smart about reading files and not filling up the contex window. You MUST use limit and offset in read tool and grep and rg and other filtering tools to get focused results and knowledge without wasting context.
-
-If a solution doesn't exist or not working or not provided by Standard Library, we MUST BE confident and write our own implementation in Zig with the modern principles.
-
 DO NOT assume anything. We might have bugs in zig or zig std functions as well. so we need to think from first principles and verify and debug fundamentally in those cases.
-
-MUST write reports, findings, research docs in tmp/docs/
-refer inside tmp/docs/ to analyze if we already have information on a topic of interest
 
 # Zig 0.15 API Reference
 

@@ -2,16 +2,17 @@
 // decoupled from SolidJS reactivity to avoid spurious triggers
 
 import { createSignal } from "solid-js";
+import type { ProjectFiles } from "./project_store";
 
 export type WatchState = "idle" | "scheduled" | "compiling" | "dirty_compiling";
 
 export type CompileRequest = {
-  files: Record<string, string>;
+  files: ProjectFiles;
   main: string;
 };
 
 type WatchDeps = {
-  get_files: () => Record<string, string>;
+  get_files: () => ProjectFiles;
   get_main: () => string;
   is_ready: () => boolean;
   compile: (req: CompileRequest) => void;
@@ -23,7 +24,7 @@ const DIRTY_DEBOUNCE_MS = 200;
 
 // FNV-1a hash of all project files (name + content, sorted by key)
 // ~1GB/s in JS -- negligible for typical LaTeX projects
-function hash_files(files: Record<string, string>): number {
+function hash_files(files: ProjectFiles): number {
   let h = 0x811c9dc5;
   const keys = Object.keys(files).sort();
   for (let k = 0; k < keys.length; k++) {
@@ -33,8 +34,14 @@ function hash_files(files: Record<string, string>): number {
       h = Math.imul(h, 0x01000193);
     }
     const val = files[key];
-    for (let i = 0; i < val.length; i++) {
-      h ^= val.charCodeAt(i);
+    if (typeof val === "string") {
+      for (let i = 0; i < val.length; i++) {
+        h ^= val.charCodeAt(i);
+        h = Math.imul(h, 0x01000193);
+      }
+    } else {
+      // Uint8Array: hash byteLength as proxy (avoid byte-by-byte for large binaries)
+      h ^= val.byteLength;
       h = Math.imul(h, 0x01000193);
     }
   }
