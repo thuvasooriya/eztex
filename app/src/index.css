@@ -70,6 +70,7 @@ body {
   flex-shrink: 0;
   gap: 8px;
   z-index: 10;
+  position: relative;
 }
 
 .toolbar-left {
@@ -240,14 +241,14 @@ body {
 
 /* === progress bar === */
 .progress-bar-container {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
   height: 2px;
-  background: transparent;
-  flex-shrink: 0;
   overflow: hidden;
-}
-
-.progress-bar-container.active {
-  background: var(--bg-lighter);
+  transition: opacity 200ms ease;
+  pointer-events: none;
 }
 
 .progress-bar-fill {
@@ -255,6 +256,27 @@ body {
   background: var(--accent);
   transition: width 200ms ease;
   border-radius: 0 1px 1px 0;
+}
+
+@keyframes progress-shimmer {
+  0%   { background-position: 200% center; }
+  100% { background-position: -200% center; }
+}
+
+.progress-bar-indeterminate {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--accent) 40%,
+    var(--fg) 50%,
+    var(--accent) 60%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: progress-shimmer 1.8s ease-in-out infinite;
+  opacity: 0.7;
 }
 
 /* === workspace === */

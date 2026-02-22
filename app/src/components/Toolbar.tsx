@@ -1,5 +1,6 @@
 import { type Component, Show, onCleanup, createSignal, createEffect } from "solid-js";
 import { worker_client } from "../lib/worker_client";
+import ProgressBar from "./ProgressBar";
 import { create_watch_controller } from "../lib/watch_controller";
 import { read_zip, write_zip } from "../lib/zip_utils";
 import type { ProjectStore } from "../lib/project_store";
@@ -79,6 +80,7 @@ const Toolbar: Component<Props> = (props) => {
     get_main: () => props.store.main_file(),
     is_ready: () => worker_client.ready() && !worker_client.compiling(),
     compile: (req) => worker_client.compile(req),
+    cancel_and_recompile: (req) => worker_client.cancel_and_recompile(req),
   });
 
   // wire imperative callbacks (not reactive effects)
@@ -352,6 +354,7 @@ const Toolbar: Component<Props> = (props) => {
           {worker_client.compiling() ? "Compiling..." : "Compile"}
         </button>
       </div>
+      <ProgressBar />
     </header>
   );
 };

@@ -1,5 +1,9 @@
 // watch controller -- state machine for auto-compile scheduling
 // decoupled from SolidJS reactivity to avoid spurious triggers
+//
+// cancel support: when a compile has been running longer than CANCEL_THRESHOLD_MS
+// and the user makes changes, we cancel via worker_client.cancel_and_recompile()
+// which swaps to a pre-initialized standby worker for instant responsiveness.
 
 import { createSignal } from "solid-js";
 import type { ProjectFiles } from "./project_store";
@@ -16,11 +20,14 @@ type WatchDeps = {
   get_main: () => string;
   is_ready: () => boolean;
   compile: (req: CompileRequest) => void;
+  cancel_and_recompile?: (req: CompileRequest) => boolean;
 };
 
 const DEBOUNCE_MS = 400;
 const MAX_WAIT_MS = 2000;
 const DIRTY_DEBOUNCE_MS = 200;
+// minimum compile duration before we consider cancelling (avoid churn on fast compiles)
+const CANCEL_THRESHOLD_MS = 3000;
 
 // FNV-1a hash of all project files (name + content, sorted by key)
 // ~1GB/s in JS -- negligible for typical LaTeX projects
@@ -57,6 +64,7 @@ export function create_watch_controller(deps: WatchDeps) {
   let max_wait_timer: ReturnType<typeof setTimeout> | undefined;
   let last_compiled_hash: number = 0;
   let pre_compile_hash: number = 0;
+  let compile_started_at: number = 0;
 
   function clear_timers() {
     if (debounce_timer !== undefined) { clearTimeout(debounce_timer); debounce_timer = undefined; }
@@ -80,9 +88,34 @@ export function create_watch_controller(deps: WatchDeps) {
     }
 
     pre_compile_hash = h;
+    compile_started_at = performance.now();
     set_state("compiling");
     set_dirty(false);
     deps.compile({ files: { ...files }, main: deps.get_main() });
+  }
+
+  // attempt to cancel the running compile and immediately start a new one.
+  // returns true if cancel succeeded (standby was ready), false otherwise.
+  function try_cancel_and_recompile(): boolean {
+    if (!deps.cancel_and_recompile) return false;
+
+    const files = deps.get_files();
+    const h = hash_files(files);
+    if (h === last_compiled_hash) {
+      // content hasn't actually changed from last successful compile
+      return false;
+    }
+
+    const req: CompileRequest = { files: { ...files }, main: deps.get_main() };
+    const swapped = deps.cancel_and_recompile(req);
+    if (swapped) {
+      pre_compile_hash = h;
+      compile_started_at = performance.now();
+      set_state("compiling");
+      set_dirty(false);
+      return true;
+    }
+    return false;
   }
 
   // called by project_store on any content/structure change
@@ -90,14 +123,18 @@ export function create_watch_controller(deps: WatchDeps) {
     if (!enabled()) return;
     const current = state();
 
-    if (current === "compiling") {
+    if (current === "compiling" || current === "dirty_compiling") {
+      const elapsed = performance.now() - compile_started_at;
+      if (elapsed >= CANCEL_THRESHOLD_MS) {
+        // compile has been running long enough -- try to cancel and recompile
+        if (try_cancel_and_recompile()) {
+          // successfully swapped to standby and fired new compile
+          return;
+        }
+      }
+      // either too early to cancel, or standby not ready -- mark dirty and wait
       set_state("dirty_compiling");
       set_dirty(true);
-      return;
-    }
-
-    if (current === "dirty_compiling") {
-      // already marked dirty, will re-schedule after compile
       return;
     }
 

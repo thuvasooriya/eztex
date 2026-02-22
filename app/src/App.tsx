@@ -3,7 +3,7 @@ import { worker_client } from "./lib/worker_client";
 import { create_project_store } from "./lib/project_store";
 import { save_project, load_project, load_pdf } from "./lib/project_persist";
 import Toolbar from "./components/Toolbar";
-import ProgressBar from "./components/ProgressBar";
+
 import FilePanel from "./components/FilePanel";
 import Editor from "./components/Editor";
 import Preview from "./components/Preview";
@@ -137,7 +137,6 @@ const App: Component = () => {
         files_visible={files_visible()}
         preview_visible={is_narrow() ? show_preview_in_narrow() : preview_visible()}
       />
-      <ProgressBar />
       <div class={workspace_class()}>
         {/* file panel: overlay in narrow, inline in wide */}
         <Show when={files_visible() && !is_narrow()}>

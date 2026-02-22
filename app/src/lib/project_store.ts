@@ -48,10 +48,13 @@ This is a test document compiled with \\textbf{eztex} --- XeLaTeX in WebAssembly
   const [main_file, set_main_file] = createSignal("main.tex");
   const [revision, set_revision] = createSignal(0);
 
-  // imperative change callback -- used by watch_controller to avoid SolidJS reactive churn
-  let _on_change_cb: (() => void) | null = null;
-  function on_change(cb: () => void) { _on_change_cb = cb; }
-  function _notify() { _on_change_cb?.(); }
+  // imperative change callbacks -- supports multiple subscribers
+  const _on_change_cbs: Array<() => void> = [];
+  function on_change(cb: () => void): () => void {
+    _on_change_cbs.push(cb);
+    return () => { const i = _on_change_cbs.indexOf(cb); if (i >= 0) _on_change_cbs.splice(i, 1); };
+  }
+  function _notify() { for (const cb of _on_change_cbs) cb(); }
 
   function file_names(): string[] {
     return Object.keys(files).sort((a, b) => {

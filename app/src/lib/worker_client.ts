@@ -29,9 +29,16 @@ const [last_elapsed, set_last_elapsed] = createSignal<string | null>(null);
 let worker: Worker | null = null;
 let prev_pdf_url: string | null = null;
 
-// imperative compile-done callback -- used by watch_controller
-let _on_compile_done_cb: (() => void) | null = null;
-function on_compile_done(cb: () => void) { _on_compile_done_cb = cb; }
+// imperative compile-done callbacks -- supports multiple subscribers
+const _on_compile_done_cbs: Array<() => void> = [];
+function on_compile_done(cb: () => void): () => void {
+  _on_compile_done_cbs.push(cb);
+  return () => { const i = _on_compile_done_cbs.indexOf(cb); if (i >= 0) _on_compile_done_cbs.splice(i, 1); };
+}
+
+// imperative ready callback -- used by App for auto-compile on load
+let _on_ready_cb: (() => void) | null = null;
+function on_ready(cb: () => void) { _on_ready_cb = cb; }
 
 // detect ?debug=1 query param for debug mode passthrough to worker
 const _debug = typeof window !== "undefined" && new URLSearchParams(window.location.search).has("debug");
@@ -91,7 +98,7 @@ function handle_message(e: MessageEvent) {
           set_status_text("Success");
         }
       });
-      _on_compile_done_cb?.();
+      for (const cb of _on_compile_done_cbs) cb();
       break;
     }
   }
@@ -117,12 +124,18 @@ function compile(req: CompileRequest) {
   set_compiling(true);
   set_status("compiling");
   set_status_text("Compiling...");
+  set_progress(0);
   worker.postMessage({
     type: "compile",
     files: req.files,
     main: req.main,
     debug: _debug,
   });
+}
+
+// stub: SAB-based cancellation not yet implemented -- falls back to dirty_compiling in watch_controller
+function cancel_and_recompile(_req: CompileRequest): boolean {
+  return false;
 }
 
 function clear_cache() {
@@ -137,13 +150,10 @@ function restore_pdf_url(url: string) {
   set_pdf_url(url);
 }
 
-// imperative ready callback -- used by App for auto-compile on load
-let _on_ready_cb: (() => void) | null = null;
-function on_ready(cb: () => void) { _on_ready_cb = cb; }
-
 export const worker_client = {
   init: init_worker,
   compile,
+  cancel_and_recompile,
   clear_cache,
   clear_logs,
   on_compile_done,
