@@ -1036,16 +1036,16 @@ is_pfb (rust_input_handle_t handle)
 
     ttstub_input_seek (handle, 0, SEEK_SET);
 
-    if ((ch = ttstub_input_getc(handle)) != 128 || (ch = ttstub_input_getc(handle)) < 0 || ch > 3)
+    if ((ch = ttbc_input_getc(handle)) != 128 || (ch = ttbc_input_getc(handle)) < 0 || ch > 3)
         return false;
 
     for (i = 0; i < 4; i++) {
-        if ((ch = ttstub_input_getc(handle)) < 0)
+        if ((ch = ttbc_input_getc(handle)) < 0)
             return false;
     }
 
     for (i = 0; i < 14; i++) {
-        if ((ch = ttstub_input_getc(handle)) < 0)
+        if ((ch = ttbc_input_getc(handle)) < 0)
             return false;
 
         sig[i] = (char) ch;
@@ -1078,13 +1078,13 @@ get_pfb_segment (rust_input_handle_t handle, int expected_type, int *length)
     while (1) {
         int ch, slen, rlen, i;
 
-        ch = ttstub_input_getc(handle);
+        ch = ttbc_input_getc(handle);
         if (ch < 0)
             break;
         if (ch != 128)
             _tt_abort("Not a pfb file?");
 
-        ch = ttstub_input_getc(handle);
+        ch = ttbc_input_getc(handle);
         if (ch < 0 || ch != expected_type) {
             ttstub_input_seek(handle, -2, SEEK_CUR);
             break;
@@ -1093,7 +1093,7 @@ get_pfb_segment (rust_input_handle_t handle, int expected_type, int *length)
         slen = 0;
 
         for (i = 0; i < 4; i++) {
-            if ((ch = ttstub_input_getc(handle)) < 0) {
+            if ((ch = ttbc_input_getc(handle)) < 0) {
                 free(buffer);
                 return NULL;
             }
@@ -1103,7 +1103,7 @@ get_pfb_segment (rust_input_handle_t handle, int expected_type, int *length)
 
         buffer = RENEW(buffer, bytesread + slen, unsigned char);
         while (slen > 0) {
-            rlen = ttstub_input_read(handle, (char *) buffer + bytesread, slen);
+            rlen = ttbc_input_read(handle, (char *) buffer + bytesread, slen);
             if (rlen < 0) {
                 free(buffer);
                 return NULL;

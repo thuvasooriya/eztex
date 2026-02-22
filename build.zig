@@ -53,8 +53,11 @@ pub fn build(b: *std.Build) void {
         // pure zig modules (no C deps)
         const pure_test_srcs: []const []const u8 = &.{
             "src/Config.zig",
+            "src/Format.zig",
+            "src/FormatCache.zig",
             "src/MainDetect.zig",
             "src/Watcher.zig",
+            "src/World.zig",
         };
         for (pure_test_srcs) |src| {
             const mod = b.createModule(.{

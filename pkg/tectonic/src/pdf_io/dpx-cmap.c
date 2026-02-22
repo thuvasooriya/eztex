@@ -899,7 +899,7 @@ CMap_cache_find (const char *cmap_name)
             return id;
     }
 
-    handle = ttstub_input_open(cmap_name, TTBC_FILE_FORMAT_CMAP, 0);
+    handle = ttbc_input_open(cmap_name, TTBC_FILE_FORMAT_CMAP, 0);
     if (handle == INVALID_HANDLE)
         return -1;
 

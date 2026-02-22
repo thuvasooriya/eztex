@@ -12,7 +12,6 @@
 int tt_xetex_set_int_variable (const char *var_name, int value);
 int tt_xetex_set_string_variable (const char *var_name, const char *value);
 int tt_engine_xetex_main(
-    ttbc_state_t *api,
     const char *dump_name,
     const char *input_file_name,
     uint64_t build_date
@@ -50,14 +49,13 @@ tt_xetex_set_string_variable (const char *var_name, const char *value)
 
 int
 tt_engine_xetex_main(
-    ttbc_state_t *api,
     const char *dump_name,
     const char *input_file_name,
     uint64_t build_date
 ) {
     int rv;
 
-    if (setjmp(*ttbc_global_engine_enter(api))) {
+    if (setjmp(*ttbc_global_engine_enter())) {
         ttbc_global_engine_exit();
         return HISTORY_FATAL_ERROR;
     }

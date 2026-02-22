@@ -108,7 +108,7 @@ tt_mfgets (char *buffer, int length, rust_input_handle_t file)
 {
     int ch = 0, i = 0;
 
-    while (i < length - 1 && (ch = ttstub_input_getc (file)) >= 0 && ch != '\n' && ch != '\r')
+    while (i < length - 1 && (ch = ttbc_input_getc (file)) >= 0 && ch != '\n' && ch != '\r')
         buffer[i++] = ch;
 
     buffer[i] = '\0';
@@ -116,8 +116,8 @@ tt_mfgets (char *buffer, int length, rust_input_handle_t file)
     if (ch < 0 && i == 0)
         return NULL;
 
-    if (ch == '\r' && (ch = ttstub_input_getc (file)) >= 0 && (ch != '\n'))
-        ttstub_input_ungetc (file, ch);
+    if (ch == '\r' && (ch = ttbc_input_getc (file)) >= 0 && (ch != '\n'))
+        ttbc_input_ungetc (file, ch);
 
     return buffer;
 }

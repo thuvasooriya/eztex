@@ -16,7 +16,7 @@ char *name_of_input_file = NULL;
 // Tectonic: This buffer is used for SyncTeX, which needs to emit absolute
 // filesystem paths -- which are difficult to derive in our virtualized I/O
 // system. The most backwards-compatible way to expose this information to the
-// engine was to add the `ttstub_get_last_input_abspath()` API used below.
+// engine was to add the `ttbc_get_last_input_abspath()` API used below.
 char abspath_of_input_file[1024] = "";
 
 rust_input_handle_t
@@ -25,7 +25,7 @@ tt_xetex_open_input (int filefmt)
     rust_input_handle_t handle;
 
     if (filefmt == TTBC_FILE_FORMAT_TECTONIC_PRIMARY) {
-        handle = ttstub_input_open_primary ();
+        handle = ttbc_input_open_primary ();
     } else if (name_of_file[0] == '|') {
         // Tectonic TODO: issue #859. In mainline XeTeX, a pipe symbol indicates
         // piped input from an external command via `popen()`. Now that we have
@@ -37,13 +37,13 @@ tt_xetex_open_input (int filefmt)
         capture_to_diagnostic(NULL);
         return INVALID_HANDLE;
     } else {
-        handle = ttstub_input_open (name_of_file, (ttbc_file_format) filefmt, 0);
+        handle = ttbc_input_open (name_of_file, (ttbc_file_format) filefmt, 0);
     }
 
     if (handle == INVALID_HANDLE)
         return INVALID_HANDLE;
 
-    if (ttstub_get_last_input_abspath(abspath_of_input_file, sizeof(abspath_of_input_file)) < 1) {
+    if (ttbc_get_last_input_abspath(abspath_of_input_file, sizeof(abspath_of_input_file)) < 1) {
         abspath_of_input_file[0] = '\0';
     }
 
@@ -143,8 +143,8 @@ u_open_in(UFILE **f, int32_t filefmt, const char *fopen_mode, int32_t mode, int3
 
     if (mode == AUTO) {
         /* sniff encoding form */
-        B1 = ttstub_input_getc ((*f)->handle);
-        B2 = ttstub_input_getc ((*f)->handle);
+        B1 = ttbc_input_getc ((*f)->handle);
+        B2 = ttbc_input_getc ((*f)->handle);
 
         if (B1 == 0xfe && B2 == 0xff)
             mode = UTF16BE;
@@ -157,7 +157,7 @@ u_open_in(UFILE **f, int32_t filefmt, const char *fopen_mode, int32_t mode, int3
             mode = UTF16LE;
             ttstub_input_seek ((*f)->handle, 0, SEEK_SET);
         } else if (B1 == 0xEF && B2 == 0xBB) {
-            int B3 = ttstub_input_getc((*f)->handle);
+            int B3 = ttbc_input_getc((*f)->handle);
             if (B3 == 0xBF)
                 mode = UTF8;
         }
@@ -241,17 +241,17 @@ input_line(UFILE* f)
             byteBuffer = xmalloc(buf_size + 1);
 
         /* Recognize either LF or CR as a line terminator; skip initial LF if prev line ended with CR.  */
-        i = ttstub_input_getc (f->handle);
+        i = ttbc_input_getc (f->handle);
         if (f->skipNextLF) {
             f->skipNextLF = 0;
             if (i == '\n')
-                i = ttstub_input_getc (f->handle);
+                i = ttbc_input_getc (f->handle);
         }
 
         if (i != EOF && i != '\n' && i != '\r')
             byteBuffer[bytesRead++] = i;
         if (i != EOF && i != '\n' && i != '\r')
-            while (bytesRead < buf_size && (i = ttstub_input_getc(f->handle)) != EOF && i != '\n' && i != '\r')
+            while (bytesRead < buf_size && (i = ttbc_input_getc(f->handle)) != EOF && i != '\n' && i != '\r')
                 byteBuffer[bytesRead++] = i;
 
         if (i == EOF && errno != EINTR && bytesRead == 0)
@@ -384,25 +384,25 @@ get_uni_c(UFILE* f)
 
     switch (f->encodingMode) {
         case UTF8:
-            c = rval = ttstub_input_getc(f->handle);
+            c = rval = ttbc_input_getc(f->handle);
             if (rval != EOF) {
                 uint16_t extraBytes = bytesFromUTF8[rval];
                 switch (extraBytes) {
                 /* note: code falls through cases! */
                 case 3:
-                    c = ttstub_input_getc(f->handle);
+                    c = ttbc_input_getc(f->handle);
                     if (c < 0x80 || c >= 0xC0)
                         goto bad_utf8;
                     rval <<= 6;
                     rval += c;
                 case 2:
-                    c = ttstub_input_getc(f->handle);
+                    c = ttbc_input_getc(f->handle);
                     if (c < 0x80 || c >= 0xC0)
                         goto bad_utf8;
                     rval <<= 6;
                     rval += c;
                 case 1:
-                    c = ttstub_input_getc(f->handle);
+                    c = ttbc_input_getc(f->handle);
                     if (c < 0x80 || c >= 0xC0)
                         goto bad_utf8;
                     rval <<= 6;
@@ -412,7 +412,7 @@ get_uni_c(UFILE* f)
 
                 bad_utf8:
                     if (c != EOF)
-                        ttstub_input_ungetc(f->handle, c);
+                        ttbc_input_ungetc(f->handle, c);
                 case 5:
                 case 4:
                     bad_utf8_warning();
@@ -429,14 +429,14 @@ get_uni_c(UFILE* f)
             break;
 
         case UTF16BE:
-            rval = ttstub_input_getc(f->handle);
+            rval = ttbc_input_getc(f->handle);
             if (rval != EOF) {
                 rval <<= 8;
-                rval += ttstub_input_getc(f->handle);
+                rval += ttbc_input_getc(f->handle);
                 if (rval >= 0xd800 && rval <= 0xdbff) {
-                    int lo = ttstub_input_getc(f->handle);
+                    int lo = ttbc_input_getc(f->handle);
                     lo <<= 8;
-                    lo += ttstub_input_getc(f->handle);
+                    lo += ttbc_input_getc(f->handle);
                     if (lo >= 0xdc00 && lo <= 0xdfff)
                         rval = 0x10000 + (rval - 0xd800) * 0x400 + (lo - 0xdc00);
                     else {
@@ -449,12 +449,12 @@ get_uni_c(UFILE* f)
             break;
 
         case UTF16LE:
-            rval = ttstub_input_getc(f->handle);
+            rval = ttbc_input_getc(f->handle);
             if (rval != EOF) {
-                rval += (ttstub_input_getc(f->handle) << 8);
+                rval += (ttbc_input_getc(f->handle) << 8);
                 if (rval >= 0xd800 && rval <= 0xdbff) {
-                    int lo = ttstub_input_getc(f->handle);
-                    lo += (ttstub_input_getc(f->handle) << 8);
+                    int lo = ttbc_input_getc(f->handle);
+                    lo += (ttbc_input_getc(f->handle) << 8);
                     if (lo >= 0xdc00 && lo <= 0xdfff)
                         rval = 0x10000 + (rval - 0xd800) * 0x400 + (lo - 0xdc00);
                     else {
@@ -467,7 +467,7 @@ get_uni_c(UFILE* f)
             break;
 
         case RAW:
-            rval = ttstub_input_getc(f->handle);
+            rval = ttbc_input_getc(f->handle);
             break;
 
         default:

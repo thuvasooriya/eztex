@@ -56,7 +56,7 @@ static peekable_input_t *peekable_open(const char *path,
   rust_input_handle_t handle;
   peekable_input_t *peekable;
 
-  handle = ttstub_input_open(path, format, 0);
+  handle = ttbc_input_open(path, format, 0);
   if (handle == NULL) {
     return NULL;
   }
@@ -88,7 +88,7 @@ static int peekable_getc(peekable_input_t *peekable) {
     return rv;
   }
 
-  rv = ttstub_input_getc(peekable->handle);
+  rv = ttbc_input_getc(peekable->handle);
   if (rv == EOF)
     peekable->saw_eof = true;
   return rv;
@@ -422,18 +422,18 @@ static int32_t min_crossrefs;
 /*:473*/ /*12: */ /*3: */
 
 static void putc_log(const int c) {
-  ttstub_output_putc(log_file, c);
-  ttstub_output_putc(standard_output, c);
+  ttbc_output_putc(log_file, c);
+  ttbc_output_putc(standard_output, c);
 }
 
 static void puts_log(const char *s) {
   size_t len = strlen(s);
-  ttstub_output_write(log_file, s, len);
-  ttstub_output_write(standard_output, s, len);
+  ttbc_output_write(log_file, s, len);
+  ttbc_output_write(standard_output, s, len);
 }
 
 static void ttstub_puts(rust_output_handle_t handle, const char *s) {
-  ttstub_output_write(handle, s, strlen(s));
+  ttbc_output_write(handle, s, strlen(s));
 }
 
 #define FMT_BUF_SIZE 1024
@@ -530,7 +530,7 @@ static void out_pool_str(rust_output_handle_t handle, str_number s) {
   }
 
   for (i = str_start[s]; i < str_start[s + 1]; i++)
-    ttstub_output_putc(handle, str_pool[i]);
+    ttbc_output_putc(handle, str_pool[i]);
 }
 
 static void print_a_pool_str(str_number s) {
@@ -547,7 +547,7 @@ static void out_token(rust_output_handle_t handle) {
   buf_pointer i = buf_ptr1;
 
   while (i < buf_ptr2)
-    ttstub_output_putc(handle, buffer[i++]);
+    ttbc_output_putc(handle, buffer[i++]);
 }
 
 static void print_a_token(void) {
@@ -607,10 +607,10 @@ static void sam_wrong_file_name_print(void) {
 
   name_ptr = 0;
   while (name_ptr <= name_length)
-    ttstub_output_putc(standard_output, name_of_file[name_ptr++]);
+    ttbc_output_putc(standard_output, name_of_file[name_ptr++]);
 
-  ttstub_output_putc(standard_output, '\'');
-  ttstub_output_putc(standard_output, '\n');
+  ttbc_output_putc(standard_output, '\'');
+  ttbc_output_putc(standard_output, '\n');
 }
 
 static void print_aux_name(void) {
@@ -620,7 +620,7 @@ static void print_aux_name(void) {
 
 static void log_pr_aux_name(void) {
   out_pool_str(log_file, aux_list[aux_ptr]);
-  ttstub_output_putc(log_file, '\n');
+  ttbc_output_putc(log_file, '\n');
 }
 
 static void aux_err_print(void) {
@@ -670,7 +670,7 @@ static void print_bib_name(void) {
 static void log_pr_bib_name(void) {
   out_pool_str(log_file, bib_list[bib_ptr]);
   out_pool_str(log_file, s_bib_extension);
-  ttstub_output_putc(log_file, '\n');
+  ttbc_output_putc(log_file, '\n');
 }
 
 static void print_bst_name(void) {
@@ -682,7 +682,7 @@ static void print_bst_name(void) {
 static void log_pr_bst_name(void) {
   out_pool_str(log_file, bst_str);
   out_pool_str(log_file, s_bst_extension);
-  ttstub_output_putc(log_file, '\n');
+  ttbc_output_putc(log_file, '\n');
 }
 
 static void hash_cite_confusion(void) {
@@ -1044,12 +1044,12 @@ static void output_bbl_line(void) {
     out_buf_ptr = 0;
 
     while (out_buf_ptr < out_buf_length) {
-      ttstub_output_putc(bbl_file, out_buf[out_buf_ptr]);
+      ttbc_output_putc(bbl_file, out_buf[out_buf_ptr]);
       out_buf_ptr++;
     }
   }
 
-  ttstub_output_putc(bbl_file, '\n');
+  ttbc_output_putc(bbl_file, '\n');
   bbl_line_num++;
   out_buf_length = 0;
 }
@@ -4864,14 +4864,14 @@ static int get_the_top_level_aux_file_name(const char *aux_file_name) {
   }
 
   add_extension(s_log_extension);
-  if ((log_file = ttstub_output_open((char *)name_of_file, 0)) == NULL) {
+  if ((log_file = ttbc_output_open((char *)name_of_file, 0)) == NULL) {
     sam_wrong_file_name_print();
     return 1;
   }
 
   name_length = aux_name_length;
   add_extension(s_bbl_extension);
-  if ((bbl_file = ttstub_output_open((char *)name_of_file, 0)) == NULL) {
+  if ((bbl_file = ttbc_output_open((char *)name_of_file, 0)) == NULL) {
     sam_wrong_file_name_print();
     return 1;
   }
@@ -6398,7 +6398,7 @@ static void bst_read_command(void) {
         char buf[512];
         snprintf(buf, sizeof(buf) - 1,
                  "Database file #%ld: ", (long)bib_ptr + 1);
-        ttstub_output_write(log_file, buf, strlen(buf));
+        ttbc_output_write(log_file, buf, strlen(buf));
         log_pr_bib_name();
       }
       bib_line_num = 0;
@@ -7101,10 +7101,10 @@ void bibmem_cleanup(){
   free(name_of_file); name_of_file=0;
 }
 
-int bibtex_main(ttbc_state_t *api, const char *aux_file_name) {
+int bibtex_main(const char *aux_file_name) {
   int rv;
 
-  if (setjmp(*ttbc_global_engine_enter(api))) {
+  if (setjmp(*ttbc_global_engine_enter())) {
     ttbc_global_engine_exit();
     bibmem_cleanup();
     return HISTORY_FATAL_ERROR;
@@ -7120,7 +7120,7 @@ int bibtex_main(ttbc_state_t *api, const char *aux_file_name) {
   wiz_fn_space = WIZ_FN_SPACE;
   lit_stk_size = LIT_STK_SIZE;
 
-  if ((standard_output = ttstub_output_open_stdout()) == NULL)
+  if ((standard_output = ttbc_output_open_stdout()) == NULL)
     return HISTORY_FATAL_ERROR;
 
   setup_params();
@@ -7176,7 +7176,7 @@ int bibtex_main(ttbc_state_t *api, const char *aux_file_name) {
     snprintf(buf, sizeof(buf) - 1,
              "Capacity: max_strings=%ld, hash_size=%ld, hash_prime=%ld\n",
              (long)max_strings, (long)hash_size, (long)hash_prime);
-    ttstub_output_write(log_file, buf, strlen(buf));
+    ttbc_output_write(log_file, buf, strlen(buf));
   }
 
   if (verbose) {
@@ -7219,7 +7219,7 @@ int bibtex_main(ttbc_state_t *api, const char *aux_file_name) {
   bst_file = NULL;
 
 no_bst_file:
-  ttstub_output_close(bbl_file);
+  ttbc_output_close(bbl_file);
 
 close_up_shop:
   /*456:*/
@@ -7253,7 +7253,7 @@ close_up_shop:
     break;
   }
 
-  ttstub_output_close(log_file);
+  ttbc_output_close(log_file);
   bibmem_cleanup();
   rv = history;
   ttbc_global_engine_exit();

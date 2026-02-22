@@ -99,7 +99,7 @@ typedef struct
 #define sfnt_get_long(s)   ((LONG)   tt_get_signed_quad  ((s)->handle))
 
 #define sfnt_seek_set(s,o)   ttstub_input_seek((s)->handle, (o), SEEK_SET)
-#define sfnt_read(b,l,s)     ttstub_input_read((s)->handle, (char *) (b), (l))
+#define sfnt_read(b,l,s)     ttbc_input_read((s)->handle, (char *) (b), (l))
 
 int  put_big_endian (void *s, LONG q, int n);
 

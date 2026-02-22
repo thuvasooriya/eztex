@@ -1,4 +1,6 @@
-## deployment build settings
+## cloudflare deployment build settings
+
+> make sure to use the classic pages creation wizard
 
 build output: `/app/dist`
 

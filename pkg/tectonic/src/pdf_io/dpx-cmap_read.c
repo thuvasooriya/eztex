@@ -95,7 +95,7 @@ ifreader_read (ifreader *reader, size_t size)
         memmove(reader->buf, reader->cursor, bytesrem);
         reader->cursor = reader->buf;
         reader->endptr = reader->buf + bytesrem;
-        if (ttstub_input_read(reader->handle, (char *) reader->endptr, bytesread) != bytesread)
+        if (ttbc_input_read(reader->handle, (char *) reader->endptr, bytesread) != bytesread)
             _tt_abort("Reading file failed.");
         reader->endptr += bytesread;
         reader->unread -= bytesread;
@@ -490,7 +490,7 @@ CMap_parse_check_sig (rust_input_handle_t handle)
 
     ttstub_input_seek(handle, 0, SEEK_SET);
 
-    if (ttstub_input_read(handle, sig, CMAP_SIG_MAX) != CMAP_SIG_MAX)
+    if (ttbc_input_read(handle, sig, CMAP_SIG_MAX) != CMAP_SIG_MAX)
         result = -1;
     else {
         sig[CMAP_SIG_MAX] = 0;
@@ -513,7 +513,7 @@ CMap_parse (CMap *cmap, rust_input_handle_t handle)
 
     assert(cmap && handle);
 
-    input = ifreader_create(handle, ttstub_input_get_size(handle), INPUT_BUF_SIZE-1);
+    input = ifreader_create(handle, ttbc_input_get_size(handle), INPUT_BUF_SIZE-1);
 
     while (status >= 0) {
         tok1 = tok2 = NULL;

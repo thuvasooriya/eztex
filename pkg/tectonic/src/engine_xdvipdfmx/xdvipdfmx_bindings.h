@@ -17,8 +17,7 @@ typedef struct {
 extern "C" {
 #endif // __cplusplus
 
-extern int tt_engine_xdvipdfmx_main(ttbc_state_t *api,
-                                    const XdvipdfmxConfig *cfg,
+extern int tt_engine_xdvipdfmx_main(const XdvipdfmxConfig *cfg,
                                     const char *dviname,
                                     const char *pdfname);
 

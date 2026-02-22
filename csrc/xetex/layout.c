@@ -277,22 +277,22 @@ static int initialize_ft(struct XeTeXFont_rec *font, const char *pathname, int i
     FT_Library lib = get_ft_library();
     if (!lib) return -1;
 
-    rust_input_handle_t handle = ttstub_input_open(pathname, TTBC_FILE_FORMAT_OPEN_TYPE, 0);
-    if (!handle) handle = ttstub_input_open(pathname, TTBC_FILE_FORMAT_TRUE_TYPE, 0);
-    if (!handle) handle = ttstub_input_open(pathname, TTBC_FILE_FORMAT_TYPE1, 0);
+    rust_input_handle_t handle = ttbc_input_open(pathname, TTBC_FILE_FORMAT_OPEN_TYPE, 0);
+    if (!handle) handle = ttbc_input_open(pathname, TTBC_FILE_FORMAT_TRUE_TYPE, 0);
+    if (!handle) handle = ttbc_input_open(pathname, TTBC_FILE_FORMAT_TYPE1, 0);
     if (!handle) {
         fprintf(stderr, "xetex_layout: cannot open font file '%s'\n", pathname);
         return -1;
     }
 
-    size_t sz = ttstub_input_get_size(handle);
+    size_t sz = ttbc_input_get_size(handle);
     void *data = malloc(sz);
     if (!data) {
         ttstub_input_close(handle);
         return -1;
     }
 
-    ssize_t nread = ttstub_input_read(handle, (char *)data, sz);
+    ssize_t nread = ttbc_input_read(handle, (char *)data, sz);
     ttstub_input_close(handle);
     if (nread < 0 || (size_t)nread != sz) {
         free(data);
@@ -331,12 +331,12 @@ static int initialize_ft(struct XeTeXFont_rec *font, const char *pathname, int i
             else
                 strcat(afm_name, ".afm");
 
-            rust_input_handle_t afm_handle = ttstub_input_open(afm_name, TTBC_FILE_FORMAT_AFM, 0);
+            rust_input_handle_t afm_handle = ttbc_input_open(afm_name, TTBC_FILE_FORMAT_AFM, 0);
             if (afm_handle) {
-                size_t afm_sz = ttstub_input_get_size(afm_handle);
+                size_t afm_sz = ttbc_input_get_size(afm_handle);
                 void *afm_data = malloc(afm_sz);
                 if (afm_data) {
-                    ssize_t afm_nread = ttstub_input_read(afm_handle, (char *)afm_data, afm_sz);
+                    ssize_t afm_nread = ttbc_input_read(afm_handle, (char *)afm_data, afm_sz);
                     if (afm_nread > 0) {
                         FT_Open_Args open_args;
                         memset(&open_args, 0, sizeof(open_args));

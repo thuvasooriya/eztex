@@ -5536,7 +5536,7 @@ restart:
                     if (cur_input.name >= 19) {
                         print_char(')');
                         open_parens--;
-                        ttstub_output_flush(rust_stdout);
+                        ttbc_output_flush(rust_stdout);
                     }
 
                     force_eof = false;
@@ -9125,7 +9125,7 @@ void pseudo_start(void)
         cur_input.name = 19;
         print_cstr("( ");
         open_parens++;
-        ttstub_output_flush (rust_stdout);
+        ttbc_output_flush (rust_stdout);
     } else {
 
         cur_input.name = 18;
@@ -10876,7 +10876,7 @@ open_log_file(void)
 
     pack_job_name(".log");
 
-    log_file = ttstub_output_open (name_of_file, 0);
+    log_file = ttbc_output_open (name_of_file, 0);
     if (log_file == INVALID_HANDLE)
         _tt_abort ("cannot open log file output \"%s\"", name_of_file);
 
@@ -11023,7 +11023,7 @@ start_input(const char *primary_input_name)
     print_char('(');
     open_parens++;
     print(full_source_filename_stack[in_open]);
-    ttstub_output_flush(rust_stdout);
+    ttbc_output_flush(rust_stdout);
 
     if (INTPAR(tracing_stack_levels) > 0) {
         int32_t v;
@@ -11627,11 +11627,11 @@ read_font_info(int32_t u, str_number nom, str_number aire, scaled_t s)
      * used in this one place. */
 
 #define READFIFTEEN(x) do { \
-        x = ttstub_input_getc (tfm_file); \
+        x = ttbc_input_getc (tfm_file); \
         if (x > 127 || x == EOF) \
             goto bad_tfm; \
         x *= 256; \
-        x += ttstub_input_getc (tfm_file);\
+        x += ttbc_input_getc (tfm_file);\
     } while (0)
 
     READFIFTEEN(lf);
@@ -11682,25 +11682,25 @@ read_font_info(int32_t u, str_number nom, str_number aire, scaled_t s)
     if (lh < 2)
         goto bad_tfm;
 
-    qw.s3 = a = ttstub_input_getc (tfm_file);
-    qw.s2 = b = ttstub_input_getc (tfm_file);
-    qw.s1 = c = ttstub_input_getc (tfm_file);
-    qw.s0 = d = ttstub_input_getc (tfm_file);
+    qw.s3 = a = ttbc_input_getc (tfm_file);
+    qw.s2 = b = ttbc_input_getc (tfm_file);
+    qw.s1 = c = ttbc_input_getc (tfm_file);
+    qw.s0 = d = ttbc_input_getc (tfm_file);
     if (a == EOF || b == EOF || c == EOF || d == EOF)
         goto bad_tfm;
     font_check[f] = qw;
 
     READFIFTEEN(z);
-    z = z * 256 + ttstub_input_getc (tfm_file);
-    z = (z * 16) + (ttstub_input_getc (tfm_file) / 16);
+    z = z * 256 + ttbc_input_getc (tfm_file);
+    z = (z * 16) + (ttbc_input_getc (tfm_file) / 16);
     if (z < 65536L)
         goto bad_tfm;
 
     while (lh > 2) {
-        ttstub_input_getc (tfm_file);
-        ttstub_input_getc (tfm_file);
-        ttstub_input_getc (tfm_file);
-        ttstub_input_getc (tfm_file);
+        ttbc_input_getc (tfm_file);
+        ttbc_input_getc (tfm_file);
+        ttbc_input_getc (tfm_file);
+        ttbc_input_getc (tfm_file);
         lh--;
     }
 
@@ -11715,10 +11715,10 @@ read_font_info(int32_t u, str_number nom, str_number aire, scaled_t s)
     font_size[f] = z;
 
     for (k = fmem_ptr; k <= width_base[f] - 1; k++) {
-        qw.s3 = a = ttstub_input_getc (tfm_file);
-        qw.s2 = b = ttstub_input_getc (tfm_file);
-        qw.s1 = c = ttstub_input_getc (tfm_file);
-        qw.s0 = d = ttstub_input_getc (tfm_file);
+        qw.s3 = a = ttbc_input_getc (tfm_file);
+        qw.s2 = b = ttbc_input_getc (tfm_file);
+        qw.s1 = c = ttbc_input_getc (tfm_file);
+        qw.s0 = d = ttbc_input_getc (tfm_file);
         if (a == EOF || b == EOF || c == EOF || d == EOF)
             goto bad_tfm;
         font_info[k].b16 = qw;
@@ -11763,10 +11763,10 @@ read_font_info(int32_t u, str_number nom, str_number aire, scaled_t s)
     alpha = alpha * z;
 
     for (k = width_base[f]; k <= lig_kern_base[f] - 1; k++) {
-        a = ttstub_input_getc (tfm_file);
-        b = ttstub_input_getc (tfm_file);
-        c = ttstub_input_getc (tfm_file);
-        d = ttstub_input_getc (tfm_file);
+        a = ttbc_input_getc (tfm_file);
+        b = ttbc_input_getc (tfm_file);
+        c = ttbc_input_getc (tfm_file);
+        d = ttbc_input_getc (tfm_file);
         if (a == EOF || b == EOF || c == EOF || d == EOF)
             goto bad_tfm;
         sw = (((((d * z) / 256) + c * z) / 256) + b * z) / beta;
@@ -11793,10 +11793,10 @@ read_font_info(int32_t u, str_number nom, str_number aire, scaled_t s)
 
     if (nl > 0) {
         for (k = lig_kern_base[f]; k <= kern_base[f] + 256 * 128 - 1; k++) {
-            qw.s3 = a = ttstub_input_getc (tfm_file);
-            qw.s2 = b = ttstub_input_getc (tfm_file);
-            qw.s1 = c = ttstub_input_getc (tfm_file);
-            qw.s0 = d = ttstub_input_getc (tfm_file);
+            qw.s3 = a = ttbc_input_getc (tfm_file);
+            qw.s2 = b = ttbc_input_getc (tfm_file);
+            qw.s1 = c = ttbc_input_getc (tfm_file);
+            qw.s0 = d = ttbc_input_getc (tfm_file);
             if (a == EOF || b == EOF || c == EOF || d == EOF)
                 goto bad_tfm;
             font_info[k].b16 = qw;
@@ -11836,10 +11836,10 @@ read_font_info(int32_t u, str_number nom, str_number aire, scaled_t s)
     }
 
     for (k = kern_base[f] + 256 * 128; k <= exten_base[f] - 1; k++) {
-        a = ttstub_input_getc (tfm_file);
-        b = ttstub_input_getc (tfm_file);
-        c = ttstub_input_getc (tfm_file);
-        d = ttstub_input_getc (tfm_file);
+        a = ttbc_input_getc (tfm_file);
+        b = ttbc_input_getc (tfm_file);
+        c = ttbc_input_getc (tfm_file);
+        d = ttbc_input_getc (tfm_file);
         if (a == EOF || b == EOF || c == EOF || d == EOF)
             goto bad_tfm;
         sw = (((((d * z) / 256) + c * z) / 256) + b * z) / beta;
@@ -11853,10 +11853,10 @@ read_font_info(int32_t u, str_number nom, str_number aire, scaled_t s)
     }
 
     for (k = exten_base[f]; k <= param_base[f] - 1; k++) {
-        qw.s3 = a = ttstub_input_getc (tfm_file);
-        qw.s2 = b = ttstub_input_getc (tfm_file);
-        qw.s1 = c = ttstub_input_getc (tfm_file);
-        qw.s0 = d = ttstub_input_getc (tfm_file);
+        qw.s3 = a = ttbc_input_getc (tfm_file);
+        qw.s2 = b = ttbc_input_getc (tfm_file);
+        qw.s1 = c = ttbc_input_getc (tfm_file);
+        qw.s0 = d = ttbc_input_getc (tfm_file);
         if (a == EOF || b == EOF || c == EOF || d == EOF)
             goto bad_tfm;
         font_info[k].b16 = qw;
@@ -11894,20 +11894,20 @@ read_font_info(int32_t u, str_number nom, str_number aire, scaled_t s)
 
     for (k = 1; k <= np; k++) {
         if (k == 1) {
-            sw = ttstub_input_getc (tfm_file);
+            sw = ttbc_input_getc (tfm_file);
             if (sw == EOF)
                 goto bad_tfm;
             if (sw > 127)
                 sw = sw - 256;
 
-            sw = sw * 256 + ttstub_input_getc (tfm_file);
-            sw = sw * 256 + ttstub_input_getc (tfm_file);
-            font_info[param_base[f]].b32.s1 = (sw * 16) + (ttstub_input_getc (tfm_file) / 16);
+            sw = sw * 256 + ttbc_input_getc (tfm_file);
+            sw = sw * 256 + ttbc_input_getc (tfm_file);
+            font_info[param_base[f]].b32.s1 = (sw * 16) + (ttbc_input_getc (tfm_file) / 16);
         } else {
-            a = ttstub_input_getc (tfm_file);
-            b = ttstub_input_getc (tfm_file);
-            c = ttstub_input_getc (tfm_file);
-            d = ttstub_input_getc (tfm_file);
+            a = ttbc_input_getc (tfm_file);
+            b = ttbc_input_getc (tfm_file);
+            c = ttbc_input_getc (tfm_file);
+            d = ttbc_input_getc (tfm_file);
             if (a == EOF || b == EOF || c == EOF || d == EOF)
                 goto bad_tfm;
             sw = (((((d * z) / 256) + c * z) / 256) + b * z) / beta;
@@ -16181,7 +16181,7 @@ void issue_message(void)
         else if ((term_offset > 0) || (file_offset > 0))
             print_char(' ');
         print(s);
-        ttstub_output_flush (rust_stdout);
+        ttbc_output_flush (rust_stdout);
     } else {                    /*1318: */
         error_here_with_diagnostic("");
         print(s);
@@ -18422,7 +18422,7 @@ close_files_and_terminate(void)
 
     for (k = 0; k <= 15; k++) {
         if (write_open[k])
-            ttstub_output_close(write_file[k]);
+            ttbc_output_close(write_file[k]);
     }
 
     INTPAR(new_line_char) = -1;
@@ -18431,8 +18431,8 @@ close_files_and_terminate(void)
     synctex_terminate(log_opened);
 
     if (log_opened) {
-        ttstub_output_putc (log_file, '\n');
-        ttstub_output_close (log_file);
+        ttbc_output_putc (log_file, '\n');
+        ttbc_output_close (log_file);
         selector = selector - 2;
         if (selector == SELECTOR_TERM_ONLY) {
             print_nl_cstr("Transcript written on ");

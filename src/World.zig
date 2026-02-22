@@ -57,7 +57,12 @@ const MAX_HANDLES: usize = 256;
 // -- slot types --
 
 pub const InputSlot = struct {
-    file: fs.File,
+    // file-backed input (null when memory-backed)
+    file: ?fs.File = null,
+    // memory-backed input (null when file-backed)
+    mem_data: ?[]const u8 = null,
+    mem_pos: usize = 0,
+
     name: [512]u8 = .{0} ** 512,
     name_len: usize = 0,
     ungetc_byte: ?u8 = null,
@@ -70,6 +75,53 @@ pub const InputSlot = struct {
 
     pub fn get_name(self: *const InputSlot) []const u8 {
         return self.name[0..self.name_len];
+    }
+
+    pub fn read(self: *InputSlot, dest: []u8) !usize {
+        if (self.mem_data) |data| {
+            if (self.mem_pos >= data.len) return 0;
+            const avail = data.len - self.mem_pos;
+            const n = @min(dest.len, avail);
+            @memcpy(dest[0..n], data[self.mem_pos..][0..n]);
+            self.mem_pos += n;
+            return n;
+        }
+        return self.file.?.read(dest);
+    }
+
+    pub fn get_size(self: *InputSlot) !usize {
+        if (self.mem_data) |data| return data.len;
+        const stat = try self.file.?.stat();
+        return @intCast(@min(stat.size, std.math.maxInt(usize)));
+    }
+
+    pub fn get_pos(self: *InputSlot) !u64 {
+        if (self.mem_data != null) return @intCast(self.mem_pos);
+        return self.file.?.getPos();
+    }
+
+    pub fn seek_to(self: *InputSlot, pos: u64) !void {
+        if (self.mem_data) |data| {
+            self.mem_pos = @min(@as(usize, @intCast(pos)), data.len);
+            return;
+        }
+        try self.file.?.seekTo(pos);
+    }
+
+    pub fn seek_by(self: *InputSlot, offset: i64) !void {
+        if (self.mem_data) |data| {
+            const cur: i64 = @intCast(self.mem_pos);
+            const new = cur + offset;
+            self.mem_pos = if (new < 0) 0 else @min(@as(usize, @intCast(new)), data.len);
+            return;
+        }
+        try self.file.?.seekBy(offset);
+    }
+
+    pub fn close(self: *InputSlot) void {
+        if (self.file) |f| f.close();
+        // memory-backed slots don't own the data; caller manages lifetime
+        self.* = .{};
     }
 };
 
@@ -125,6 +177,12 @@ bundle_store: ?*BundleStore = null,
 
 diagnostic_handler: ?*const DiagnosticHandler = null,
 
+// in-memory format data: when set, ttbc_input_open for FORMAT files
+// serves from this buffer instead of hitting the filesystem.
+format_data: ?[]const u8 = null,
+format_name: [64]u8 = .{0} ** 64,
+format_name_len: usize = 0,
+
 pub fn add_search_dir(self: *World, dir: []const u8) void {
     if (self.search_dir_count < self.search_dirs.len) {
         self.search_dirs[self.search_dir_count] = dir;
@@ -144,10 +202,24 @@ pub fn set_output_dir(self: *World, dir: []const u8) void {
     self.output_dir_len = copy_len;
 }
 
+// set in-memory format data to be served when engine opens a FORMAT file.
+// caller owns the data lifetime (must outlive the engine run).
+pub fn set_format_data(self: *World, data: []const u8, name: []const u8) void {
+    self.format_data = data;
+    const copy_len = @min(name.len, self.format_name.len);
+    @memcpy(self.format_name[0..copy_len], name[0..copy_len]);
+    self.format_name_len = copy_len;
+}
+
+pub fn clear_format_data(self: *World) void {
+    self.format_data = null;
+    self.format_name_len = 0;
+}
+
 pub fn reset_io(self: *World) void {
     for (self.inputs[0..self.input_count]) |*slot| {
         if (slot.*) |*s| {
-            s.file.close();
+            s.close();
             slot.* = null;
         }
     }
@@ -162,16 +234,24 @@ pub fn reset_io(self: *World) void {
 }
 
 pub fn alloc_input(self: *World, file: fs.File, name: []const u8) Handle {
+    return self.alloc_input_slot(.{ .file = file }, name);
+}
+
+pub fn alloc_memory_input(self: *World, data: []const u8, name: []const u8) Handle {
+    return self.alloc_input_slot(.{ .mem_data = data }, name);
+}
+
+fn alloc_input_slot(self: *World, slot_init: InputSlot, name: []const u8) Handle {
     for (self.inputs[0..self.input_count], 0..) |*slot, idx| {
         if (slot.* == null) {
-            slot.* = InputSlot{ .file = file };
+            slot.* = slot_init;
             slot.*.?.set_name(name);
             return idx + 1;
         }
     }
     if (self.input_count >= MAX_HANDLES) return INVALID_HANDLE;
     const idx = self.input_count;
-    self.inputs[idx] = InputSlot{ .file = file };
+    self.inputs[idx] = slot_init;
     self.inputs[idx].?.set_name(name);
     self.input_count += 1;
     return idx + 1;
@@ -322,4 +402,106 @@ fn record_abspath_in_dir(self: *World, dir: []const u8, name: []const u8) void {
 
 fn open_file_relative(dir: fs.Dir, name: []const u8) ?fs.File {
     return dir.openFile(name, .{}) catch null;
+}
+
+// -- tests --
+
+test "memory input: read sequential" {
+    const data = "hello world";
+    var slot = InputSlot{ .mem_data = data };
+    var buf: [5]u8 = undefined;
+    const n1 = try slot.read(&buf);
+    try std.testing.expectEqual(@as(usize, 5), n1);
+    try std.testing.expectEqualStrings("hello", buf[0..5]);
+    const n2 = try slot.read(&buf);
+    try std.testing.expectEqual(@as(usize, 5), n2);
+    try std.testing.expectEqualStrings(" worl", buf[0..5]);
+    const n3 = try slot.read(&buf);
+    try std.testing.expectEqual(@as(usize, 1), n3);
+    try std.testing.expectEqual(@as(u8, 'd'), buf[0]);
+    const n4 = try slot.read(&buf);
+    try std.testing.expectEqual(@as(usize, 0), n4);
+}
+
+test "memory input: seek and get_pos" {
+    const data = "abcdefghij";
+    var slot = InputSlot{ .mem_data = data };
+    try std.testing.expectEqual(@as(u64, 0), try slot.get_pos());
+
+    try slot.seek_to(5);
+    try std.testing.expectEqual(@as(u64, 5), try slot.get_pos());
+
+    var buf: [3]u8 = undefined;
+    const n = try slot.read(&buf);
+    try std.testing.expectEqual(@as(usize, 3), n);
+    try std.testing.expectEqualStrings("fgh", buf[0..3]);
+    try std.testing.expectEqual(@as(u64, 8), try slot.get_pos());
+
+    try slot.seek_by(-4);
+    try std.testing.expectEqual(@as(u64, 4), try slot.get_pos());
+
+    const n2 = try slot.read(&buf);
+    try std.testing.expectEqual(@as(usize, 3), n2);
+    try std.testing.expectEqualStrings("efg", buf[0..3]);
+}
+
+test "memory input: seek past end clamps" {
+    const data = "abc";
+    var slot = InputSlot{ .mem_data = data };
+    try slot.seek_to(100);
+    try std.testing.expectEqual(@as(u64, 3), try slot.get_pos());
+    var buf: [1]u8 = undefined;
+    const n = try slot.read(&buf);
+    try std.testing.expectEqual(@as(usize, 0), n);
+}
+
+test "memory input: seek_by negative clamps to zero" {
+    const data = "abc";
+    var slot = InputSlot{ .mem_data = data };
+    try slot.seek_to(1);
+    try slot.seek_by(-10);
+    try std.testing.expectEqual(@as(u64, 0), try slot.get_pos());
+}
+
+test "memory input: get_size" {
+    const data = "twelve chars";
+    var slot = InputSlot{ .mem_data = data };
+    try std.testing.expectEqual(@as(usize, 12), try slot.get_size());
+}
+
+test "memory input: ungetc integration" {
+    const data = "ab";
+    var slot = InputSlot{ .mem_data = data };
+    var buf: [1]u8 = undefined;
+    _ = try slot.read(&buf);
+    try std.testing.expectEqual(@as(u8, 'a'), buf[0]);
+    slot.ungetc_byte = 'Z';
+    // ungetc is handled by bridge layer, not by slot.read directly
+    // but verify the field exists and works
+    try std.testing.expectEqual(@as(?u8, 'Z'), slot.ungetc_byte);
+}
+
+test "world: alloc_memory_input and get_input" {
+    var world = World{};
+    const data = "format bytes here";
+    const h = world.alloc_memory_input(data, "test.fmt");
+    try std.testing.expect(h != INVALID_HANDLE);
+    const slot = world.get_input(h).?;
+    try std.testing.expectEqualStrings("test.fmt", slot.get_name());
+    try std.testing.expectEqual(@as(usize, 17), try slot.get_size());
+    var buf: [6]u8 = undefined;
+    const n = try slot.read(&buf);
+    try std.testing.expectEqual(@as(usize, 6), n);
+    try std.testing.expectEqualStrings("format", buf[0..6]);
+}
+
+test "world: set_format_data and clear_format_data" {
+    var world = World{};
+    const data = "fake format";
+    world.set_format_data(data, "xelatex.fmt");
+    try std.testing.expectEqualStrings("fake format", world.format_data.?);
+    try std.testing.expectEqualStrings("xelatex.fmt", world.format_name[0..world.format_name_len]);
+    world.clear_format_data();
+    try std.testing.expectEqual(@as(?[]const u8, null), world.format_data);
+    try std.testing.expectEqual(@as(usize, 0), world.format_name_len);
 }

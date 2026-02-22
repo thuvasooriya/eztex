@@ -1655,7 +1655,7 @@ spc_handler_pdfm_stream_with_type (struct spc_env *spe, struct spc_arg *args, in
       free(ident);
       return  -1;
     }
-    handle = ttstub_input_open(instring, TTBC_FILE_FORMAT_PICT, 0);
+    handle = ttbc_input_open(instring, TTBC_FILE_FORMAT_PICT, 0);
     if (handle == INVALID_HANDLE) {
       spc_warn(spe, "Could not open file: %s", instring);
       pdf_release_obj(tmp);
@@ -1664,7 +1664,7 @@ spc_handler_pdfm_stream_with_type (struct spc_env *spe, struct spc_arg *args, in
     }
     fstream = pdf_new_stream(STREAM_COMPRESS);
     while ((nb_read =
-            ttstub_input_read_partial(handle, work_buffer, WORK_BUFFER_SIZE)) > 0)
+            ttbc_input_read_partial(handle, work_buffer, WORK_BUFFER_SIZE)) > 0)
       pdf_add_stream(fstream, work_buffer, nb_read);
     ttstub_input_close(handle);
     break;

@@ -126,7 +126,7 @@ check_for_png (rust_input_handle_t handle)
     unsigned char sigbytes[8];
 
     ttstub_input_seek(handle, 0, SEEK_SET);
-    if (ttstub_input_read (handle, (char *) sigbytes, sizeof(sigbytes)) !=
+    if (ttbc_input_read (handle, (char *) sigbytes, sizeof(sigbytes)) !=
         sizeof(sigbytes) ||
         (png_sig_cmp (sigbytes, 0, sizeof(sigbytes))))
         return 0;
@@ -146,7 +146,7 @@ _png_read (png_structp png_ptr, png_bytep outbytes, png_size_t n)
     rust_input_handle_t handle = (uintptr_t) png_get_io_ptr(png_ptr);
     ssize_t r;
 
-    r = ttstub_input_read (handle, (char *) outbytes, n);
+    r = ttbc_input_read (handle, (char *) outbytes, n);
     if (r < 0 || (size_t) r != n)
         _tt_abort ("error reading PNG");
 }

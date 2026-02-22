@@ -57,7 +57,7 @@ check_stream_is_truetype (rust_input_handle_t handle)
     int n;
 
     ttstub_input_seek (handle, 0, SEEK_SET);
-    n = ttstub_input_read (handle, _sbuf, 4);
+    n = ttbc_input_read (handle, _sbuf, 4);
     ttstub_input_seek (handle, 0, SEEK_SET);
 
     if (n != 4)
@@ -80,7 +80,7 @@ check_stream_is_opentype (rust_input_handle_t handle)
     int n;
 
     ttstub_input_seek (handle, 0, SEEK_SET);
-    n = ttstub_input_read (handle, _sbuf, 4);
+    n = ttbc_input_read (handle, _sbuf, 4);
     ttstub_input_seek (handle, 0, SEEK_SET);
 
     if (n != 4)
@@ -100,7 +100,7 @@ check_stream_is_type1 (rust_input_handle_t handle)
     int n;
 
     ttstub_input_seek (handle, 0, SEEK_SET);
-    n = ttstub_input_read (handle, p, 21);
+    n = ttbc_input_read (handle, p, 21);
     ttstub_input_seek (handle, 0, SEEK_SET);
 
     if (n != 21)
@@ -171,7 +171,7 @@ dpx_tt_open (const char *filename, const char *suffix, ttbc_file_format format)
     rust_input_handle_t handle;
 
     q = ensuresuffix(filename, suffix);
-    handle = ttstub_input_open(q, format, 0);
+    handle = ttbc_input_open(q, format, 0);
     free(q);
     return handle;
 }
@@ -189,7 +189,7 @@ dpx_open_type1_file (const char *filename)
 {
     rust_input_handle_t handle;
 
-    handle = ttstub_input_open (filename, TTBC_FILE_FORMAT_TYPE1, 0);
+    handle = ttbc_input_open (filename, TTBC_FILE_FORMAT_TYPE1, 0);
     if (handle == INVALID_HANDLE)
         return INVALID_HANDLE;
 
@@ -207,7 +207,7 @@ dpx_open_truetype_file (const char *filename)
 {
     rust_input_handle_t handle;
 
-    handle = ttstub_input_open (filename, TTBC_FILE_FORMAT_TRUE_TYPE, 0);
+    handle = ttbc_input_open (filename, TTBC_FILE_FORMAT_TRUE_TYPE, 0);
     if (handle == INVALID_HANDLE)
         return INVALID_HANDLE;
 
@@ -227,7 +227,7 @@ dpx_open_opentype_file (const char *filename)
     char *q;
 
     q = ensuresuffix(filename, ".otf");
-    handle = ttstub_input_open (q, TTBC_FILE_FORMAT_OPEN_TYPE, 0);
+    handle = ttbc_input_open (q, TTBC_FILE_FORMAT_OPEN_TYPE, 0);
     free (q);
 
     if (handle == INVALID_HANDLE)
@@ -260,7 +260,7 @@ dpx_open_dfont_file (const char *filename)
         q = xstrdup (filename);
     }
 
-    handle = ttstub_input_open (q, TTBC_FILE_FORMAT_TRUE_TYPE, 0);
+    handle = ttbc_input_open (q, TTBC_FILE_FORMAT_TRUE_TYPE, 0);
     free (q);
     if (handle == INVALID_HANDLE)
         return INVALID_HANDLE;

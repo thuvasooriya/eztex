@@ -78,7 +78,7 @@ check_for_bmp (rust_input_handle_t handle)
         return 0;
 
     ttstub_input_seek (handle, 0, SEEK_SET);
-    if (ttstub_input_read(handle, (char *) sigbytes, sizeof(sigbytes)) != sizeof(sigbytes) ||
+    if (ttbc_input_read(handle, (char *) sigbytes, sizeof(sigbytes)) != sizeof(sigbytes) ||
         sigbytes[0] != 'B' || sigbytes[1] != 'M')
         return 0;
     return 1;
@@ -179,7 +179,7 @@ bmp_include_image (pdf_ximage *ximage, rust_input_handle_t handle)
 
         palette = NEW(num_palette*3+1, unsigned char);
         for (i = 0; i < num_palette; i++) {
-            if (ttstub_input_read(handle, (char *) bgrq, hdr.psize) != hdr.psize) {
+            if (ttbc_input_read(handle, (char *) bgrq, hdr.psize) != hdr.psize) {
                 dpx_warning("Reading file failed...");
                 free(palette);
                 return -1;
@@ -219,7 +219,7 @@ bmp_include_image (pdf_ximage *ximage, rust_input_handle_t handle)
             stream_data_ptr = NEW(rowbytes*info.height + padding, unsigned char);
             for (n = 0; n < info.height; n++) {
                 p = stream_data_ptr + n * rowbytes;
-                if (ttstub_input_read(handle, (char *) p, dib_rowbytes) != dib_rowbytes) {
+                if (ttbc_input_read(handle, (char *) p, dib_rowbytes) != dib_rowbytes) {
                     dpx_warning("Reading BMP raster data failed...");
                     pdf_release_obj(stream);
                     free(stream_data_ptr);
@@ -288,7 +288,7 @@ read_header (rust_input_handle_t handle, struct hdr_info *hdr)
     unsigned char  *p;
 
     p = buf;
-    if (ttstub_input_read(handle, (char *) buf, DIB_FILE_HEADER_SIZE + 4)
+    if (ttbc_input_read(handle, (char *) buf, DIB_FILE_HEADER_SIZE + 4)
         != DIB_FILE_HEADER_SIZE + 4) {
         dpx_warning("Could not read BMP file header...");
         return -1;
@@ -314,7 +314,7 @@ read_header (rust_input_handle_t handle, struct hdr_info *hdr)
 
     /* info header */
     hdr->hsize  = ULONG_LE(p); p += 4;
-    if (ttstub_input_read(handle, (char *) p, hdr->hsize - 4) != hdr->hsize - 4) {
+    if (ttbc_input_read(handle, (char *) p, hdr->hsize - 4) != hdr->hsize - 4) {
         dpx_warning("Could not read BMP file header...");
         return -1;
     }
@@ -399,7 +399,7 @@ read_raster_rle8 (unsigned char *data_ptr,
                         dpx_warning("RLE decode failed...");
                         return -1;
                     }
-                    if (ttstub_input_read(handle, (char *) p, b1) != b1)
+                    if (ttbc_input_read(handle, (char *) p, b1) != b1)
                         return -1;
                     count += b1;
                     if (b1 % 2) {
@@ -485,7 +485,7 @@ read_raster_rle4 (unsigned char *data_ptr,
                             *p    = (b << 4) & 0xf0;
                         }
                     } else {
-                        if (ttstub_input_read(handle, (char *) p, nbytes) != nbytes) {
+                        if (ttbc_input_read(handle, (char *) p, nbytes) != nbytes) {
                             return -1;
                         }
                     }

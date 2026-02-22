@@ -496,14 +496,13 @@ dvipdfmx_main (
 
 int
 tt_engine_xdvipdfmx_main(
-  ttbc_state_t *api,
   const XdvipdfmxConfig *config,
   const char *dviname,
   const char *pdfname
 ) {
   int rv;
 
-  if (setjmp(*ttbc_global_engine_enter(api))) {
+  if (setjmp(*ttbc_global_engine_enter())) {
     ttbc_global_engine_exit();
     return 99;
   }

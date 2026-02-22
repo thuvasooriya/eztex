@@ -155,7 +155,7 @@ getfilemoddate(str_number s)
   char buf[20];
 
   name = gettexstring(s);
-  handle = ttstub_input_open(name, TTBC_FILE_FORMAT_TEX, 0);
+  handle = ttbc_input_open(name, TTBC_FILE_FORMAT_TEX, 0);
   free(name);
 
   if (handle == INVALID_HANDLE)
@@ -190,13 +190,13 @@ getfilesize(str_number s)
   int i;
 
   name = gettexstring(s);
-  handle = ttstub_input_open(name, TTBC_FILE_FORMAT_TEX, 0);
+  handle = ttbc_input_open(name, TTBC_FILE_FORMAT_TEX, 0);
   free(name);
 
   if (handle == INVALID_HANDLE)
     return; /* => evaluate to the empty string; intentional */
 
-  file_len = ttstub_input_get_size(handle);
+  file_len = ttbc_input_get_size(handle);
   ttstub_input_close(handle);
 
   i = snprintf(buf, sizeof(buf), "%lu", (long unsigned int) file_len);
@@ -239,7 +239,7 @@ void getfiledump(int32_t s, int offset, int length)
   }
 
   name = gettexstring(s);
-  handle = ttstub_input_open(name, TTBC_FILE_FORMAT_TEX, 0);
+  handle = ttbc_input_open(name, TTBC_FILE_FORMAT_TEX, 0);
   free(name);
 
   if (handle == INVALID_HANDLE) {
@@ -248,7 +248,7 @@ void getfiledump(int32_t s, int offset, int length)
   }
 
   ttstub_input_seek(handle, offset, SEEK_SET);
-  actual = ttstub_input_read(handle, (char *) buffer, length);
+  actual = ttbc_input_read(handle, (char *) buffer, length);
   ttstub_input_close(handle);
 
   for (j = 0; j < actual; j++) {
@@ -448,7 +448,7 @@ void getmd5sum(str_number s, bool file)
     xname = gettexstring (s);
 
     if (file)
-        ret = ttstub_get_file_md5 (xname, digest);
+        ret = ttbc_get_file_md5 (xname, digest);
     else
         ret = ttbc_get_data_md5 ((const unsigned char *) xname, strlen (xname), (unsigned char *) digest);
 

@@ -14,7 +14,6 @@ const is_wasm = Host.is_wasm;
 pub const World = @import("World.zig");
 pub const BundleStore = @import("BundleStore.zig");
 
-const StatePtr = ?*anyopaque;
 const Handle = World.Handle;
 const FileFormat = World.FileFormat;
 const INVALID_HANDLE = World.INVALID_HANDLE;
@@ -157,13 +156,11 @@ fn log_bridge(comptime fmt: []const u8, args: anytype) void {
 // Exported C functions -- diagnostics
 // ====================================================================
 
-export fn ttbc_issue_warning(es: StatePtr, text: [*:0]const u8) void {
-    _ = es;
+export fn ttbc_issue_warning(text: [*:0]const u8) void {
     emit_warning(std.mem.span(text));
 }
 
-export fn ttbc_issue_error(es: StatePtr, text: [*:0]const u8) void {
-    _ = es;
+export fn ttbc_issue_error(text: [*:0]const u8) void {
     emit_error(std.mem.span(text));
 }
 
@@ -185,8 +182,7 @@ export fn ttbc_diag_append(diag: ?*Diagnostic, text: [*:0]const u8) void {
     if (diag) |d| d.append(text);
 }
 
-export fn ttbc_diag_finish(es: StatePtr, diag: ?*Diagnostic) void {
-    _ = es;
+export fn ttbc_diag_finish(diag: ?*Diagnostic) void {
     if (diag) |d| {
         if (global_diag_handler != null and d.len > 0) {
             if (d.is_error) {
@@ -205,8 +201,7 @@ export fn ttbc_diag_finish(es: StatePtr, diag: ?*Diagnostic) void {
 
 const Md5 = std.crypto.hash.Md5;
 
-export fn ttbc_get_file_md5(es: StatePtr, path: [*:0]const u8, digest: [*]u8) c_int {
-    _ = es;
+export fn ttbc_get_file_md5(path: [*:0]const u8, digest: [*]u8) c_int {
     const path_slice = std.mem.span(path);
     const world = get_world();
 
@@ -235,8 +230,7 @@ export fn ttbc_get_data_md5(data: [*]const u8, len: usize, digest: [*]u8) c_int 
 // Exported C functions -- output
 // ====================================================================
 
-export fn ttbc_output_open(es: StatePtr, name: [*:0]const u8, is_gz: c_int) Handle {
-    _ = es;
+export fn ttbc_output_open(name: [*:0]const u8, is_gz: c_int) Handle {
     const name_slice = std.mem.span(name);
     Log.dbg("bridge", "output_open('{s}', is_gz={d})", .{ name_slice, is_gz });
 
@@ -258,14 +252,12 @@ export fn ttbc_output_open(es: StatePtr, name: [*:0]const u8, is_gz: c_int) Hand
     return world.alloc_output(file, name_slice, false, is_gz != 0);
 }
 
-export fn ttbc_output_open_stdout(es: StatePtr) Handle {
-    _ = es;
+export fn ttbc_output_open_stdout() Handle {
     const world = get_world();
     return world.alloc_output(fs.File.stdout(), "stdout", true, false);
 }
 
-export fn ttbc_output_putc(es: StatePtr, handle: Handle, c: c_int) c_int {
-    _ = es;
+export fn ttbc_output_putc(handle: Handle, c: c_int) c_int {
     const world = get_world();
     const slot = world.get_output(handle) orelse return -1;
     const byte: [1]u8 = .{@intCast(c & 0xff)};
@@ -278,8 +270,7 @@ export fn ttbc_output_putc(es: StatePtr, handle: Handle, c: c_int) c_int {
     return c;
 }
 
-export fn ttbc_output_write(es: StatePtr, handle: Handle, data: [*]const u8, len: usize) usize {
-    _ = es;
+export fn ttbc_output_write(handle: Handle, data: [*]const u8, len: usize) usize {
     const world = get_world();
     const slot = world.get_output(handle) orelse return 0;
     if (slot.is_gz) {
@@ -291,8 +282,7 @@ export fn ttbc_output_write(es: StatePtr, handle: Handle, data: [*]const u8, len
     return len;
 }
 
-export fn ttbc_output_flush(es: StatePtr, handle: Handle) c_int {
-    _ = es;
+export fn ttbc_output_flush(handle: Handle) c_int {
     _ = handle;
     return 0;
 }
@@ -302,8 +292,7 @@ extern fn gzdopen(fd: c_int, mode: [*:0]const u8) ?*anyopaque;
 extern fn gzwrite(gz: *anyopaque, buf: [*]const u8, len: c_uint) c_int;
 extern fn gzclose(gz: *anyopaque) c_int;
 
-export fn ttbc_output_close(es: StatePtr, handle: Handle) c_int {
-    _ = es;
+export fn ttbc_output_close(handle: Handle) c_int {
     const world = get_world();
     const slot = world.get_output(handle) orelse return 0;
     defer world.outputs[handle - 1] = null;
@@ -346,13 +335,22 @@ export fn ttbc_output_close(es: StatePtr, handle: Handle) c_int {
 // Exported C functions -- input
 // ====================================================================
 
-export fn ttbc_input_open(es: StatePtr, name: [*:0]const u8, format: FileFormat, is_gz: c_int) Handle {
-    _ = es;
+export fn ttbc_input_open(name: [*:0]const u8, format: FileFormat, is_gz: c_int) Handle {
     _ = is_gz;
     const name_slice = std.mem.span(name);
     Log.dbg("bridge", "input_open('{s}', format={d})", .{ name_slice, format });
 
     const world = get_world();
+
+    // serve format files from memory when available (avoids temp file I/O)
+    if (format == World.TTBC_FILE_FORMAT_FORMAT) {
+        if (world.format_data) |data| {
+            const h = world.alloc_memory_input(data, name_slice);
+            Log.dbg("bridge", "  -> memory-backed handle {d} ({d} bytes)", .{ h, data.len });
+            return h;
+        }
+    }
+
     const file = world.try_open_input(name_slice, format) orelse {
         Log.dbg("bridge", "  -> not found", .{});
         return INVALID_HANDLE;
@@ -363,8 +361,7 @@ export fn ttbc_input_open(es: StatePtr, name: [*:0]const u8, format: FileFormat,
     return h;
 }
 
-export fn ttbc_input_open_primary(es: StatePtr) Handle {
-    _ = es;
+export fn ttbc_input_open_primary() Handle {
     const world = get_world();
     if (world.primary_input_len == 0) {
         Log.dbg("bridge", "input_open_primary: no primary input set", .{});
@@ -381,8 +378,7 @@ export fn ttbc_input_open_primary(es: StatePtr) Handle {
     return world.alloc_input(file, name);
 }
 
-export fn ttbc_get_last_input_abspath(es: StatePtr, buffer: [*]u8, len: usize) isize {
-    _ = es;
+export fn ttbc_get_last_input_abspath(buffer: [*]u8, len: usize) isize {
     const world = get_world();
     if (world.last_input_abspath_len == 0) return 0;
     const path_len = world.last_input_abspath_len;
@@ -392,24 +388,22 @@ export fn ttbc_get_last_input_abspath(es: StatePtr, buffer: [*]u8, len: usize) i
     return @intCast(path_len + 1);
 }
 
-export fn ttbc_input_get_size(es: StatePtr, handle: Handle) usize {
-    _ = es;
+export fn ttbc_input_get_size(handle: Handle) usize {
     const world = get_world();
     const slot = world.get_input(handle) orelse return 0;
-    const stat = slot.file.stat() catch return 0;
-    return @intCast(@min(stat.size, std.math.maxInt(usize)));
+    return slot.get_size() catch return 0;
 }
 
-export fn ttbc_input_get_mtime(es: StatePtr, handle: Handle) i64 {
-    _ = es;
+export fn ttbc_input_get_mtime(handle: Handle) i64 {
     const world = get_world();
     const slot = world.get_input(handle) orelse return 0;
-    const stat = slot.file.stat() catch return 0;
+    // memory-backed inputs have no mtime
+    const f = slot.file orelse return 0;
+    const stat = f.stat() catch return 0;
     return @intCast(@divTrunc(stat.mtime, std.time.ns_per_s));
 }
 
-export fn ttbc_input_seek(es: StatePtr, handle: Handle, offset: isize, whence: c_int, internal_error: ?*c_int) usize {
-    _ = es;
+export fn ttbc_input_seek(handle: Handle, offset: isize, whence: c_int, internal_error: ?*c_int) usize {
     const world = get_world();
     const slot = world.get_input(handle) orelse {
         if (internal_error) |e| e.* = 1;
@@ -420,7 +414,7 @@ export fn ttbc_input_seek(es: StatePtr, handle: Handle, offset: isize, whence: c
 
     const new_pos: u64 = switch (whence) {
         World.SEEK_SET => blk: {
-            slot.file.seekTo(@intCast(offset)) catch {
+            slot.seek_to(@intCast(offset)) catch {
                 if (internal_error) |e| e.* = 1;
                 return 0;
             };
@@ -429,35 +423,32 @@ export fn ttbc_input_seek(es: StatePtr, handle: Handle, offset: isize, whence: c
         },
         World.SEEK_CUR => blk: {
             if (offset == 0) {
-                // position query: return logical position, preserve ungetc state
-                const pos = slot.file.getPos() catch {
+                const pos = slot.get_pos() catch {
                     if (internal_error) |e| e.* = 1;
                     return 0;
                 };
                 break :blk if (has_ungetc) pos - 1 else pos;
             }
-            // non-zero seek: adjust for pending ungetc byte so the seek is
-            // relative to the logical position, then discard the pushed-back byte
             const adj: i64 = if (has_ungetc) -1 else 0;
-            slot.file.seekBy(@as(i64, @intCast(offset)) + adj) catch {
+            slot.seek_by(@as(i64, @intCast(offset)) + adj) catch {
                 if (internal_error) |e| e.* = 1;
                 return 0;
             };
             slot.ungetc_byte = null;
-            const pos = slot.file.getPos() catch {
+            const pos = slot.get_pos() catch {
                 if (internal_error) |e| e.* = 1;
                 return 0;
             };
             break :blk pos;
         },
         World.SEEK_END => blk: {
-            const stat = slot.file.stat() catch {
+            const size = slot.get_size() catch {
                 if (internal_error) |e| e.* = 1;
                 return 0;
             };
-            const size: i64 = @intCast(stat.size);
-            const target: u64 = @intCast(size + @as(i64, @intCast(offset)));
-            slot.file.seekTo(target) catch {
+            const size_i: i64 = @intCast(size);
+            const target: u64 = @intCast(size_i + @as(i64, @intCast(offset)));
+            slot.seek_to(target) catch {
                 if (internal_error) |e| e.* = 1;
                 return 0;
             };
@@ -473,8 +464,7 @@ export fn ttbc_input_seek(es: StatePtr, handle: Handle, offset: isize, whence: c
     return @intCast(new_pos);
 }
 
-export fn ttbc_input_getc(es: StatePtr, handle: Handle) c_int {
-    _ = es;
+export fn ttbc_input_getc(handle: Handle) c_int {
     const world = get_world();
     const slot = world.get_input(handle) orelse return -1;
 
@@ -484,21 +474,19 @@ export fn ttbc_input_getc(es: StatePtr, handle: Handle) c_int {
     }
 
     var buf: [1]u8 = undefined;
-    const n = slot.file.read(&buf) catch return -1;
+    const n = slot.read(&buf) catch return -1;
     if (n == 0) return -1;
     return @intCast(buf[0]);
 }
 
-export fn ttbc_input_ungetc(es: StatePtr, handle: Handle, ch: c_int) c_int {
-    _ = es;
+export fn ttbc_input_ungetc(handle: Handle, ch: c_int) c_int {
     const world = get_world();
     const slot = world.get_input(handle) orelse return -1;
     slot.ungetc_byte = @intCast(ch & 0xff);
     return 0;
 }
 
-export fn ttbc_input_read(es: StatePtr, handle: Handle, data: [*]u8, len: usize) isize {
-    _ = es;
+export fn ttbc_input_read(handle: Handle, data: [*]u8, len: usize) isize {
     const world = get_world();
     const slot = world.get_input(handle) orelse return -1;
 
@@ -515,7 +503,7 @@ export fn ttbc_input_read(es: StatePtr, handle: Handle, data: [*]u8, len: usize)
     }
 
     while (dest.len > 0) {
-        const n = slot.file.read(dest) catch return if (total > 0) @as(isize, @intCast(total)) else -1;
+        const n = slot.read(dest) catch return if (total > 0) @as(isize, @intCast(total)) else -1;
         if (n == 0) return if (total > 0) @as(isize, @intCast(total)) else -1;
         dest = dest[n..];
         total += n;
@@ -524,8 +512,7 @@ export fn ttbc_input_read(es: StatePtr, handle: Handle, data: [*]u8, len: usize)
     return @intCast(total);
 }
 
-export fn ttbc_input_read_partial(es: StatePtr, handle: Handle, data: [*]u8, len: usize) isize {
-    _ = es;
+export fn ttbc_input_read_partial(handle: Handle, data: [*]u8, len: usize) isize {
     const world = get_world();
     const slot = world.get_input(handle) orelse return -1;
 
@@ -537,16 +524,15 @@ export fn ttbc_input_read_partial(es: StatePtr, handle: Handle, data: [*]u8, len
         }
     }
 
-    const n = slot.file.read(data[0..len]) catch return -1;
+    const n = slot.read(data[0..len]) catch return -1;
     if (n == 0) return -1;
     return @intCast(n);
 }
 
-export fn ttbc_input_close(es: StatePtr, handle: Handle) c_int {
-    _ = es;
+export fn ttbc_input_close(handle: Handle) c_int {
     const world = get_world();
     const slot = world.get_input(handle) orelse return 0;
-    slot.file.close();
+    slot.close();
     world.inputs[handle - 1] = null;
     return 0;
 }
@@ -555,8 +541,7 @@ export fn ttbc_input_close(es: StatePtr, handle: Handle) c_int {
 // Exported C functions -- shell escape
 // ====================================================================
 
-export fn ttbc_shell_escape(es: StatePtr, cmd: [*]const u16, len: usize) c_int {
-    _ = es;
+export fn ttbc_shell_escape(cmd: [*]const u16, len: usize) c_int {
     _ = cmd;
     _ = len;
     return 1; // disallowed
@@ -570,4 +555,47 @@ comptime {
     _ = @import("Flate.zig");
     _ = @import("Layout.zig");
     _ = @import("wasm_exports.zig");
+}
+
+// ====================================================================
+// Checkpoint callback -- engine lifecycle events from C side
+// ====================================================================
+
+pub const CheckpointId = enum(c_int) {
+    format_loaded = 1,
+    _,
+};
+
+pub const CheckpointCallback = struct {
+    func: *const fn (userdata: ?*anyopaque, id: CheckpointId) void,
+    userdata: ?*anyopaque,
+};
+
+extern fn ttbc_set_checkpoint_callback(
+    func: ?*const fn (userdata: ?*anyopaque, id: c_int) callconv(.c) void,
+    userdata: ?*anyopaque,
+) void;
+
+var checkpoint_handler: ?CheckpointCallback = null;
+
+fn checkpoint_trampoline(userdata: ?*anyopaque, raw_id: c_int) callconv(.c) void {
+    _ = userdata;
+    const id: CheckpointId = @enumFromInt(raw_id);
+    if (checkpoint_handler) |h| {
+        h.func(h.userdata, id);
+    }
+}
+
+pub fn set_checkpoint_callback(callback: ?CheckpointCallback) void {
+    checkpoint_handler = callback;
+    if (callback != null) {
+        ttbc_set_checkpoint_callback(&checkpoint_trampoline, null);
+    } else {
+        ttbc_set_checkpoint_callback(null, null);
+    }
+}
+
+pub fn clear_checkpoint_callback() void {
+    checkpoint_handler = null;
+    ttbc_set_checkpoint_callback(null, null);
 }

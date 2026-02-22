@@ -45,7 +45,7 @@ post_error_message(int need_to_print_it)
     history = HISTORY_FATAL_ERROR;
     close_files_and_terminate();
     tt_cleanup();
-    ttstub_output_flush(rust_stdout);
+    ttbc_output_flush(rust_stdout);
 }
 
 
@@ -105,7 +105,7 @@ fatal_error(const char* s)
 
     close_files_and_terminate();
     tt_cleanup();
-    ttstub_output_flush(rust_stdout);
+    ttbc_output_flush(rust_stdout);
     _tt_abort("%s", s);
 }
 

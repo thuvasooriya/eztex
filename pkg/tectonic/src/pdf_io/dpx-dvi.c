@@ -218,7 +218,7 @@ get_and_buffer_unsigned_byte (rust_input_handle_t handle)
 {
     int ch;
 
-    if ((ch = ttstub_input_getc (handle)) < 0)
+    if ((ch = ttbc_input_getc (handle)) < 0)
         _tt_abort("File ended prematurely\n");
 
     if (dvi_page_buf_index >= dvi_page_buf_size) {
@@ -246,7 +246,7 @@ get_and_buffer_bytes(rust_input_handle_t handle, unsigned int count)
         dvi_page_buffer = RENEW(dvi_page_buffer, dvi_page_buf_size, unsigned char);
     }
 
-    if (ttstub_input_read(handle, (char *) dvi_page_buffer + dvi_page_buf_index, count) != count)
+    if (ttbc_input_read(handle, (char *) dvi_page_buffer + dvi_page_buf_index, count) != count)
         _tt_abort("File ended prematurely\n");
 
     dvi_page_buf_index += count;
@@ -356,7 +356,7 @@ find_post (void)
     int32_t  current;
     int   ch;
 
-    dvi_size = ttstub_input_get_size (dvi_handle);
+    dvi_size = ttbc_input_get_size (dvi_handle);
     if (dvi_size > 0x7FFFFFFF)
         _tt_abort("DVI file size exceeds 31-bit");
     dvi_file_size = dvi_size;
@@ -367,7 +367,7 @@ find_post (void)
     /* Scan backwards through PADDING */
     do {
         ttstub_input_seek (dvi_handle, --current, SEEK_SET);
-    } while ((ch = ttstub_input_getc(dvi_handle)) == PADDING && current > 0);
+    } while ((ch = ttbc_input_getc(dvi_handle)) == PADDING && current > 0);
 
     /* file_position now points to last non padding character or
      * beginning of file */
@@ -385,14 +385,14 @@ find_post (void)
     /* Make sure post_post is really there */
     current = current - 5;
     ttstub_input_seek (dvi_handle, current, SEEK_SET);
-    if ((ch = ttstub_input_getc(dvi_handle)) != POST_POST) {
+    if ((ch = ttbc_input_getc(dvi_handle)) != POST_POST) {
         dpx_message("Found %d where post_post opcode should be\n", ch);
         _tt_abort(invalid_signature);
     }
 
     current = tt_get_signed_quad(dvi_handle);
     ttstub_input_seek (dvi_handle, current, SEEK_SET);
-    if ((ch = ttstub_input_getc(dvi_handle)) != POST) {
+    if ((ch = ttbc_input_getc(dvi_handle)) != POST) {
         dpx_message("Found %d where post_post opcode should be\n", ch);
         _tt_abort(invalid_signature);
     }
@@ -609,14 +609,14 @@ read_font_record (uint32_t tex_id)
     name_length = tt_get_unsigned_byte(dvi_handle);
 
     directory   = NEW(dir_length + 1, char);
-    if (ttstub_input_read(dvi_handle, directory, dir_length) != dir_length) {
+    if (ttbc_input_read(dvi_handle, directory, dir_length) != dir_length) {
         _tt_abort(invalid_signature);
     }
     directory[dir_length] = '\0';
     free(directory); /* unused */
 
     font_name   = NEW(name_length + 1, char);
-    if (ttstub_input_read(dvi_handle, font_name, name_length) != name_length) {
+    if (ttbc_input_read(dvi_handle, font_name, name_length) != name_length) {
         _tt_abort(invalid_signature);
     }
 
@@ -664,7 +664,7 @@ read_native_font_record (uint32_t tex_id)
 
     len = (int) tt_get_unsigned_byte(dvi_handle); /* font name length */
     font_name = NEW(len + 1, char);
-    if (ttstub_input_read(dvi_handle, font_name, len) != len) {
+    if (ttbc_input_read(dvi_handle, font_name, len) != len) {
         _tt_abort(invalid_signature);
     }
     font_name[len] = '\0';
@@ -750,7 +750,7 @@ static void get_comment (void)
 
     ttstub_input_seek (dvi_handle, 14, SEEK_SET);
     length = tt_get_unsigned_byte(dvi_handle);
-    if (ttstub_input_read(dvi_handle, dvi_info.comment, length) != length) {
+    if (ttbc_input_read(dvi_handle, dvi_info.comment, length) != length) {
         _tt_abort(invalid_signature);
     }
     dvi_info.comment[length] = '\0';
@@ -2157,7 +2157,7 @@ dvi_do_page (double page_paper_height, double hmargin, double vmargin)
                 if ((opcode = tt_get_unsigned_byte(dvi_handle)) == POST)
                     check_postamble();
                 else
-                    ttstub_input_ungetc(dvi_handle, opcode);
+                    ttbc_input_ungetc(dvi_handle, opcode);
             }
             return;
 
@@ -2275,7 +2275,7 @@ dvi_init (const char *dvi_filename, double mag)
     if (!dvi_filename)
         _tt_abort("filename must be specified");
 
-    dvi_handle = ttstub_input_open (dvi_filename, TTBC_FILE_FORMAT_PROGRAM_DATA, 0);
+    dvi_handle = ttbc_input_open (dvi_filename, TTBC_FILE_FORMAT_PROGRAM_DATA, 0);
     if (dvi_handle == INVALID_HANDLE)
         _tt_abort("cannot open \"%s\"", dvi_filename);
 
@@ -2303,7 +2303,7 @@ dvi_close (void)
 
     if (linear) {
         /* probably reading a pipe from xetex; consume any remaining data */
-        while (ttstub_input_getc(dvi_handle) != EOF)
+        while (ttbc_input_getc(dvi_handle) != EOF)
             ;
     }
 
@@ -2760,7 +2760,7 @@ dvi_scan_specials (int page_no,
                 dvi_page_buffer = RENEW(dvi_page_buffer, dvi_page_buf_size, unsigned char);
             }
 #define buf ((char*)(dvi_page_buffer + dvi_page_buf_index))
-            if (ttstub_input_read(dvi_handle, buf, size) != size)
+            if (ttbc_input_read(dvi_handle, buf, size) != size)
                 _tt_abort("Reading DVI file failed!");
             if (scan_special(page_width, page_height, x_offset, y_offset, landscape,
                              majorversion, minorversion,

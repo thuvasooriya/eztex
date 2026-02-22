@@ -180,7 +180,7 @@ static void
 synctexabort(void)
 {
     if (synctex_ctxt.file) {
-        ttstub_output_close(synctex_ctxt.file);
+        ttbc_output_close(synctex_ctxt.file);
         synctex_ctxt.file = INVALID_HANDLE;
     }
 
@@ -250,7 +250,7 @@ synctex_dot_open(void)
     strcat(the_name, synctex_suffix_gz);
     tmp = mfree(tmp);
 
-    synctex_ctxt.file = ttstub_output_open(the_name, 1);
+    synctex_ctxt.file = ttbc_output_open(the_name, 1);
     if (synctex_ctxt.file == INVALID_HANDLE)
         goto fail;
 
@@ -381,7 +381,7 @@ void synctex_terminate(bool log_opened)
          * (synctex_ctxt.flags.not_void == 0). I assume that this means that there
          * was an error and tectonic will not save anything anyway. */
         synctex_record_postamble();
-        ttstub_output_close(synctex_ctxt.file);
+        ttbc_output_close(synctex_ctxt.file);
         synctex_ctxt.file = INVALID_HANDLE;
     }
     synctexabort();

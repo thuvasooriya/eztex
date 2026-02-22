@@ -67,7 +67,7 @@ read_thumbnail (const char *thumb_filename)
   rust_input_handle_t handle = INVALID_HANDLE;
   load_options options = {1, 0, NULL};
 
-  handle = ttstub_input_open(thumb_filename, TTBC_FILE_FORMAT_PICT, 0);
+  handle = ttbc_input_open(thumb_filename, TTBC_FILE_FORMAT_PICT, 0);
   if (handle == INVALID_HANDLE) {
     dpx_warning("Could not open thumbnail file \"%s\"", thumb_filename);
     return NULL;

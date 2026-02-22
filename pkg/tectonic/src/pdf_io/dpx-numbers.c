@@ -178,7 +178,7 @@ tt_get_unsigned_byte (rust_input_handle_t handle)
 {
     int ch;
 
-    if ((ch = ttstub_input_getc (handle)) < 0)
+    if ((ch = ttbc_input_getc (handle)) < 0)
         _tt_abort("File ended prematurely\n");
 
     return (unsigned char) ch;

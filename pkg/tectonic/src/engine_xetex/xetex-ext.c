@@ -194,11 +194,11 @@ load_mapping_file(const char* s, const char* e, char byteMapping)
     buffer[e - s] = 0;
     strcat(buffer, ".tec");
 
-    map = ttstub_input_open (buffer, TTBC_FILE_FORMAT_MISC_FONTS, 0);
+    map = ttbc_input_open (buffer, TTBC_FILE_FORMAT_MISC_FONTS, 0);
     if (map) {
-        size_t mappingSize = ttstub_input_get_size (map);
+        size_t mappingSize = ttbc_input_get_size (map);
         Byte *mapping = xmalloc(mappingSize);
-        ssize_t r = ttstub_input_read(map, (char *) mapping, mappingSize);
+        ssize_t r = ttbc_input_read(map, (char *) mapping, mappingSize);
 
         if (r < 0 || (size_t) r != mappingSize)
             _tt_abort("could not read mapping file \"%s\"", buffer);

@@ -1,8 +1,10 @@
+AGENT MUST NOT BE CONCERNED WITH THIS FILE.
+THIS FILE IS PURELY FOR THE USER TO TRACK AND ANALYZE
+
 - [ ] docs: config examples
 - [ ] config tests
 - [ ] docs: bundle/index urls
 - [ ] font configuration
-- [x] port tests to zig parallel runner
 - [ ] multi file project test
 - [ ] ability to pipe (pdf state and code) to agent via mcp or skill
 - [ ] optimize seed fetches
@@ -17,4 +19,5 @@
   - [ ] git integration
   - [ ] vim navigation
 
-- wasm wasi adoption : deferred
+- wasm wasi threads : deferred
+- wasm wasi async : deferred

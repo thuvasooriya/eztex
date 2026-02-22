@@ -213,7 +213,7 @@ check_for_jpeg (rust_input_handle_t handle)
     unsigned char jpeg_sig[2];
 
     ttstub_input_seek(handle, 0, SEEK_SET);
-    if (ttstub_input_read(handle, (char *) jpeg_sig, 2) != 2)
+    if (ttbc_input_read(handle, (char *) jpeg_sig, 2) != 2)
         return 0;
     else if (jpeg_sig[0] != 0xff || jpeg_sig[1] != JM_SOI)
         return 0;
@@ -513,12 +513,12 @@ JPEG_get_marker (rust_input_handle_t handle)
 {
     int c;
 
-    c = ttstub_input_getc(handle);
+    c = ttbc_input_getc(handle);
     if (c != 255)
         return -1;
 
     for (;;) {
-        c = ttstub_input_getc(handle);
+        c = ttbc_input_getc(handle);
         if (c < 0)
             return -1;
         else if (c > 0 && c < 255) {
@@ -627,7 +627,7 @@ read_APP1_Exif (struct JPEG_info *info, rust_input_handle_t handle, size_t lengt
 
     buffer = xmalloc (length);
 
-    r = ttstub_input_read (handle, (char *) buffer, length);
+    r = ttbc_input_read (handle, (char *) buffer, length);
     if (r < 0 || (size_t) r != length)
         goto err;
 
@@ -803,7 +803,7 @@ read_APP0_JFIF (struct JPEG_info *j_info, rust_input_handle_t handle)
     thumb_data_len = 3 * app_data->Xthumbnail * app_data->Ythumbnail;
     if (thumb_data_len > 0) {
         app_data->thumbnail = NEW(thumb_data_len, unsigned char);
-        ttstub_input_read(handle, (char *) app_data->thumbnail, thumb_data_len);
+        ttbc_input_read(handle, (char *) app_data->thumbnail, thumb_data_len);
     } else {
         app_data->thumbnail = NULL;
     }
@@ -853,7 +853,7 @@ read_APP1_XMP (struct JPEG_info *j_info, rust_input_handle_t handle, size_t leng
     app_data = NEW(1, struct JPEG_APPn_XMP);
     app_data->length = length;
     app_data->packet = NEW(app_data->length, unsigned char);
-    ttstub_input_read(handle, (char *) app_data->packet, app_data->length);
+    ttbc_input_read(handle, (char *) app_data->packet, app_data->length);
 
     add_APPn_marker(j_info, JM_APP1, JS_APPn_XMP, app_data);
 
@@ -870,7 +870,7 @@ read_APP2_ICC (struct JPEG_info *j_info, rust_input_handle_t handle, size_t leng
     app_data->num_chunks  = tt_get_unsigned_byte(handle);
     app_data->length      = length - 2;
     app_data->chunk       = NEW(app_data->length, unsigned char);
-    ttstub_input_read(handle, (char *) app_data->chunk, app_data->length);
+    ttbc_input_read(handle, (char *) app_data->chunk, app_data->length);
 
     add_APPn_marker(j_info, JM_APP2, JS_APPn_ICC, app_data);
 
@@ -886,7 +886,7 @@ JPEG_copy_stream (struct JPEG_info *j_info, pdf_obj *stream, rust_input_handle_t
 
 #define SKIP_CHUNK(j,c) ((j)->skipbits[(c) / 8] & (1 << (7 - (c) % 8)))
 #define COPY_CHUNK(f,s,l) while ((l) > 0) {                             \
-        int nb_read = ttstub_input_read((f), work_buffer, MIN((l), WORK_BUFFER_SIZE)); \
+        int nb_read = ttbc_input_read((f), work_buffer, MIN((l), WORK_BUFFER_SIZE)); \
         if (nb_read > 0)                                                \
             pdf_add_stream((s), work_buffer, nb_read);                  \
         (l) -= nb_read;                                                 \
@@ -933,10 +933,10 @@ JPEG_copy_stream (struct JPEG_info *j_info, pdf_obj *stream, rust_input_handle_t
     }
 
     {
-        size_t total_size = ttstub_input_get_size(handle);
+        size_t total_size = ttbc_input_get_size(handle);
         size_t pos = ttstub_input_seek(handle, 0, SEEK_CUR);
 
-        while ((length = ttstub_input_read(handle, work_buffer, MIN(WORK_BUFFER_SIZE, total_size - pos))) > 0) {
+        while ((length = ttbc_input_read(handle, work_buffer, MIN(WORK_BUFFER_SIZE, total_size - pos))) > 0) {
             pdf_add_stream(stream, work_buffer, length);
             pos += length;
         }
@@ -982,7 +982,7 @@ JPEG_scan_file (struct JPEG_info *j_info, rust_input_handle_t handle)
                 break;
             case JM_APP0:
                 if (length > 5) {
-                    if (ttstub_input_read(handle, app_sig, 5) != 5)
+                    if (ttbc_input_read(handle, app_sig, 5) != 5)
                         return -1;
                     length -= 5;
                     if (!memcmp(app_sig, "JFIF\000", 5)) {
@@ -1002,7 +1002,7 @@ JPEG_scan_file (struct JPEG_info *j_info, rust_input_handle_t handle)
                 break;
             case JM_APP1:
                 if (length > 5) {
-                    if (ttstub_input_read(handle, app_sig, 5) != 5)
+                    if (ttbc_input_read(handle, app_sig, 5) != 5)
                         return -1;
                     length -= 5;
                     if (!memcmp(app_sig, "Exif\000", 5)) {
@@ -1010,7 +1010,7 @@ JPEG_scan_file (struct JPEG_info *j_info, rust_input_handle_t handle)
                         j_info->flags |= HAVE_APPn_Exif;
                         length -= read_APP1_Exif(j_info, handle, length);
                     } else if (!memcmp(app_sig, "http:", 5) && length > 24) {
-                        if (ttstub_input_read(handle, app_sig, 24) != 24)
+                        if (ttbc_input_read(handle, app_sig, 24) != 24)
                             return -1;
                         length -= 24;
                         if (!memcmp(app_sig, "//ns.adobe.com/xap/1.0/\000", 24)) {
@@ -1026,7 +1026,7 @@ JPEG_scan_file (struct JPEG_info *j_info, rust_input_handle_t handle)
                 break;
             case JM_APP2:
                 if (length >= 14) {
-                    if (ttstub_input_read(handle, app_sig, 12) != 12)
+                    if (ttbc_input_read(handle, app_sig, 12) != 12)
                         return -1;
                     length -= 12;
                     if (!memcmp(app_sig, "ICC_PROFILE\000", 12)) {
@@ -1039,7 +1039,7 @@ JPEG_scan_file (struct JPEG_info *j_info, rust_input_handle_t handle)
                 break;
             case JM_APP14:
                 if (length > 5) {
-                    if (ttstub_input_read(handle, app_sig, 5) != 5)
+                    if (ttbc_input_read(handle, app_sig, 5) != 5)
                         return -1;
                     length -= 5;
                     if (!memcmp(app_sig, "Adobe", 5)) {

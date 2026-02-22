@@ -1345,9 +1345,9 @@ extern fn get_ft_library() ?*anyopaque;
 extern fn maybe_shutdown_ft() void;
 
 // -- Tectonic bridge I/O externs --
-extern fn ttstub_input_open(path: [*:0]const u8, format: c_int, is_gz: c_int) usize;
-extern fn ttstub_input_get_size(handle: usize) usize;
-extern fn ttstub_input_read(handle: usize, data: [*]u8, len: usize) isize;
+extern fn ttbc_input_open(path: [*:0]const u8, format: c_int, is_gz: c_int) usize;
+extern fn ttbc_input_get_size(handle: usize) usize;
+extern fn ttbc_input_read(handle: usize, data: [*]u8, len: usize) isize;
 extern fn ttstub_input_close(handle: usize) c_int;
 
 // -- libc externs (strlen, strrchr, strcpy, strcat, memset already have malloc/free/strdup above) --
@@ -1365,18 +1365,18 @@ fn initialize_ft_internal(font: *XeTeXFont_rec, pathname: [*:0]const u8, index: 
     const lib = get_ft_library() orelse return -1;
 
     // open via bridge I/O with fallback chain
-    var handle: usize = ttstub_input_open(pathname, TTBC_FILE_FORMAT_OPEN_TYPE, 0);
-    if (handle == 0) handle = ttstub_input_open(pathname, TTBC_FILE_FORMAT_TRUE_TYPE, 0);
-    if (handle == 0) handle = ttstub_input_open(pathname, TTBC_FILE_FORMAT_TYPE1, 0);
+    var handle: usize = ttbc_input_open(pathname, TTBC_FILE_FORMAT_OPEN_TYPE, 0);
+    if (handle == 0) handle = ttbc_input_open(pathname, TTBC_FILE_FORMAT_TRUE_TYPE, 0);
+    if (handle == 0) handle = ttbc_input_open(pathname, TTBC_FILE_FORMAT_TYPE1, 0);
     if (handle == 0) return -1;
 
-    const sz = ttstub_input_get_size(handle);
+    const sz = ttbc_input_get_size(handle);
     const data_raw = malloc(sz) orelse {
         _ = ttstub_input_close(handle);
         return -1;
     };
 
-    const nread = ttstub_input_read(handle, data_raw, sz);
+    const nread = ttbc_input_read(handle, data_raw, sz);
     _ = ttstub_input_close(handle);
     if (nread < 0 or @as(usize, @intCast(nread)) != sz) {
         free(data_raw);
@@ -1421,12 +1421,12 @@ fn initialize_ft_internal(font: *XeTeXFont_rec, pathname: [*:0]const u8, index: 
                 _ = strcat(afm_name, ".afm");
             }
 
-            const afm_handle = ttstub_input_open(afm_z, TTBC_FILE_FORMAT_AFM, 0);
+            const afm_handle = ttbc_input_open(afm_z, TTBC_FILE_FORMAT_AFM, 0);
             if (afm_handle != 0) {
-                const afm_sz = ttstub_input_get_size(afm_handle);
+                const afm_sz = ttbc_input_get_size(afm_handle);
                 const afm_data = malloc(afm_sz);
                 if (afm_data) |ad| {
-                    const afm_nread = ttstub_input_read(afm_handle, ad, afm_sz);
+                    const afm_nread = ttbc_input_read(afm_handle, ad, afm_sz);
                     if (afm_nread > 0) {
                         var open_args: FT_Open_Args = undefined;
                         _ = memset(@ptrCast(&open_args), 0, @sizeOf(FT_Open_Args));

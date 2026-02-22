@@ -267,10 +267,10 @@ load_encoding_file (const char *filename)
     if (handle == INVALID_HANDLE)
         return -1;
 
-    fsize = ttstub_input_get_size(handle);
+    fsize = ttbc_input_get_size(handle);
     wbuf = NEW(fsize + 1, char);
     wbuf[fsize] = '\0';
-    if (ttstub_input_read (handle, wbuf, fsize) != fsize)
+    if (ttbc_input_read (handle, wbuf, fsize) != fsize)
         _tt_abort("error reading %s", filename);
     ttstub_input_close(handle);
 
@@ -687,7 +687,7 @@ pdf_load_ToUnicode_stream (const char *ident)
     if (!ident)
         return NULL;
 
-    handle = ttstub_input_open(ident, TTBC_FILE_FORMAT_CMAP, 0);
+    handle = ttbc_input_open(ident, TTBC_FILE_FORMAT_CMAP, 0);
     if (handle == INVALID_HANDLE)
         return NULL;
 

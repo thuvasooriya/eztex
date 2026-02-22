@@ -48,7 +48,7 @@ static char _dpx_message_buf[1024];
 static rust_output_handle_t
 _dpx_ensure_output_handle (void)
 {
-    _dpx_message_handle = ttstub_output_open_stdout();
+    _dpx_message_handle = ttbc_output_open_stdout();
 
     if (_dpx_message_handle == INVALID_HANDLE)
         _tt_abort("xdvipdfmx cannot get output logging handle?!");
@@ -75,7 +75,7 @@ _dpx_print_to_stdout (const char *fmt, va_list argp, int warn)
     if (warn)
         ttstub_issue_warning("%s", _dpx_message_buf);
 
-    ttstub_output_write(_dpx_ensure_output_handle(), _dpx_message_buf, n);
+    ttbc_output_write(_dpx_ensure_output_handle(), _dpx_message_buf, n);
 }
 
 
@@ -102,12 +102,12 @@ dpx_warning (const char *fmt, ...)
         return;
 
     if (_last_message_type == DPX_MESG_INFO)
-        ttstub_output_write(_dpx_ensure_output_handle(), "\n", 1);
+        ttbc_output_write(_dpx_ensure_output_handle(), "\n", 1);
 
-    ttstub_output_write(_dpx_ensure_output_handle(), "warning: ", 9);
+    ttbc_output_write(_dpx_ensure_output_handle(), "warning: ", 9);
     va_start(argp, fmt);
     _dpx_print_to_stdout (fmt, argp, 1);
     va_end(argp);
-    ttstub_output_write(_dpx_ensure_output_handle(), "\n", 1);
+    ttbc_output_write(_dpx_ensure_output_handle(), "\n", 1);
     _last_message_type = DPX_MESG_WARN;
 }

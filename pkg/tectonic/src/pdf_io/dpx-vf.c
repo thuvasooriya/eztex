@@ -137,7 +137,7 @@ read_a_char_def(rust_input_handle_t vf_handle, int thisfont, uint32_t pkt_len, u
 
     if (pkt_len > 0) {
         pkt = NEW (pkt_len, unsigned char);
-        if (ttstub_input_read (vf_handle, (char *) pkt, pkt_len) != pkt_len)
+        if (ttbc_input_read (vf_handle, (char *) pkt, pkt_len) != pkt_len)
             _tt_abort("VF file ended prematurely.");
         vf_fonts[thisfont].ch_pkt[ch] = pkt;
     }
@@ -168,11 +168,11 @@ read_a_font_def(rust_input_handle_t vf_handle, int32_t font_id, int thisfont)
     name_length = tt_get_unsigned_byte (vf_handle);
 
     dev_font->directory = NEW (dir_length+1, char);
-    if (ttstub_input_read (vf_handle, dev_font->directory, dir_length) != dir_length)
+    if (ttbc_input_read (vf_handle, dev_font->directory, dir_length) != dir_length)
         _tt_abort("directory read failed");
 
     dev_font->name = NEW (name_length+1, char);
-    if (ttstub_input_read (vf_handle, dev_font->name, name_length) != name_length)
+    if (ttbc_input_read (vf_handle, dev_font->name, name_length) != name_length)
         _tt_abort("directory read failed");
 
     dev_font->directory[dir_length] = 0;
@@ -257,10 +257,10 @@ int vf_locate_font (const char *tex_name, spt_t ptsize)
     if (i != num_vf_fonts)
         return i;
 
-    vf_handle = ttstub_input_open (tex_name, TTBC_FILE_FORMAT_VF, 0);
+    vf_handle = ttbc_input_open (tex_name, TTBC_FILE_FORMAT_VF, 0);
 
     if (vf_handle == INVALID_HANDLE)
-        vf_handle = ttstub_input_open (tex_name, TTBC_FILE_FORMAT_OVF, 0);
+        vf_handle = ttbc_input_open (tex_name, TTBC_FILE_FORMAT_OVF, 0);
 
     if (vf_handle == INVALID_HANDLE)
         return -1;

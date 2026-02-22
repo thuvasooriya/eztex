@@ -473,7 +473,7 @@ pdf_out_init (const char *filename,
     if (filename == NULL)
         _tt_abort("stdout PDF output not supported");
 
-    p->output.handle = ttstub_output_open(filename, 0);
+    p->output.handle = ttbc_output_open(filename, 0);
     if (!p->output.handle) {
         if (strlen(filename) < 128)
             _tt_abort("Unable to open \"%s\".", filename);
@@ -681,7 +681,7 @@ pdf_out_flush (void)
 
         dpx_message("%"PRIuZ" bytes written", p->output.file_position);
 
-        ttstub_output_close(p->output.handle);
+        ttbc_output_close(p->output.handle);
         p->output.handle = INVALID_HANDLE;
         p->output.file_position = 0;
         p->output.line_position = 0;
@@ -703,7 +703,7 @@ pdf_error_cleanup (void)
      * For now, simply close the file.
      */
     if (p->output.handle) {
-        ttstub_output_close(p->output.handle);
+        ttbc_output_close(p->output.handle);
         p->output.handle = INVALID_HANDLE;
     }
 }
@@ -749,7 +749,7 @@ pdf_out_char (pdf_out *p, char c)
     if (p->output_stream)
         pdf_add_stream(p->output_stream, &c, 1);
     else {
-        ttstub_output_putc(p->output.handle, c);
+        ttbc_output_putc(p->output.handle, c);
         p->output.file_position += 1;
 
         if (c == '\n')
@@ -778,7 +778,7 @@ pdf_out_str(pdf_out *p, const void *buffer, size_t length)
     if (p->output_stream)
         pdf_add_stream(p->output_stream, buffer, length);
     else {
-        ttstub_output_write(p->output.handle, buffer, length);
+        ttbc_output_write(p->output.handle, buffer, length);
         p->output.file_position += length;
         p->output.line_position += length;
         /* "foo\nbar\n "... */
@@ -3040,7 +3040,7 @@ tt_mfreadln (char *buf, int size, rust_input_handle_t handle)
     int c;
     int len = 0;
 
-    while ((c = ttstub_input_getc(handle)) != EOF && c != '\n' && c != '\r') {
+    while ((c = ttbc_input_getc(handle)) != EOF && c != '\n' && c != '\r') {
         if (len >= size)
             return -2;
         buf[len++] = (char) c;
@@ -3049,8 +3049,8 @@ tt_mfreadln (char *buf, int size, rust_input_handle_t handle)
     if (c == EOF && len == 0)
         return -1;
 
-    if (c == '\r' && (c = ttstub_input_getc(handle)) >= 0 && (c != '\n'))
-        ttstub_input_ungetc(handle, c);
+    if (c == '\r' && (c = ttbc_input_getc(handle)) >= 0 && (c != '\n'))
+        ttbc_input_ungetc(handle, c);
 
     return len;
 }
@@ -3071,7 +3071,7 @@ backup_line (rust_input_handle_t handle)
         do
             ttstub_input_seek(handle, -2, SEEK_CUR);
         while (ttstub_input_seek(handle, 0, SEEK_CUR) > 0 &&
-               (ch = ttstub_input_getc(handle)) >= 0 &&
+               (ch = ttbc_input_getc(handle)) >= 0 &&
                (ch != '\n' && ch != '\r' ));
     }
 
@@ -3099,7 +3099,7 @@ find_xref (rust_input_handle_t handle, int file_size)
 
         currentpos = ttstub_input_seek(handle, 0, SEEK_CUR);
         n = MIN(strlen("startxref"), file_size - currentpos);
-        ttstub_input_read(handle, work_buffer, n);
+        ttbc_input_read(handle, work_buffer, n);
         ttstub_input_seek(handle, currentpos, SEEK_SET);
         tries--;
     } while (tries > 0 && !strstartswith(work_buffer, "startxref"));
@@ -3142,7 +3142,7 @@ parse_trailer (pdf_file *pf)
 
     cur_pos = ttstub_input_seek(pf->handle, 0, SEEK_CUR);
     nmax = MIN(pf->file_size - cur_pos, WORK_BUFFER_SIZE);
-    nread = ttstub_input_read(pf->handle, work_buffer, nmax);
+    nread = ttbc_input_read(pf->handle, work_buffer, nmax);
 
     if (nread == 0 || !strstartswith(work_buffer, "trailer")) {
         dpx_warning("No trailer.  Are you sure this is a PDF file?");
@@ -3223,7 +3223,7 @@ pdf_read_object (uint32_t obj_num, uint16_t obj_gen,
     buffer = NEW(length + 1, char);
 
     ttstub_input_seek(pf->handle, offset, SEEK_SET);
-    ttstub_input_read(pf->handle, buffer, length);
+    ttbc_input_read(pf->handle, buffer, length);
 
     p = buffer;
     endptr = p + length;
@@ -3933,7 +3933,7 @@ pdf_file_new (rust_input_handle_t handle)
     pf->catalog = NULL;
     pf->num_obj = 0;
     pf->version = 0;
-    pf->file_size = ttstub_input_get_size(handle);
+    pf->file_size = ttbc_input_get_size(handle);
 
     ttstub_input_seek(handle, 0, SEEK_END);
 
@@ -4093,7 +4093,7 @@ check_for_pdf_version (rust_input_handle_t handle)
     unsigned int major, minor;
 
     ttstub_input_seek(handle, 0, SEEK_SET);
-    if (ttstub_input_read(handle, buffer, sizeof(buffer) - 1) != sizeof(buffer) - 1)
+    if (ttbc_input_read(handle, buffer, sizeof(buffer) - 1) != sizeof(buffer) - 1)
         return -1;
 
     if (sscanf(buffer, "%%PDF-%u.%u", &major, &minor) != 2)
@@ -4391,7 +4391,7 @@ pdf_obj_reset_global_state(void)
     pdf_out *p = current_output();
 
     if (p->output.handle != INVALID_HANDLE) {
-        ttstub_output_close(p->output.handle);
+        ttbc_output_close(p->output.handle);
     }
     p->output.handle = INVALID_HANDLE;
     p->output.file_position = 0;

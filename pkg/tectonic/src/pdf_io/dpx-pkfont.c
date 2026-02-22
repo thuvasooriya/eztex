@@ -334,7 +334,7 @@ static void
 do_preamble (rust_input_handle_t handle)
 {
   /* Check for id byte */
-  if (ttstub_input_getc(handle) == 89) {
+  if (ttbc_input_getc(handle) == 89) {
     /* Skip comment */
     tt_skip_bytes(tt_get_unsigned_byte(handle), handle);
     /* Skip other header info.  It's normally used for verifying this
@@ -532,7 +532,7 @@ pdf_font_load_pkfont (pdf_font *font)
   pix2charu  = 72. * 1000. / ((double) base_dpi) / point_size;
   bbox.llx = bbox.lly =  HUGE_VAL;
   bbox.urx = bbox.ury = -HUGE_VAL;
-  while ((opcode = ttstub_input_getc(handle)) >= 0 && opcode != PK_POST) {
+  while ((opcode = ttbc_input_getc(handle)) >= 0 && opcode != PK_POST) {
     if (opcode < 240) {
       struct pk_header_  pkh;
 
@@ -563,7 +563,7 @@ pdf_font_load_pkfont (pdf_font *font)
         bbox.ury = MAX(bbox.ury,  pkh.bm_voff);
 
         pkt_ptr = NEW(pkh.pkt_len, unsigned char);
-        if ((bytesread = ttstub_input_read(handle, (char *) pkt_ptr, pkh.pkt_len))!= pkh.pkt_len) {
+        if ((bytesread = ttbc_input_read(handle, (char *) pkt_ptr, pkh.pkt_len))!= pkh.pkt_len) {
           _tt_abort("Only %"PRIuZ" bytes PK packet read. (expected %d bytes)",
                 bytesread, pkh.pkt_len);
         }

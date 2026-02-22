@@ -718,11 +718,11 @@ tfm_open (const char *tfm_name, int must_exist)
         ofm_name = NULL;
     }
 
-    if (ofm_name && (tfm_handle = ttstub_input_open(ofm_name, TTBC_FILE_FORMAT_OFM, 0)) != INVALID_HANDLE) {
+    if (ofm_name && (tfm_handle = ttbc_input_open(ofm_name, TTBC_FILE_FORMAT_OFM, 0)) != INVALID_HANDLE) {
         format = OFM_FORMAT;
-    } else if ((tfm_handle = ttstub_input_open(tfm_name, TTBC_FILE_FORMAT_TFM, 0)) != INVALID_HANDLE) {
+    } else if ((tfm_handle = ttbc_input_open(tfm_name, TTBC_FILE_FORMAT_TFM, 0)) != INVALID_HANDLE) {
         format = TFM_FORMAT;
-    } else if ((tfm_handle = ttstub_input_open(tfm_name, TTBC_FILE_FORMAT_OFM, 0)) != INVALID_HANDLE) {
+    } else if ((tfm_handle = ttbc_input_open(tfm_name, TTBC_FILE_FORMAT_OFM, 0)) != INVALID_HANDLE) {
         format = OFM_FORMAT;
     }
 
@@ -741,7 +741,7 @@ tfm_open (const char *tfm_name, int must_exist)
             dpx_message("(OFM:%s", tfm_name);
     }
 
-    tfm_file_size = ttstub_input_get_size (tfm_handle);
+    tfm_file_size = ttbc_input_get_size (tfm_handle);
     if (tfm_file_size > 0x1FFFFFFFF)
         _tt_abort("TFM/OFM file size exceeds 33-bit");
     if (tfm_file_size < 24)
@@ -927,13 +927,13 @@ tfm_exists (const char *tfm_name)
 {
     rust_input_handle_t handle;
 
-    handle = ttstub_input_open(tfm_name, TTBC_FILE_FORMAT_OFM, 0);
+    handle = ttbc_input_open(tfm_name, TTBC_FILE_FORMAT_OFM, 0);
     if (handle) {
         ttstub_input_close(handle);
         return true;
     }
 
-    handle = ttstub_input_open(tfm_name, TTBC_FILE_FORMAT_TFM, 0);
+    handle = ttbc_input_open(tfm_name, TTBC_FILE_FORMAT_TFM, 0);
     if (handle) {
         ttstub_input_close(handle);
         return true;

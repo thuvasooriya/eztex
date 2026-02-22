@@ -114,7 +114,7 @@ ship_out(int32_t p)
             print_char('.' );
     }
 
-    ttstub_output_flush(rust_stdout);
+    ttbc_output_flush(rust_stdout);
 
     if (INTPAR(tracing_output) > 0) {
         print_char(']' );
@@ -182,7 +182,7 @@ ship_out(int32_t p)
         if (job_name == 0)
             open_log_file();
         pack_job_name(output_file_extension);
-        dvi_file = ttstub_output_open(name_of_file, 0);
+        dvi_file = ttbc_output_open(name_of_file, 0);
         if (dvi_file == INVALID_HANDLE)
             _tt_abort("cannot open output file \"%s\"", name_of_file);
         output_file_name = make_name_string();
@@ -285,7 +285,7 @@ done:
         print_char(']');
 
     dead_cycles = 0;
-    ttstub_output_flush(rust_stdout);
+    ttbc_output_flush(rust_stdout);
     flush_node_list(p);
     synctex_teehs();
 }
@@ -1738,7 +1738,7 @@ out_what(int32_t p)
         }
 
         if (write_open[j])
-            ttstub_output_close(write_file[j]);
+            ttbc_output_close(write_file[j]);
 
         if (mem[p].b16.s0 == CLOSE_NODE) {
             write_open[j] = false;
@@ -1758,7 +1758,7 @@ out_what(int32_t p)
 
         pack_file_name(cur_name, cur_area, cur_ext);
 
-        write_file[j] = ttstub_output_open(name_of_file, 0);
+        write_file[j] = ttbc_output_open(name_of_file, 0);
         if (write_file[j] == INVALID_HANDLE)
             _tt_abort("cannot open output file \"%s\"", name_of_file);
 
@@ -2193,7 +2193,7 @@ write_out(int32_t p)
             print_nl_cstr("");
             print_ln();
         } else {
-            ttstub_shell_escape(&str_pool[str_start[str_ptr - TOO_BIG_CHAR]], cur_length());
+            ttbc_shell_escape(&str_pool[str_start[str_ptr - TOO_BIG_CHAR]], cur_length());
         }
 
         // Clear shell escape command
@@ -2353,7 +2353,7 @@ finalize_dvi_file(void)
     if (dvi_ptr > 0)
         write_to_dvi(0, dvi_ptr - 1);
 
-    k = ttstub_output_close(dvi_file);
+    k = ttbc_output_close(dvi_file);
 
     if (k == 0) {
         print_nl_cstr("Output written on ");
@@ -2386,7 +2386,7 @@ write_to_dvi(int32_t a, int32_t b)
 {
     int32_t n = b - a + 1;
 
-    if (ttstub_output_write (dvi_file, (char *) &dvi_buf[a], n) != n)
+    if (ttbc_output_write (dvi_file, (char *) &dvi_buf[a], n) != n)
         _tt_abort ("failed to write data to XDV file");
 }
 

@@ -4,6 +4,6 @@
 
 #include "tectonic_bridge_core.h"
 
-int bibtex_main(ttbc_state_t *api, const char *aux_file_name);
+int bibtex_main(const char *aux_file_name);
 
 #endif

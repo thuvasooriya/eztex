@@ -309,6 +309,8 @@ pub const LayerWeights = struct { ... };
 - Module/utility files: `utils.zig`, `math.zig`, `kernels.zig`
 - The struct name matches the filename (`Encoder` in `Encoder.zig`)
 
+CRITICAL: This is an encouraged pattern, but the usage should be justified by a primary struct and MUST not be used for everything.
+
 ### Rule 2: No Redundant Prefixes
 
 Inside a struct file, use **simple names** for nested types:

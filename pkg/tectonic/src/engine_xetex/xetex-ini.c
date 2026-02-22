@@ -454,7 +454,7 @@ do_dump (char *p, size_t item_size, size_t nitems, rust_output_handle_t out_file
 {
     swap_items (p, nitems, item_size);
 
-    ssize_t r = ttstub_output_write (out_file, p, item_size * nitems);
+    ssize_t r = ttbc_output_write (out_file, p, item_size * nitems);
     if (r < 0 || (size_t) r != item_size * nitems)
         _tt_abort ("could not write %"PRIuZ" %"PRIuZ"-byte item(s) to %s",
                    nitems, item_size, name_of_file);
@@ -470,7 +470,7 @@ do_dump (char *p, size_t item_size, size_t nitems, rust_output_handle_t out_file
 static void
 do_undump (char *p, size_t item_size, size_t nitems, rust_input_handle_t in_file)
 {
-    ssize_t r = ttstub_input_read (in_file, p, item_size * nitems);
+    ssize_t r = ttbc_input_read (in_file, p, item_size * nitems);
     if (r < 0 || (size_t) r != item_size * nitems)
         _tt_abort("could not undump %"PRIuZ" %"PRIuZ"-byte item(s) from %s",
                   nitems, item_size, name_of_file);
@@ -2098,7 +2098,7 @@ store_fmt_file(void)
 
         history = HISTORY_FATAL_ERROR;
         close_files_and_terminate();
-        ttstub_output_flush (rust_stdout);
+        ttbc_output_flush (rust_stdout);
         _tt_abort("\\dump inside a group");
     }
 
@@ -2124,7 +2124,7 @@ store_fmt_file(void)
     format_ident = make_string();
     pack_job_name(".fmt");
 
-    fmt_out = ttstub_output_open (name_of_file, 0);
+    fmt_out = ttbc_output_open (name_of_file, 0);
     if (fmt_out == INVALID_HANDLE)
         _tt_abort ("cannot open format output file \"%s\"", name_of_file);
 
@@ -2436,7 +2436,7 @@ store_fmt_file(void)
     dump_int(FORMAT_FOOTER_MAGIC);
 
     INTPAR(tracing_stats) = 0; /*:1361*/
-    ttstub_output_close(fmt_out);
+    ttbc_output_close(fmt_out);
 }
 
 
@@ -2466,7 +2466,7 @@ load_fmt_file(void)
 
     pack_buffered_name(format_default_length - 4, 1, 0);
 
-    fmt_in = ttstub_input_open(name_of_file, TTBC_FILE_FORMAT_FORMAT, 0);
+    fmt_in = ttbc_input_open(name_of_file, TTBC_FILE_FORMAT_FORMAT, 0);
     if (fmt_in == INVALID_HANDLE)
         _tt_abort("cannot open the format file \"%s\"", name_of_file);
 
@@ -3566,7 +3566,7 @@ tt_run_engine(const char *dump_name, const char *input_file_name, time_t build_d
 
     /* Get our stdout handle */
 
-    rust_stdout = ttstub_output_open_stdout ();
+    rust_stdout = ttbc_output_open_stdout ();
 
     size_t len = strlen (dump_name);
     TEX_format_default = xmalloc (len + 1);
@@ -3758,6 +3758,7 @@ tt_run_engine(const char *dump_name, const char *input_file_name, time_t build_d
     if (!in_initex_mode) {
         if (!load_fmt_file())
             return history;
+        ttbc_fire_checkpoint(TTBC_CHECKPOINT_FORMAT_LOADED);
     }
 
     if (INTPAR(end_line_char) < 0 || INTPAR(end_line_char) > BIGGEST_CHAR)

@@ -1,6 +1,5 @@
 const std = @import("std");
 const fs = std.fs;
-const posix = std.posix;
 const fs_path = std.fs.path;
 const bridge = @import("bridge.zig");
 const Log = @import("Log.zig");
@@ -8,12 +7,12 @@ const Host = @import("Host.zig");
 const is_wasm = Host.is_wasm;
 
 const Config = @import("Config.zig");
+const FormatCache = @import("FormatCache.zig");
 const MainDetect = @import("MainDetect.zig");
 const seeds = @import("seeds.zig");
 
 // engine entry point defined in xetex-engine-interface.c
 extern fn tt_engine_xetex_main(
-    api: ?*anyopaque,
     dump_name: [*:0]const u8,
     input_file_name: [*:0]const u8,
     build_date: u64,
@@ -60,14 +59,13 @@ const XdvipdfmxConfig = extern struct {
 };
 
 extern fn tt_engine_xdvipdfmx_main(
-    api: ?*anyopaque,
     cfg: *const XdvipdfmxConfig,
     dviname: [*:0]const u8,
     pdfname: [*:0]const u8,
 ) c_int;
 
 // bibtex engine entry point defined in engine_bibtex/bibtex.c
-extern fn bibtex_main(api: ?*anyopaque, aux_file_name: [*:0]const u8) c_int;
+extern fn bibtex_main(aux_file_name: [*:0]const u8) c_int;
 
 // defined in support.c -- returns the format_buf filled by _tt_abort()
 extern fn _ttbc_get_error_message() [*:0]const u8;
@@ -86,6 +84,9 @@ const Command = enum {
 const Format = enum {
     latex,
     plain,
+
+    // engine format serial number (must match Format.zig / C engine)
+    const engine_serial: u32 = 33;
 
     fn dump_name(self: Format) [*:0]const u8 {
         return switch (self) {
@@ -190,6 +191,16 @@ const default_diag_handler = bridge.World.DiagnosticHandler{
     .on_info = on_diag_info,
 };
 
+// -- checkpoint handler --
+// logs engine lifecycle events fired from the C side.
+
+fn on_checkpoint(_: ?*anyopaque, id: bridge.CheckpointId) void {
+    switch (id) {
+        .format_loaded => Log.dbg("eztex", "checkpoint: format loaded", .{}),
+        _ => Log.dbg("eztex", "checkpoint: unknown ({d})", .{@intFromEnum(id)}),
+    }
+}
+
 // -- format discovery and file helpers --
 
 fn find_format_path(cache_dir: []const u8, buf: []u8, format_name: []const u8) ?[]const u8 {
@@ -207,14 +218,6 @@ fn find_format_path(cache_dir: []const u8, buf: []u8, format_name: []const u8) ?
         }
     }
     return null;
-}
-
-fn copy_file_from_absolute(src_abs: []const u8, dest_rel: []const u8) void {
-    const src_dir_path = fs_path.dirname(src_abs) orelse return;
-    const src_base = fs_path.basename(src_abs);
-    var src_dir = fs.openDirAbsolute(src_dir_path, .{}) catch return;
-    defer src_dir.close();
-    src_dir.copyFile(src_base, fs.cwd(), dest_rel, .{}) catch {};
 }
 
 fn copy_file_to_cache_dir(cache_dir: []const u8, src_rel: []const u8, dest_rel: []const u8) void {
@@ -425,7 +428,7 @@ fn current_build_date(deterministic: bool) u64 {
     return if (deterministic) 1 else @as(u64, @intCast(std.time.timestamp()));
 }
 
-fn run_xetex(world: *bridge.World, input_file: []const u8, format: Format, _: bool, opts: *const Options) c_int {
+fn run_xetex(_: *bridge.World, input_file: []const u8, format: Format, _: bool, opts: *const Options) c_int {
     set_engine_var(.synctex, opts.synctex);
     set_engine_var(.halt_on_error, true);
 
@@ -438,7 +441,6 @@ fn run_xetex(world: *bridge.World, input_file: []const u8, format: Format, _: bo
     Log.dbg("eztex", "calling tt_engine_xetex_main (format={s})...", .{format.fmt_filename()});
 
     const result = tt_engine_xetex_main(
-        @ptrCast(world),
         format.dump_name(),
         input_name_z,
         current_build_date(opts.deterministic),
@@ -448,7 +450,7 @@ fn run_xetex(world: *bridge.World, input_file: []const u8, format: Format, _: bo
     return result;
 }
 
-fn run_xdvipdfmx(world: *bridge.World, xdv_name: []const u8, pdf_name: []const u8, _: bool, opts: *const Options) c_int {
+fn run_xdvipdfmx(_: *bridge.World, xdv_name: []const u8, pdf_name: []const u8, _: bool, opts: *const Options) c_int {
     var xdv_buf: [512]u8 = undefined;
     var pdf_buf: [512]u8 = undefined;
 
@@ -470,7 +472,6 @@ fn run_xdvipdfmx(world: *bridge.World, xdv_name: []const u8, pdf_name: []const u
     Log.log("eztex", .info, "calling xdvipdfmx('{s}' -> '{s}')...", .{ xdv_name, pdf_name });
 
     const result = tt_engine_xdvipdfmx_main(
-        @ptrCast(world),
         &config,
         xdv_z,
         pdf_z,
@@ -493,7 +494,7 @@ fn run_xdvipdfmx(world: *bridge.World, xdv_name: []const u8, pdf_name: []const u
 
 // -- bibtex invocation --
 
-fn run_bibtex(world: *bridge.World, aux_name: []const u8, _: bool) c_int {
+fn run_bibtex(_: *bridge.World, aux_name: []const u8, _: bool) c_int {
     var aux_buf: [512]u8 = undefined;
     const name_len = @min(aux_name.len, aux_buf.len - 1);
     @memcpy(aux_buf[0..name_len], aux_name[0..name_len]);
@@ -503,7 +504,7 @@ fn run_bibtex(world: *bridge.World, aux_name: []const u8, _: bool) c_int {
     Log.log("eztex", .info, "running bibtex on '{s}'...", .{aux_name});
 
     reset_world_io();
-    const result = bibtex_main(@ptrCast(world), aux_z);
+    const result = bibtex_main(aux_z);
 
     Log.dbg("eztex", "bibtex returned: {d}", .{result});
     return result;
@@ -521,26 +522,11 @@ fn aux_needs_bibtex(aux_contents: ?[]const u8) bool {
 
 // -- plain format generation --
 // plain.fmt is generated by running the engine in initex mode with plain.tex as input.
-// the format file is cached in the eztex cache directory for reuse.
 
 var g_plain_fmt_buf: [1024]u8 = undefined;
 
-fn setup_plain_format(world: *bridge.World, cache_dir: []const u8, _: bool) void {
-    // check if plain.fmt already exists in cache
-    var cached_path_buf: [1024]u8 = undefined;
-    const cached_path = std.fmt.bufPrint(&cached_path_buf, "{s}/formats/plain.fmt", .{cache_dir}) catch return;
-
-    if (fs.cwd().access(cached_path, .{})) |_| {
-        Log.dbg("eztex", "found cached plain.fmt: {s}", .{cached_path});
-        fs.cwd().deleteFile("tmp/plain.fmt") catch {};
-        posix.symlink(cached_path, "tmp/plain.fmt") catch |err| {
-            Log.dbg("eztex", "warning: symlink failed: {}, copying instead", .{err});
-            fs.cwd().copyFile(cached_path, fs.cwd(), "tmp/plain.fmt", .{}) catch {};
-        };
-        return;
-    } else |_| {}
-
-    // check if plain.fmt exists in tmp/ from a previous run
+fn setup_plain_format(world: *bridge.World, _: []const u8, _: bool) void {
+    // guard: if engine already wrote plain.fmt in this process (e.g. watch mode re-run), skip
     if (fs.cwd().access("tmp/plain.fmt", .{})) |_| {
         Log.dbg("eztex", "found existing tmp/plain.fmt", .{});
         return;
@@ -573,7 +559,6 @@ fn setup_plain_format(world: *bridge.World, cache_dir: []const u8, _: bool) void
     Log.dbg("eztex", "running initex to generate plain.fmt...", .{});
 
     const result = tt_engine_xetex_main(
-        @ptrCast(world),
         "plain", // dump name -- output will be "plain.fmt"
         "_make_plain_fmt.tex",
         0,
@@ -598,9 +583,6 @@ fn setup_plain_format(world: *bridge.World, cache_dir: []const u8, _: bool) void
         fs.cwd().deleteFile("tmp/_make_plain_fmt.log") catch {};
 
         Log.log("eztex", .info, "plain.fmt generated successfully", .{});
-
-        // cache the generated format for future use
-        copy_file_to_cache_dir(cache_dir, "tmp/plain.fmt", "formats/plain.fmt");
     } else {
         Log.log("eztex", .warn, "failed to generate plain.fmt (exit code {d})", .{result});
         // clean up any partial output
@@ -617,14 +599,14 @@ fn setup_plain_format(world: *bridge.World, cache_dir: []const u8, _: bool) void
 // the bundle provides tectonic-format-latex.tex which does \input latex.ltx.
 // the format file is cached for reuse across compilations.
 
-fn generate_xelatex_format(world: *bridge.World, cache_dir: ?[]const u8, _: bool) void {
-    // check if xelatex.fmt exists in tmp/ from a previous run
+fn generate_xelatex_format(world: *bridge.World, _: ?[]const u8, _: bool) void {
+    // guard: if engine already wrote xelatex.fmt in this process (e.g. watch mode re-run), skip
     if (fs.cwd().access("tmp/xelatex.fmt", .{})) |_| {
         Log.dbg("eztex", "found existing tmp/xelatex.fmt", .{});
         return;
     } else |_| {}
 
-    // check root dir (WASM: format may be pre-loaded from OPFS by JS host)
+    // WASM: JS host may have pre-loaded format from OPFS into the working directory
     if (fs.cwd().access("xelatex.fmt", .{})) |_| {
         Log.dbg("eztex", "found existing xelatex.fmt", .{});
         return;
@@ -661,7 +643,6 @@ fn generate_xelatex_format(world: *bridge.World, cache_dir: ?[]const u8, _: bool
     Log.dbg("eztex", "running initex to generate xelatex.fmt...", .{});
 
     const result = tt_engine_xetex_main(
-        @ptrCast(world),
         "xelatex",
         "_make_xelatex_fmt.tex",
         0,
@@ -685,11 +666,6 @@ fn generate_xelatex_format(world: *bridge.World, cache_dir: ?[]const u8, _: bool
         fs.cwd().deleteFile("tmp/_make_xelatex_fmt.log") catch {};
 
         Log.log("eztex", .info, "xelatex.fmt generated successfully", .{});
-
-        // cache for future use (skip on WASM where cache_dir is null)
-        if (cache_dir) |cdir| {
-            copy_file_to_cache_dir(cdir, "tmp/xelatex.fmt", "formats/xelatex.fmt");
-        }
     } else {
         Log.log("eztex", .warn, "failed to generate xelatex.fmt (exit code {d})", .{result});
         fs.cwd().deleteFile("tmp/_make_xelatex_fmt.fmt") catch {};
@@ -703,12 +679,109 @@ fn generate_xelatex_format(world: *bridge.World, cache_dir: ?[]const u8, _: bool
 // -- world setup --
 var g_fmt_buf: [1024]u8 = undefined;
 
+// held in-memory format bytes (set by try_load_cached_format / cache_generated_format,
+// read by the engine via World.format_data). lives for the process duration.
+var g_format_bytes: ?[]u8 = null;
+
+fn make_format_cache_key(format: Format) FormatCache.Key {
+    var digest_bytes: [32]u8 = undefined;
+    const hex = &Config.default_bundle_digest;
+    for (0..32) |i| {
+        const hi = hex_digit(hex[i * 2]);
+        const lo = hex_digit(hex[i * 2 + 1]);
+        digest_bytes[i] = (hi << 4) | lo;
+    }
+    return .{
+        .bundle_digest = digest_bytes,
+        .engine_version = @intCast(Format.engine_serial),
+        .format_type = switch (format) {
+            .latex => .xelatex,
+            .plain => .plain,
+        },
+    };
+}
+
+fn hex_digit(c: u8) u8 {
+    return switch (c) {
+        '0'...'9' => c - '0',
+        'a'...'f' => c - 'a' + 10,
+        'A'...'F' => c - 'A' + 10,
+        else => 0,
+    };
+}
+
+fn try_load_cached_format(world: *bridge.World, cache_dir: []const u8, format: Format) bool {
+    const fmt_filename = format.fmt_filename();
+
+    // try content-addressed cache first
+    const key = make_format_cache_key(format);
+    if (FormatCache.load(std.heap.c_allocator, cache_dir, key) catch null) |bytes| {
+        set_format_memory(world, bytes, fmt_filename);
+        Log.dbg("eztex", "loaded format from content-addressed cache ({d} bytes, memory-backed)", .{bytes.len});
+        return true;
+    }
+
+    // fall back to legacy formats/ directory scan
+    if (find_format_path(cache_dir, &g_fmt_buf, if (format == .latex) "latex" else "plain")) |fmt_path| {
+        Log.dbg("eztex", "found legacy format file: {s}", .{fmt_path});
+        const data = blk: {
+            const file = fs.openFileAbsolute(fmt_path, .{}) catch return false;
+            defer file.close();
+            break :blk file.readToEndAlloc(std.heap.c_allocator, 64 * 1024 * 1024) catch return false;
+        };
+        set_format_memory(world, data, fmt_filename);
+        Log.dbg("eztex", "loaded legacy format into memory ({d} bytes)", .{data.len});
+        return true;
+    }
+
+    return false;
+}
+
+fn set_format_memory(world: *bridge.World, bytes: []u8, name: []const u8) void {
+    if (g_format_bytes) |old| std.heap.c_allocator.free(old);
+    g_format_bytes = bytes;
+    world.set_format_data(bytes, name);
+}
+
+fn cache_generated_format(world: *bridge.World, cache_dir: []const u8, format: Format) void {
+    const fmt_filename = format.fmt_filename();
+    var src_buf: [128]u8 = undefined;
+    const src_path = std.fmt.bufPrint(&src_buf, "tmp/{s}", .{fmt_filename}) catch return;
+
+    const data = blk: {
+        const file = fs.cwd().openFile(src_path, .{}) catch return;
+        defer file.close();
+        break :blk file.readToEndAlloc(std.heap.c_allocator, 64 * 1024 * 1024) catch return;
+    };
+
+    // store in content-addressed cache
+    const key = make_format_cache_key(format);
+    FormatCache.store(std.heap.c_allocator, cache_dir, key, data) catch |err| {
+        Log.dbg("eztex", "failed to store format in cache: {}", .{err});
+    };
+
+    // also store in legacy formats/ dir for backward compat
+    var dest_buf: [128]u8 = undefined;
+    const dest_rel = std.fmt.bufPrint(&dest_buf, "formats/{s}", .{fmt_filename}) catch return;
+    copy_file_to_cache_dir(cache_dir, src_path, dest_rel);
+
+    // set as memory-backed format for the compilation run (avoids re-reading the file)
+    set_format_memory(world, data, fmt_filename);
+    Log.dbg("eztex", "cached and loaded generated format into memory ({d} bytes)", .{data.len});
+}
+
 fn setup_world(format: Format, verbose: bool, cache_dir_override: ?[]const u8) void {
     const world = bridge.get_world();
     world.add_search_dir(".");
 
     // set up unified diagnostic handler (prevents duplicate output)
     bridge.set_diagnostic_handler(default_diag_handler);
+
+    // register checkpoint callback for engine lifecycle events
+    bridge.set_checkpoint_callback(.{
+        .func = &on_checkpoint,
+        .userdata = null,
+    });
 
     // enable debug logging if --verbose was set
     Log.set_debug(verbose);
@@ -720,20 +793,14 @@ fn setup_world(format: Format, verbose: bool, cache_dir_override: ?[]const u8) v
 
     if (format == .latex) {
         if (cache_dir) |cdir| {
-            // native: look for cached xelatex.fmt
-            if (find_format_path(cdir, &g_fmt_buf, "latex")) |fmt_path| {
-                Log.dbg("eztex", "found format file: {s}", .{fmt_path});
-                fs.cwd().deleteFile("tmp/xelatex.fmt") catch {};
-                posix.symlink(fmt_path, "tmp/xelatex.fmt") catch |err| {
-                    Log.dbg("eztex", "warning: symlink failed: {}, copying instead", .{err});
-                    copy_file_from_absolute(fmt_path, "tmp/xelatex.fmt");
-                };
-            } else {
+            if (!try_load_cached_format(world, cdir, format)) {
                 // format not cached -- prefetch format gen seed files before generating
                 if (!is_wasm) {
                     seed_cache(&seeds.xelatex_fmt, verbose);
                 }
                 generate_xelatex_format(world, cache_dir, verbose);
+                // cache the newly generated format and load into memory
+                cache_generated_format(world, cdir, format);
             }
         } else {
             // WASM: no cache dir, generate directly (JS host may have pre-loaded from OPFS)
@@ -741,7 +808,10 @@ fn setup_world(format: Format, verbose: bool, cache_dir_override: ?[]const u8) v
         }
     } else if (format == .plain) {
         if (cache_dir) |cdir| {
-            setup_plain_format(world, cdir, verbose);
+            if (!try_load_cached_format(world, cdir, format)) {
+                setup_plain_format(world, cdir, verbose);
+                cache_generated_format(world, cdir, format);
+            }
         }
     }
     world.add_search_dir("tmp");
@@ -1350,13 +1420,12 @@ fn do_generate_format(opts: *const Options) u8 {
     setup_world(format, verbose, opts.cache_dir);
     defer bridge.deinit_bundle_store();
 
-    // setup_world already handles format generation (checks cache, generates if needed)
-    // verify the format file exists
-    const fmt_path = if (format == .latex) "tmp/xelatex.fmt" else "tmp/plain.fmt";
-    fs.cwd().access(fmt_path, .{}) catch {
-        Log.log("eztex", .err, "format generation failed -- {s} not found", .{fmt_path});
+    // setup_world loads format into memory (from cache or after generation).
+    // check memory buffer rather than tmp/ file — cache-hit path has no tmp/ file.
+    if (g_format_bytes == null) {
+        Log.log("eztex", .err, "format generation failed -- {s} not loaded into memory", .{format.fmt_filename()});
         return 1;
-    };
+    }
 
     Log.log("eztex", .info, "{s} ready", .{format.fmt_filename()});
     return 0;
