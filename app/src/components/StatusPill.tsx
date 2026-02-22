@@ -7,8 +7,14 @@ import {
   onCleanup,
 } from "solid-js";
 import { worker_client, type LogEntry } from "../lib/worker_client";
+import type { ProjectStore } from "../lib/project_store";
+import type { Diagnostic } from "../worker/protocol";
 
-const StatusPill: Component = () => {
+type Props = {
+  store: ProjectStore;
+};
+
+const StatusPill: Component<Props> = (props) => {
   const [expanded, set_expanded] = createSignal(false);
   let log_ref: HTMLDivElement | undefined;
   let pill_ref: HTMLDivElement | undefined;
@@ -64,10 +70,37 @@ const StatusPill: Component = () => {
     return "log-line";
   }
 
+  function handle_diag_click(d: Diagnostic): void {
+    if (!d.file || !d.line) return;
+    props.store.set_current_file(d.file);
+    worker_client.request_goto(d.file, d.line);
+    set_expanded(false);
+  }
+
   return (
     <div class="status-pill-container" ref={pill_ref}>
       <Show when={expanded()}>
         <div class="status-popover">
+          <Show when={worker_client.diagnostics().length > 0}>
+            <div class="diag-section">
+              <div class="diag-header">Diagnostics</div>
+              <For each={worker_client.diagnostics()}>
+                {(d) => (
+                  <button
+                    class={`diag-entry ${d.severity === "error" ? "diag-error" : "diag-warning"}`}
+                    onClick={() => handle_diag_click(d)}
+                    disabled={!d.file || !d.line}
+                  >
+                    <span class="diag-severity">{d.severity === "error" ? "x" : "!"}</span>
+                    <span class="diag-message">{d.message}</span>
+                    <Show when={d.file}>
+                      <span class="diag-location">{d.file}{d.line ? `:${d.line}` : ""}</span>
+                    </Show>
+                  </button>
+                )}
+              </For>
+            </div>
+          </Show>
           <div class="status-popover-logs" ref={log_ref}>
             <For each={worker_client.logs()}>
               {(entry) => <div class={log_class(entry)}>{entry.msg}</div>}

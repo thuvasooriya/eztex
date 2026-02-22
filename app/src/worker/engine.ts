@@ -16,6 +16,7 @@ import {
 } from "@bjorn3/browser_wasi_shim";
 import {
   send_log,
+  send_diagnostic,
   log,
   dbg,
   DEBUG,
@@ -25,6 +26,7 @@ import {
   send_ready,
   send_cache_status,
   format_size,
+  type Diagnostic,
   type ProjectFiles,
 } from "./protocol.ts";
 import * as opfs from "./opfs.ts";
@@ -207,6 +209,77 @@ function make_fetch_env(): {
   return { env, set_instance, stats };
 }
 
+// -- diagnostic stderr parser --
+// the Zig WASM output (Phase 2 format, no ANSI) emits multi-line diagnostics:
+//   error: <message>       OR   warning: <message>
+//     --> <file>:<line>          (optional)
+//     | <context line>          (zero or more)
+//
+// WASI ConsoleStdout.lineBuffered delivers one line at a time, so we use a
+// small state machine that accumulates lines into a Diagnostic, flushing when
+// we see a non-continuation line (or at end via flush()).
+
+function make_diag_stderr_handler(): {
+  handler: (line: string) => void;
+  flush: () => void;
+} {
+  let pending: Diagnostic | null = null;
+
+  function flush_pending(): void {
+    if (!pending) return;
+    send_diagnostic(pending);
+    pending = null;
+  }
+
+  function handler(line: string): void {
+    // try to match "error: <msg>" or "warning: <msg>" at start of line
+    const severity_match = line.match(/^(error|warning): (.+)$/);
+    if (severity_match) {
+      flush_pending();
+      pending = {
+        severity: severity_match[1] as "error" | "warning",
+        message: severity_match[2],
+      };
+      const cls = severity_match[1] === "error" ? "log-error" : "log-warn";
+      send_log(line, cls);
+      return;
+    }
+
+    // continuation: "  --> <file>:<line>" (arrow line)
+    if (pending && line.startsWith("  --> ")) {
+      const loc = line.slice(6); // after "  --> "
+      const colon_idx = loc.lastIndexOf(":");
+      if (colon_idx > 0) {
+        pending.file = loc.slice(0, colon_idx);
+        const line_num = parseInt(loc.slice(colon_idx + 1), 10);
+        if (!isNaN(line_num)) pending.line = line_num;
+      }
+      send_log(line, "log-info");
+      return;
+    }
+
+    // continuation: "  | <context>" (pipe-indented context)
+    if (pending && line.startsWith("  | ")) {
+      const ctx_line = line.slice(4); // after "  | "
+      pending.context = pending.context ? pending.context + "\n" + ctx_line : ctx_line;
+      send_log(line, "log-info");
+      return;
+    }
+
+    // not a diagnostic line -- flush any pending and send as regular log
+    flush_pending();
+    if (line.includes("error") || line.includes("Error")) {
+      send_log(line, "log-error");
+    } else if (line.includes("warning") || line.includes("Warning")) {
+      send_log(line, "log-warn");
+    } else {
+      send_log(line, "log-info");
+    }
+  }
+
+  return { handler, flush: flush_pending };
+}
+
 // -- run wasm: shared compile/format-gen runner --
 
 interface RunResult {
@@ -226,12 +299,9 @@ function run_wasm(
   const { root_map, tmp_map } = build_wasi_fs(user_files);
   const { env, set_instance, stats } = make_fetch_env();
 
-  const stderr_handler = classify_stderr
-    ? (line: string) => {
-        if (line.includes("error") || line.includes("Error")) send_log(line, "log-error");
-        else if (line.includes("warning") || line.includes("Warning")) send_log(line, "log-warn");
-        else send_log(line, "log-info");
-      }
+  const diag_parser = classify_stderr ? make_diag_stderr_handler() : null;
+  const stderr_handler = diag_parser
+    ? diag_parser.handler
     : (line: string) => send_log(line, "log-info");
 
   const fds = [
@@ -274,6 +344,9 @@ function run_wasm(
       }
     }
   }
+
+  // flush any pending diagnostic that was being accumulated
+  diag_parser?.flush();
 
   return { exit_code, root_map, tmp_map, fetch_stats: stats };
 }

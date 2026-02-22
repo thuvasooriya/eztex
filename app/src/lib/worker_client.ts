@@ -3,6 +3,7 @@
 
 import { createSignal, batch } from "solid-js";
 import type { ProjectFiles } from "./project_store";
+import type { Diagnostic } from "../worker/protocol";
 
 export type LogEntry = {
   msg: string;
@@ -25,6 +26,15 @@ const [pdf_url, set_pdf_url] = createSignal<string | null>(null);
 const [ready, set_ready] = createSignal(false);
 const [compiling, set_compiling] = createSignal(false);
 const [last_elapsed, set_last_elapsed] = createSignal<string | null>(null);
+const [diagnostics, set_diagnostics] = createSignal<Diagnostic[]>([]);
+
+// goto request: set by diagnostic clicks, consumed by Editor to jump to file:line
+export type GotoRequest = { file: string; line: number } | null;
+const [goto_request, set_goto_request] = createSignal<GotoRequest>(null);
+
+function request_goto(file: string, line: number): void {
+  set_goto_request({ file, line });
+}
 
 let worker: Worker | null = null;
 let prev_pdf_url: string | null = null;
@@ -66,6 +76,9 @@ function handle_message(e: MessageEvent) {
       break;
     case "log":
       append_log(data.msg, data.cls || "");
+      break;
+    case "diagnostic":
+      set_diagnostics((prev) => [...prev, data.diag as Diagnostic]);
       break;
     case "cache_status":
       append_log(`[cache] ${data.status}${data.detail ? ": " + data.detail : ""}`, "log-info");
@@ -125,6 +138,7 @@ function compile(req: CompileRequest) {
   set_status("compiling");
   set_status_text("Compiling...");
   set_progress(0);
+  set_diagnostics([]);
   worker.postMessage({
     type: "compile",
     files: req.files,
@@ -159,6 +173,7 @@ export const worker_client = {
   on_compile_done,
   on_ready,
   restore_pdf_url,
+  request_goto,
   // signals (read-only)
   status,
   status_text,
@@ -168,4 +183,6 @@ export const worker_client = {
   ready,
   compiling,
   last_elapsed,
+  diagnostics,
+  goto_request,
 };

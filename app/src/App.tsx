@@ -1,4 +1,4 @@
-import { type Component, onMount, onCleanup, createSignal, Show } from "solid-js";
+import { type Component, onMount, onCleanup, createSignal, createEffect, Show } from "solid-js";
 import { worker_client } from "./lib/worker_client";
 import { create_project_store } from "./lib/project_store";
 import { save_project, load_project, load_pdf } from "./lib/project_persist";
@@ -109,6 +109,15 @@ const App: Component = () => {
     }
   }
 
+  // when a diagnostic goto is requested, switch to the target file first
+  createEffect(() => {
+    const req = worker_client.goto_request();
+    if (!req) return;
+    if (req.file !== store.current_file()) {
+      store.set_current_file(req.file);
+    }
+  });
+
   function handle_file_resize(delta: number) {
     set_file_panel_width((w) => Math.max(140, Math.min(400, w + delta)));
   }
@@ -186,7 +195,7 @@ const App: Component = () => {
       </Show>
 
       <CachePill store={store} />
-      <StatusPill />
+      <StatusPill store={store} />
     </div>
   );
 };

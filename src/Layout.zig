@@ -188,7 +188,7 @@ var bbox_cache: ?std.AutoHashMap(u32, GlyphBBox) = null; // single-threaded: no 
 
 fn get_bbox_cache() *std.AutoHashMap(u32, GlyphBBox) {
     if (bbox_cache) |*c| return c;
-    bbox_cache = std.AutoHashMap(u32, GlyphBBox).init(std.heap.page_allocator);
+    bbox_cache = std.AutoHashMap(u32, GlyphBBox).init(std.heap.c_allocator);
     return &bbox_cache.?;
 }
 
@@ -218,7 +218,7 @@ var right_prot: ?std.AutoHashMap(u64, i32) = null; // single-threaded: no synchr
 fn get_cp_table(side: i32) *std.AutoHashMap(u64, i32) {
     const ptr = if (side == 0) &left_prot else &right_prot;
     if (ptr.*) |*c| return c;
-    ptr.* = std.AutoHashMap(u64, i32).init(std.heap.page_allocator);
+    ptr.* = std.AutoHashMap(u64, i32).init(std.heap.c_allocator);
     return &ptr.*.?;
 }
 
@@ -406,7 +406,7 @@ var gr_cache: ?std.AutoHashMap(usize, GrCacheEntry) = null; // single-threaded: 
 
 fn get_gr_cache() *std.AutoHashMap(usize, GrCacheEntry) {
     if (gr_cache) |*c| return c;
-    gr_cache = std.AutoHashMap(usize, GrCacheEntry).init(std.heap.page_allocator);
+    gr_cache = std.AutoHashMap(usize, GrCacheEntry).init(std.heap.c_allocator);
     return &gr_cache.?;
 }
 
@@ -1422,13 +1422,7 @@ extern fn ttbc_input_get_size(handle: usize) usize;
 extern fn ttbc_input_read(handle: usize, data: [*]u8, len: usize) isize;
 extern fn ttstub_input_close(handle: usize) c_int;
 
-// -- libc externs (strlen, strrchr, strcpy, strcat, memset already have malloc/free/strdup above) --
-// -- libc externs (Phase 2g additions: strrchr, strcpy, strcat, memset) --
-extern fn strlen(s: [*:0]const u8) usize;
-extern fn strrchr(s: [*:0]u8, c: c_int) ?[*:0]u8;
-extern fn strcpy(dst: [*]u8, src: [*:0]const u8) [*]u8;
-extern fn strcat(dst: [*]u8, src: [*:0]const u8) [*]u8;
-extern fn memset(s: ?*anyopaque, c: c_int, n: usize) ?*anyopaque;
+// -- libc externs (Phase 2g: malloc/free/strdup/calloc declared above) --
 
 // initialize_ft_internal: full FT font init pipeline.
 // Opens font file via bridge I/O (fallback chain: OT -> TT -> T1), creates FT_Face,
@@ -1481,27 +1475,23 @@ fn initialize_ft_internal(font: *XeTeXFont_rec, pathname: [*:0]const u8, index: 
 
     // for non-SFNT fonts (Type1), try loading companion .afm
     if (index == 0 and (face.face_flags & FT_FACE_FLAG_SFNT) == 0) {
-        const plen = strlen(pathname);
-        const afm_raw = malloc(plen + 5);
-        if (afm_raw) |afm_name| {
-            _ = strcpy(afm_name, pathname);
-            const afm_z: [*:0]u8 = @ptrCast(afm_name);
-            const dot = strrchr(afm_z, '.');
-            if (dot) |d| {
-                _ = strcpy(@ptrCast(d), ".afm");
-            } else {
-                _ = strcat(afm_name, ".afm");
-            }
-
-            const afm_handle = ttbc_input_open(afm_z, TTBC_FILE_FORMAT_AFM, 0);
+        const path_slice = std.mem.span(pathname);
+        // build AFM path: replace extension with .afm, or append .afm
+        var afm_buf: [1024]u8 = undefined;
+        const stem = if (std.mem.lastIndexOfScalar(u8, path_slice, '.')) |dot_pos|
+            path_slice[0..dot_pos]
+        else
+            path_slice;
+        const afm_path = std.fmt.bufPrintZ(&afm_buf, "{s}.afm", .{stem}) catch null;
+        if (afm_path) |afm_z| {
+            const afm_handle = ttbc_input_open(afm_z.ptr, TTBC_FILE_FORMAT_AFM, 0);
             if (afm_handle != 0) {
                 const afm_sz = ttbc_input_get_size(afm_handle);
                 const afm_data = malloc(afm_sz);
                 if (afm_data) |ad| {
                     const afm_nread = ttbc_input_read(afm_handle, ad, afm_sz);
                     if (afm_nread > 0) {
-                        var open_args: FT_Open_Args = undefined;
-                        _ = memset(@ptrCast(&open_args), 0, @sizeOf(FT_Open_Args));
+                        var open_args: FT_Open_Args = std.mem.zeroes(FT_Open_Args);
                         open_args.flags = FT_OPEN_MEMORY;
                         open_args.memory_base = ad;
                         open_args.memory_size = @intCast(afm_sz);
@@ -1511,7 +1501,6 @@ fn initialize_ft_internal(font: *XeTeXFont_rec, pathname: [*:0]const u8, index: 
                 }
                 _ = ttstub_input_close(afm_handle);
             }
-            free(afm_raw);
         }
     }
 
@@ -2026,12 +2015,6 @@ const FcPattern = extern struct {
     index: c_int,
 };
 
-// libc externs for file existence check (non-Mac path) and general use.
-extern fn access(path: [*:0]const u8, mode: c_int) c_int;
-extern fn getenv(name: [*:0]const u8) ?[*:0]const u8;
-extern fn snprintf(buf: [*]u8, size: usize, fmt: [*:0]const u8, ...) c_int;
-const F_OK: c_int = 0;
-
 // -- FreeType externs (Phase 2m: needed by getFileNameFromCTFont) --
 extern fn FT_New_Face(library: *anyopaque, filepathname: [*:0]const u8, face_index: c_long, aface: *?*anyopaque) c_int;
 extern fn FT_Get_Postscript_Name(face: *anyopaque) ?[*:0]const u8;
@@ -2119,14 +2102,13 @@ fn register_bundle_fonts() void {
     if (fonts_registered) return;
     fonts_registered = true;
 
-    const home = getenv("HOME") orelse return;
+    const home = std.posix.getenv("HOME") orelse return;
 
     var cache_path: [1024]u8 = undefined;
-    const cp_len = snprintf(&cache_path, cache_path.len, "%s/Library/Caches/Tectonic/files", home);
-    if (cp_len <= 0) return;
+    const cache_path_z = std.fmt.bufPrintZ(&cache_path, "{s}/Library/Caches/Tectonic/files", .{home}) catch return;
 
     // register the top-level cache directory
-    const path_str = CFStringCreateWithCString(null, @ptrCast(&cache_path), kCFStringEncodingUTF8) orelse return;
+    const path_str = CFStringCreateWithCString(null, cache_path_z.ptr, kCFStringEncodingUTF8) orelse return;
     const dir_url = CFURLCreateWithFileSystemPath(null, path_str, kCFURLPOSIXPathStyle, 1);
     CFRelease(path_str);
 
@@ -2139,11 +2121,8 @@ fn register_bundle_fonts() void {
     var i: u32 = 0;
     while (i < 256) : (i += 1) {
         var subdir: [1040]u8 = undefined;
-        _ = snprintf(&subdir, subdir.len, "%s/%02x", home, i);
-        // snprintf wrote the path including the hex suffix -- but we need to use the cache_path base
-        // redo with proper format
-        _ = snprintf(&subdir, subdir.len, "%s/%02x", @as([*:0]const u8, @ptrCast(&cache_path)), i);
-        const sub_str = CFStringCreateWithCString(null, @ptrCast(&subdir), kCFStringEncodingUTF8) orelse continue;
+        const subdir_z = std.fmt.bufPrintZ(&subdir, "{s}/{x:0>2}", .{ cache_path_z, i }) catch continue;
+        const sub_str = CFStringCreateWithCString(null, subdir_z.ptr, kCFStringEncodingUTF8) orelse continue;
         const sub_url = CFURLCreateWithFileSystemPath(null, sub_str, kCFURLPOSIXPathStyle, 1);
         CFRelease(sub_str);
         if (sub_url) |url| {
@@ -2349,7 +2328,8 @@ var mac_desc_buf: [1024]u8 = undefined; // single-threaded: no synchronization n
 // ----------------------------------------
 
 fn file_exists_check(path: [*:0]const u8) bool {
-    return access(path, F_OK) == 0;
+    std.fs.cwd().accessZ(path, .{}) catch return false;
+    return true;
 }
 
 fn try_font_path_internal(path: [*:0]const u8) ?*FcPattern {

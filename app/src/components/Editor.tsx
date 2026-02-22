@@ -12,8 +12,10 @@ import {
 } from "@codemirror/language";
 import { stex } from "@codemirror/legacy-modes/mode/stex";
 import { tags } from "@lezer/highlight";
+import { setDiagnostics as cmSetDiagnostics, type Diagnostic as CmDiagnostic } from "@codemirror/lint";
 import type { ProjectStore } from "../lib/project_store";
 import { is_binary } from "../lib/project_store";
+import { worker_client } from "../lib/worker_client";
 
 type Props = {
   store: ProjectStore;
@@ -93,7 +95,40 @@ const tokyo_night_theme = EditorView.theme({
     color: "inherit !important",
     outline: "1px solid rgba(122, 162, 247, 0.5)",
   },
-});
+  ".cm-tooltip": {
+    backgroundColor: "var(--bg-lighter)",
+    color: "var(--fg)",
+    border: "1px solid var(--border)",
+    borderRadius: "var(--radius-md)",
+    boxShadow: "0 4px 12px rgba(0, 0, 0, 0.3)",
+    overflow: "hidden",
+  },
+  ".cm-tooltip.cm-tooltip-lint": {
+    padding: "0",
+    margin: "0",
+  },
+  ".cm-diagnostic": {
+    fontFamily: "var(--font-mono)",
+    fontSize: "12px",
+    padding: "3px 6px",
+    borderLeft: "3px solid",
+  },
+  ".cm-diagnostic-error": {
+    borderLeftColor: "var(--red)",
+    background: "rgba(247, 118, 142, 0.08)",
+    color: "var(--red)",
+  },
+  ".cm-diagnostic-warning": {
+    borderLeftColor: "var(--yellow)",
+    background: "rgba(224, 175, 104, 0.08)",
+    color: "var(--yellow)",
+  },
+  ".cm-diagnosticSource": {
+    fontSize: "70%",
+    opacity: "0.6",
+    color: "var(--fg-muted)",
+  },
+}, { dark: true });
 
 const tokyo_night_highlight = HighlightStyle.define([
   { tag: tags.keyword, color: "#bb9af7" },
@@ -205,6 +240,42 @@ const Editor: Component<Props> = (props) => {
       },
     ),
   );
+
+  // push external diagnostics into CodeMirror when they change
+  createEffect(() => {
+    if (!view) return;
+    const diags = worker_client.diagnostics();
+    const current = props.store.current_file();
+    const cm_diags: CmDiagnostic[] = [];
+    for (const d of diags) {
+      if (!d.file || !d.line) continue;
+      if (d.file !== current) continue;
+      const line_num = Math.min(d.line, view.state.doc.lines);
+      const line_obj = view.state.doc.line(line_num);
+      cm_diags.push({
+        from: line_obj.from,
+        to: line_obj.to,
+        severity: d.severity,
+        message: d.message,
+        source: "eztex",
+      });
+    }
+    view.dispatch(cmSetDiagnostics(view.state, cm_diags));
+  });
+
+  // jump to line when goto_request fires
+  createEffect(() => {
+    const req = worker_client.goto_request();
+    if (!req || !view) return;
+    if (req.file !== props.store.current_file()) return;
+    const line_num = Math.min(req.line, view.state.doc.lines);
+    const line_obj = view.state.doc.line(line_num);
+    view.dispatch({
+      selection: { anchor: line_obj.from },
+      scrollIntoView: true,
+    });
+    view.focus();
+  });
 
   onCleanup(() => {
     view?.destroy();

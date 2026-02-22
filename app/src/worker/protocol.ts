@@ -1,10 +1,19 @@
 // worker -> main thread messaging protocol
 // all worker-to-UI messages go through these helpers
 
+export type Diagnostic = {
+  severity: "error" | "warning";
+  message: string;
+  file?: string;
+  line?: number;
+  context?: string; // pipe-indented context lines joined with \n
+};
+
 export type WorkerOutMsg =
   | { type: "status"; msg: string; cls: string }
   | { type: "progress"; pct: number }
   | { type: "log"; msg: string; cls: string }
+  | { type: "diagnostic"; diag: Diagnostic }
   | { type: "cache_status"; status: string; detail: string }
   | { type: "ready" }
   | { type: "complete"; pdf: Uint8Array | null; elapsed: string };
@@ -76,4 +85,8 @@ export function format_size(bytes: number): string {
   if (bytes < 1024) return bytes + " B";
   if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
   return (bytes / (1024 * 1024)).toFixed(1) + " MB";
+}
+
+export function send_diagnostic(diag: Diagnostic): void {
+  send("diagnostic", { diag });
 }

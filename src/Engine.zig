@@ -282,6 +282,8 @@ export fn ttbc_output_write(handle: Handle, data: [*]const u8, len: usize) usize
     return len;
 }
 
+// No-op: Zig's std.fs.File.writeAll issues direct write() syscalls with no
+// user-space buffering, so there is nothing to flush.
 export fn ttbc_output_flush(handle: Handle) c_int {
     _ = handle;
     return 0;

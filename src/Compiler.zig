@@ -135,29 +135,128 @@ fn diag_write_stderr(text: []const u8) void {
     iface.flush() catch {};
 }
 
+// parsed diagnostic parts from the C engine's "file:line: message\ncontext..." format
+const DiagParts = struct {
+    file: ?[]const u8,
+    line: ?[]const u8,
+    message: []const u8,
+    context: ?[]const u8, // remaining text after first line (l.N context, help text)
+};
+
+// parse "file:line: message" prefix from diagnostic text.
+// the C engine's diagnostic_print_file_line() emits "%s:%d: " at the start.
+// handles both "./file.tex:5: msg" and bare "msg" (no prefix).
+fn parse_diag_text(text: []const u8) DiagParts {
+    // find first newline to separate first line from context
+    const first_nl = std.mem.indexOfScalar(u8, text, '\n');
+    const first_line = if (first_nl) |nl| text[0..nl] else text;
+    const context = if (first_nl) |nl| (if (nl + 1 < text.len) text[nl + 1 ..] else null) else null;
+
+    // try to parse "file:line: message" from first line
+    // look for pattern: anything, colon, digits, colon, space
+    if (parse_file_line_prefix(first_line)) |parsed| {
+        return .{
+            .file = parsed.file,
+            .line = parsed.line_str,
+            .message = parsed.rest,
+            .context = context,
+        };
+    }
+
+    return .{ .file = null, .line = null, .message = first_line, .context = context };
+}
+
+const FileLinePrefix = struct {
+    file: []const u8,
+    line_str: []const u8,
+    rest: []const u8,
+};
+
+fn parse_file_line_prefix(line: []const u8) ?FileLinePrefix {
+    // scan backwards from end to find ": " preceded by "digits:" preceded by the filename
+    // pattern: <file>:<digits>: <message>
+    // find the LAST occurrence of a ":<digits>: " pattern
+    var i: usize = 0;
+    while (i < line.len) {
+        if (line[i] == ':' and i > 0) {
+            // check if followed by digits then ": "
+            const after_colon = i + 1;
+            var j = after_colon;
+            while (j < line.len and line[j] >= '0' and line[j] <= '9') : (j += 1) {}
+            if (j > after_colon and j + 1 < line.len and line[j] == ':' and line[j + 1] == ' ') {
+                return .{
+                    .file = line[0..i],
+                    .line_str = line[after_colon..j],
+                    .rest = line[j + 2 ..],
+                };
+            }
+        }
+        i += 1;
+    }
+    return null;
+}
+
+fn detect_use_color() bool {
+    if (is_wasm) return false;
+    const tty_conf = std.io.tty.detectConfig(fs.File.stderr());
+    return tty_conf != .no_color;
+}
+
 fn diag_write_with_severity(text: []const u8, comptime severity: []const u8) void {
-    var buf: [4096]u8 = undefined;
+    if (text.len == 0) return;
+    var buf: [8192]u8 = undefined;
     var w = Log.stderr_writer(&buf);
     const iface = &w.interface;
-    if (!is_wasm) {
-        // detect TTY for ANSI color on native
-        const tty_conf = std.io.tty.detectConfig(fs.File.stderr());
-        const use_color = tty_conf != .no_color;
-        if (use_color) {
-            const color = if (comptime std.mem.eql(u8, severity, "error")) "\x1b[1;31m" else "\x1b[1;33m";
-            iface.writeAll(color) catch {};
-            iface.writeAll(severity) catch {};
-            iface.writeAll(":\x1b[0m ") catch {};
-        } else {
-            iface.writeAll(severity) catch {};
-            iface.writeAll(": ") catch {};
-        }
+    const use_color = detect_use_color();
+    const parsed = parse_diag_text(text);
+
+    // severity label
+    if (use_color) {
+        const color = if (comptime std.mem.eql(u8, severity, "error")) "\x1b[1;31m" else "\x1b[1;33m";
+        iface.writeAll(color) catch {};
+        iface.writeAll(severity) catch {};
+        iface.writeAll(":\x1b[0m ") catch {};
     } else {
         iface.writeAll(severity) catch {};
         iface.writeAll(": ") catch {};
     }
-    iface.writeAll(text) catch {};
+
+    // message (first line, without file:line prefix)
+    iface.writeAll(parsed.message) catch {};
     iface.writeByte('\n') catch {};
+
+    // file:line arrow (if available)
+    if (parsed.file) |file| {
+        if (use_color) {
+            iface.writeAll("  \x1b[1;34m-->\x1b[0m ") catch {};
+        } else {
+            iface.writeAll("  --> ") catch {};
+        }
+        iface.writeAll(file) catch {};
+        if (parsed.line) |line_str| {
+            iface.writeByte(':') catch {};
+            iface.writeAll(line_str) catch {};
+        }
+        iface.writeByte('\n') catch {};
+    }
+
+    // context lines (indented with pipe)
+    if (parsed.context) |ctx| {
+        if (ctx.len > 0) {
+            var line_iter = std.mem.splitScalar(u8, ctx, '\n');
+            while (line_iter.next()) |ctx_line| {
+                if (ctx_line.len == 0) continue;
+                if (use_color) {
+                    iface.writeAll("  \x1b[1;34m|\x1b[0m ") catch {};
+                } else {
+                    iface.writeAll("  | ") catch {};
+                }
+                iface.writeAll(ctx_line) catch {};
+                iface.writeByte('\n') catch {};
+            }
+        }
+    }
+
     iface.flush() catch {};
 }
 
@@ -343,24 +442,81 @@ fn aux_needs_bibtex(aux_contents: ?[]const u8) bool {
         std.mem.indexOf(u8, content, "\\abx@aux@") != null;
 }
 
-// -- plain format generation --
+// -- format generation --
 
-var g_plain_fmt_buf: [1024]u8 = undefined;
+const FormatSpec = struct {
+    dump_name: [*:0]const u8,
+    fmt_path: []const u8,
+    initex_input: []const u8,
+    initex_basename: [*:0]const u8,
+    tmp_fmt: []const u8,
+    tmp_log: []const u8,
+    tex_content: []const u8,
+    extra_cache_path: ?[]const u8 = null,
+    // comptime log messages (Log.log/dbg require comptime fmt)
+    msg_generating: []const u8,
+    msg_found_fmt: []const u8,
+    msg_found_extra: []const u8 = "",
+    msg_running: []const u8,
+    msg_success: []const u8,
+    msg_failure: []const u8,
+};
 
-fn setup_plain_format(world: *Engine.World, _: []const u8, _: bool) void {
-    if (fs.cwd().access("tmp/plain.fmt", .{})) |_| {
-        Log.dbg("eztex", "found existing tmp/plain.fmt", .{});
+const plain_format_spec = FormatSpec{
+    .dump_name = "plain",
+    .fmt_path = "tmp/plain.fmt",
+    .initex_input = "tmp/_make_plain_fmt.tex",
+    .initex_basename = "_make_plain_fmt.tex",
+    .tmp_fmt = "tmp/_make_plain_fmt.fmt",
+    .tmp_log = "tmp/_make_plain_fmt.log",
+    .tex_content = "\\input plain \\dump\n",
+    .msg_generating = "generating plain.fmt (first time only)...",
+    .msg_found_fmt = "found existing tmp/plain.fmt",
+    .msg_running = "running initex to generate plain.fmt...",
+    .msg_success = "plain.fmt generated successfully",
+    .msg_failure = "failed to generate plain.fmt (exit code {d})",
+};
+
+const xelatex_format_spec = FormatSpec{
+    .dump_name = "xelatex",
+    .fmt_path = "tmp/xelatex.fmt",
+    .initex_input = "tmp/_make_xelatex_fmt.tex",
+    .initex_basename = "_make_xelatex_fmt.tex",
+    .tmp_fmt = "tmp/_make_xelatex_fmt.fmt",
+    .tmp_log = "tmp/_make_xelatex_fmt.log",
+    .tex_content = "\\input tectonic-format-latex.tex\n",
+    .extra_cache_path = "xelatex.fmt",
+    .msg_generating = if (is_wasm)
+        "generating xelatex.fmt (first run, may take several minutes in browser)..."
+    else
+        "generating xelatex.fmt (first time only, may take a minute)...",
+    .msg_found_fmt = "found existing tmp/xelatex.fmt",
+    .msg_found_extra = "found existing xelatex.fmt",
+    .msg_running = "running initex to generate xelatex.fmt...",
+    .msg_success = "xelatex.fmt generated successfully",
+    .msg_failure = "failed to generate xelatex.fmt (exit code {d})",
+};
+
+fn run_initex(world: *Engine.World, comptime spec: FormatSpec) void {
+    if (fs.cwd().access(spec.fmt_path, .{})) |_| {
+        Log.dbg("eztex", spec.msg_found_fmt, .{});
         return;
     } else |_| {}
 
-    Log.log("eztex", .info, "generating plain.fmt (first time only)...", .{});
+    if (comptime spec.extra_cache_path) |extra| {
+        if (fs.cwd().access(extra, .{})) |_| {
+            Log.dbg("eztex", spec.msg_found_extra, .{});
+            return;
+        } else |_| {}
+    }
 
-    const initex_input = "tmp/_make_plain_fmt.tex";
-    const initex_file = fs.cwd().createFile(initex_input, .{}) catch |err| {
+    Log.log("eztex", .info, spec.msg_generating, .{});
+
+    const initex_file = fs.cwd().createFile(spec.initex_input, .{}) catch |err| {
         Log.log("eztex", .err, "failed to create initex input: {}", .{err});
         return;
     };
-    initex_file.writeAll("\\input plain \\dump\n") catch |err| {
+    initex_file.writeAll(spec.tex_content) catch |err| {
         initex_file.close();
         Log.log("eztex", .err, "failed to write initex input: {}", .{err});
         return;
@@ -371,101 +527,39 @@ fn setup_plain_format(world: *Engine.World, _: []const u8, _: bool) void {
     set_engine_var(.halt_on_error, true);
     set_engine_var(.synctex, false);
 
-    world.set_primary_input(initex_input);
+    world.set_primary_input(spec.initex_input);
     world.set_output_dir("tmp");
 
-    Log.dbg("eztex", "running initex to generate plain.fmt...", .{});
+    Log.dbg("eztex", spec.msg_running, .{});
 
-    const result = tt_engine_xetex_main(
-        "plain",
-        "_make_plain_fmt.tex",
-        0,
-    );
+    const result = tt_engine_xetex_main(spec.dump_name, spec.initex_basename, 0);
 
     set_engine_var(.initex_mode, false);
-    fs.cwd().deleteFile(initex_input) catch {};
+    fs.cwd().deleteFile(spec.initex_input) catch {};
 
     if (xetex_succeeded(result)) {
-        fs.cwd().rename("tmp/_make_plain_fmt.fmt", "tmp/plain.fmt") catch |err| {
+        fs.cwd().rename(spec.tmp_fmt, spec.fmt_path) catch |err| {
             Log.log("eztex", .err, "failed to rename format file: {}", .{err});
             world.reset_io();
             return;
         };
-        fs.cwd().deleteFile("tmp/_make_plain_fmt.log") catch {};
-        Log.log("eztex", .info, "plain.fmt generated successfully", .{});
+        fs.cwd().deleteFile(spec.tmp_log) catch {};
+        Log.log("eztex", .info, spec.msg_success, .{});
     } else {
-        Log.log("eztex", .warn, "failed to generate plain.fmt (exit code {d})", .{result});
-        fs.cwd().deleteFile("tmp/_make_plain_fmt.fmt") catch {};
-        fs.cwd().deleteFile("tmp/_make_plain_fmt.log") catch {};
+        Log.log("eztex", .warn, spec.msg_failure, .{result});
+        fs.cwd().deleteFile(spec.tmp_fmt) catch {};
+        fs.cwd().deleteFile(spec.tmp_log) catch {};
     }
 
     world.reset_io();
 }
 
-// -- xelatex format generation --
+fn setup_plain_format(world: *Engine.World, _: []const u8, _: bool) void {
+    run_initex(world, plain_format_spec);
+}
 
 fn generate_xelatex_format(world: *Engine.World, _: ?[]const u8, _: bool) void {
-    if (fs.cwd().access("tmp/xelatex.fmt", .{})) |_| {
-        Log.dbg("eztex", "found existing tmp/xelatex.fmt", .{});
-        return;
-    } else |_| {}
-
-    if (fs.cwd().access("xelatex.fmt", .{})) |_| {
-        Log.dbg("eztex", "found existing xelatex.fmt", .{});
-        return;
-    } else |_| {}
-
-    if (is_wasm) {
-        Log.log("eztex", .info, "generating xelatex.fmt (first run, may take several minutes in browser)...", .{});
-    } else {
-        Log.log("eztex", .info, "generating xelatex.fmt (first time only, may take a minute)...", .{});
-    }
-
-    const initex_input = "tmp/_make_xelatex_fmt.tex";
-    const initex_file = fs.cwd().createFile(initex_input, .{}) catch |err| {
-        Log.log("eztex", .err, "failed to create initex input: {}", .{err});
-        return;
-    };
-    initex_file.writeAll("\\input tectonic-format-latex.tex\n") catch |err| {
-        initex_file.close();
-        Log.log("eztex", .err, "failed to write initex input: {}", .{err});
-        return;
-    };
-    initex_file.close();
-
-    set_engine_var(.initex_mode, true);
-    set_engine_var(.halt_on_error, true);
-    set_engine_var(.synctex, false);
-
-    world.set_primary_input(initex_input);
-    world.set_output_dir("tmp");
-
-    Log.dbg("eztex", "running initex to generate xelatex.fmt...", .{});
-
-    const result = tt_engine_xetex_main(
-        "xelatex",
-        "_make_xelatex_fmt.tex",
-        0,
-    );
-
-    set_engine_var(.initex_mode, false);
-    fs.cwd().deleteFile(initex_input) catch {};
-
-    if (xetex_succeeded(result)) {
-        fs.cwd().rename("tmp/_make_xelatex_fmt.fmt", "tmp/xelatex.fmt") catch |err| {
-            Log.log("eztex", .err, "failed to rename format file: {}", .{err});
-            world.reset_io();
-            return;
-        };
-        fs.cwd().deleteFile("tmp/_make_xelatex_fmt.log") catch {};
-        Log.log("eztex", .info, "xelatex.fmt generated successfully", .{});
-    } else {
-        Log.log("eztex", .warn, "failed to generate xelatex.fmt (exit code {d})", .{result});
-        fs.cwd().deleteFile("tmp/_make_xelatex_fmt.fmt") catch {};
-        fs.cwd().deleteFile("tmp/_make_xelatex_fmt.log") catch {};
-    }
-
-    world.reset_io();
+    run_initex(world, xelatex_format_spec);
 }
 
 // -- format caching (content-addressed) --
@@ -878,4 +972,65 @@ pub fn generate_format(opts: *const CompileConfig) u8 {
 
     Log.log("eztex", .info, "{s} ready", .{format.fmt_filename()});
     return 0;
+}
+
+// -- tests --
+
+test "parse_file_line_prefix: valid file:line: message" {
+    const result = parse_file_line_prefix("./input.tex:5: Undefined control sequence") orelse
+        return error.ExpectedNonNull;
+    try std.testing.expectEqualStrings("./input.tex", result.file);
+    try std.testing.expectEqualStrings("5", result.line_str);
+    try std.testing.expectEqualStrings("Undefined control sequence", result.rest);
+}
+
+test "parse_file_line_prefix: multi-digit line number" {
+    const result = parse_file_line_prefix("chapter1.tex:142: LaTeX Error: \\begin{document} ended") orelse
+        return error.ExpectedNonNull;
+    try std.testing.expectEqualStrings("chapter1.tex", result.file);
+    try std.testing.expectEqualStrings("142", result.line_str);
+    try std.testing.expectEqualStrings("LaTeX Error: \\begin{document} ended", result.rest);
+}
+
+test "parse_file_line_prefix: path with directory" {
+    const result = parse_file_line_prefix("src/chapters/intro.tex:7: Missing $ inserted") orelse
+        return error.ExpectedNonNull;
+    try std.testing.expectEqualStrings("src/chapters/intro.tex", result.file);
+    try std.testing.expectEqualStrings("7", result.line_str);
+    try std.testing.expectEqualStrings("Missing $ inserted", result.rest);
+}
+
+test "parse_file_line_prefix: no match on bare message" {
+    try std.testing.expectEqual(null, parse_file_line_prefix("Undefined control sequence"));
+}
+
+test "parse_file_line_prefix: no match without space after second colon" {
+    try std.testing.expectEqual(null, parse_file_line_prefix("file:5:nospace"));
+}
+
+test "parse_diag_text: file:line: message with context" {
+    const text = "./input.tex:5: Undefined control sequence\nl.5 \\badcommand\n               \\badcommand";
+    const parsed = parse_diag_text(text);
+    try std.testing.expectEqualStrings("./input.tex", parsed.file.?);
+    try std.testing.expectEqualStrings("5", parsed.line.?);
+    try std.testing.expectEqualStrings("Undefined control sequence", parsed.message);
+    try std.testing.expect(parsed.context != null);
+    try std.testing.expect(std.mem.startsWith(u8, parsed.context.?, "l.5 \\badcommand"));
+}
+
+test "parse_diag_text: bare message no prefix" {
+    const parsed = parse_diag_text("Emergency stop");
+    try std.testing.expectEqual(null, parsed.file);
+    try std.testing.expectEqual(null, parsed.line);
+    try std.testing.expectEqualStrings("Emergency stop", parsed.message);
+    try std.testing.expectEqual(null, parsed.context);
+}
+
+test "parse_diag_text: message with context but no file prefix" {
+    const text = "Emergency stop\n<*> \\input badfile";
+    const parsed = parse_diag_text(text);
+    try std.testing.expectEqual(null, parsed.file);
+    try std.testing.expectEqual(null, parsed.line);
+    try std.testing.expectEqualStrings("Emergency stop", parsed.message);
+    try std.testing.expectEqualStrings("<*> \\input badfile", parsed.context.?);
 }
