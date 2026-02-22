@@ -8,7 +8,7 @@
 const std = @import("std");
 const fs = std.fs;
 const Host = @import("../Host.zig");
-const bridge = @import("../bridge.zig");
+const Engine = @import("../Engine.zig");
 const Config = @import("../Config.zig");
 const BundleStore = @import("../BundleStore.zig");
 const Log = @import("../Log.zig");
@@ -43,11 +43,11 @@ pub fn init(_: ?[]const u8, _: []const u8, _: []const u8, _: []const u8) void {}
 // WASM platform setup: init BundleStore with c_allocator.
 // files are fetched on demand from JS host via js_request_range.
 // returns null (WASM has no persistent cache directory).
-pub fn setup(world: *bridge.World, _: bool, _: ?[]const u8) ?[]const u8 {
+pub fn setup(world: *Engine.World, _: bool, _: ?[]const u8) ?[]const u8 {
     dbg("wasm", "setup: initializing BundleStore with c_allocator", .{});
     const bs = BundleStore.init(allocator, Config.default_bundle_url, &Config.default_bundle_digest);
-    bridge.set_bundle_store(bs);
-    world.bundle_store = bridge.get_bundle_store();
+    Engine.set_bundle_store(bs);
+    world.bundle_store = Engine.get_bundle_store();
     dbg("wasm", "setup: complete, bundle_store set", .{});
     return null;
 }

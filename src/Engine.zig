@@ -1,4 +1,4 @@
-// bridge.zig -- C export layer, global state, and re-exports.
+// Engine.zig -- C export layer, global state, and re-exports.
 //
 // Contains:
 //   - Global World / BundleStore / diagnostic state

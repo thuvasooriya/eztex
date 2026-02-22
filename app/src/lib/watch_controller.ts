@@ -57,7 +57,7 @@ function hash_files(files: ProjectFiles): number {
 
 export function create_watch_controller(deps: WatchDeps) {
   const [state, set_state] = createSignal<WatchState>("idle");
-  const [enabled, set_enabled] = createSignal(false);
+  const [enabled, set_enabled] = createSignal(localStorage.getItem("watch_enabled") === "true");
   const [dirty, set_dirty] = createSignal(false);
 
   let debounce_timer: ReturnType<typeof setTimeout> | undefined;
@@ -176,6 +176,7 @@ export function create_watch_controller(deps: WatchDeps) {
       set_dirty(false);
     }
     set_enabled(next);
+    localStorage.setItem("watch_enabled", String(next));
   }
 
   function cleanup() {

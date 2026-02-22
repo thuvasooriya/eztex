@@ -326,7 +326,7 @@ const Toolbar: Component<Props> = (props) => {
           </button>
         </Show>
         <button
-          class={`toolbar-toggle watch ${watch.enabled() ? "active" : ""}`}
+          class={`toolbar-toggle watch ${watch.enabled() ? "active" : ""} ${watch.dirty() ? "dirty" : ""}`}
           onClick={() => watch.toggle()}
           title={watch.enabled() ? "Disable auto-compile" : "Enable auto-compile"}
         >
@@ -334,9 +334,6 @@ const Toolbar: Component<Props> = (props) => {
             <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
             <circle cx="12" cy="12" r="3" />
           </svg>
-          <Show when={watch.dirty()}>
-            <span class="watch-dirty-dot" />
-          </Show>
         </button>
         <button
           class="toolbar-btn primary"

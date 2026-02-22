@@ -860,12 +860,83 @@ const FT_FacePartial = extern struct {
     underline_thickness: c_short,
     glyph: ?*anyopaque, // FT_GlyphSlot (pointer to FT_GlyphSlotRec_)
 };
+// FT_Vector with c_long fields (used by FT_GlyphSlotPartial and FT_Get_Kerning).
+const FT_Vector_Long = extern struct {
+    x: c_long,
+    y: c_long,
+};
+
+// FT_Glyph_Metrics (all fields are FT_Pos = c_long).
+const FT_Glyph_Metrics = extern struct {
+    width: c_long,
+    height: c_long,
+    hori_bearing_x: c_long,
+    hori_bearing_y: c_long,
+    hori_advance: c_long,
+    vert_bearing_x: c_long,
+    vert_bearing_y: c_long,
+    vert_advance: c_long,
+};
+
+// FT_Bitmap (matches FreeType FT_Bitmap struct layout).
+const FT_Bitmap = extern struct {
+    rows: c_uint,
+    width: c_uint,
+    pitch: c_int,
+    buffer: ?*u8,
+    num_grays: c_ushort,
+    pixel_mode: u8,
+    palette_mode: u8,
+    palette: ?*anyopaque,
+};
+
+// FT_Outline (partial, enough for n_points and points access).
+const FT_Outline = extern struct {
+    n_contours: c_short,
+    n_points: c_short,
+    points: [*]FT_Vector_Long,
+    tags: [*]u8,
+    contours: [*]c_short,
+    flags: c_int,
+};
+
+// FT_GlyphSlotPartial: enough of FT_GlyphSlotRec_ to reach metrics, format, and outline.
+const FT_GlyphSlotPartial = extern struct {
+    library: ?*anyopaque,
+    face: ?*anyopaque,
+    next: ?*anyopaque,
+    glyph_index: c_uint,
+    generic: FT_Generic,
+    metrics: FT_Glyph_Metrics,
+    linear_hori_advance: c_long,
+    linear_vert_advance: c_long,
+    advance: FT_Vector_Long,
+    format: c_uint, // FT_Glyph_Format
+    bitmap: FT_Bitmap,
+    bitmap_left: c_int,
+    bitmap_top: c_int,
+    outline: FT_Outline,
+};
+
+// FT_Glyph_Format constants
+const FT_GLYPH_FORMAT_OUTLINE: c_uint = 0x6F75746C; // 'outl'
+
+// FT_Kerning constants
+const FT_KERNING_UNSCALED: c_uint = 2;
+const FT_LOAD_VERTICAL_LAYOUT: i32 = 1 << 5;
+
 const FT_FACE_FLAG_GLYPH_NAMES: c_long = 1 << 9;
 
 fn ft_has_glyph_names(face_ptr: *anyopaque) bool {
     const face: *const FT_FacePartial = @ptrCast(@alignCast(face_ptr));
     return (face.face_flags & FT_FACE_FLAG_GLYPH_NAMES) != 0;
 }
+
+// -- FreeType externs (singleton management) --
+extern fn FT_Init_FreeType(library: *?*anyopaque) c_int;
+extern fn FT_Done_FreeType(library: *anyopaque) c_int;
+extern fn FT_Get_Kerning(face: *anyopaque, left: c_uint, right: c_uint, kern_mode: c_uint, kerning: *FT_Vector_Long) c_int;
+extern fn FT_Face_GetCharVariantIndex(face: *anyopaque, charcode: c_ulong, variant_selector: c_ulong) c_uint;
 
 // -- FreeType extern (FT_Get_Glyph_Name) --
 // FT_UInt = unsigned int = c_uint
@@ -1336,14 +1407,6 @@ extern fn FT_Attach_Stream(face: *anyopaque, parameters: *const FT_Open_Args) c_
 // -- HarfBuzz externs (Phase 2g) --
 extern fn hb_font_destroy(font: *anyopaque) void;
 
-// -- C helper (Phase 2g): encapsulates HB face+font creation with custom font funcs --
-extern fn initialize_hb_font(font: *XeTeXFont_rec) c_int;
-
-// -- FT singleton state and helpers (non-static in C, Phase 2g) --
-extern var ft_face_count: c_int;
-extern fn get_ft_library() ?*anyopaque;
-extern fn maybe_shutdown_ft() void;
-
 // -- Tectonic bridge I/O externs --
 extern fn ttbc_input_open(path: [*:0]const u8, format: c_int, is_gz: c_int) usize;
 extern fn ttbc_input_get_size(handle: usize) usize;
@@ -1358,9 +1421,9 @@ extern fn strcpy(dst: [*]u8, src: [*:0]const u8) [*]u8;
 extern fn strcat(dst: [*]u8, src: [*:0]const u8) [*]u8;
 extern fn memset(s: ?*anyopaque, c: c_int, n: usize) ?*anyopaque;
 
-// initialize_ft_internal: Zig port of C static initialize_ft().
+// initialize_ft_internal: full FT font init pipeline.
 // Opens font file via bridge I/O (fallback chain: OT -> TT -> T1), creates FT_Face,
-// reads metrics, loads AFM for non-SFNT Type1 fonts, then calls C initialize_hb_font.
+// reads metrics, loads AFM for non-SFNT Type1 fonts, then initializes HarfBuzz font.
 fn initialize_ft_internal(font: *XeTeXFont_rec, pathname: [*:0]const u8, index: c_int) c_int {
     const lib = get_ft_library() orelse return -1;
 
@@ -1669,22 +1732,241 @@ export fn layoutChars(
 }
 
 // ========================================
-// Font manager lifecycle (Phase 2i)
+// FreeType library singleton + HarfBuzz font funcs infrastructure
+// (ported from csrc/xetex/layout.c)
 // ========================================
 
 // Opaque HarfBuzz font funcs type (the actual struct lives in HarfBuzz C code).
 const hb_font_funcs_t = opaque {};
 
-// Globals made non-static in C for Zig access (Phase 2i).
-extern var ft_lib_shutdown_pending: c_int;
-extern var custom_font_funcs: ?*hb_font_funcs_t;
+// Opaque HarfBuzz types for blob/face creation.
+const hb_blob_t = opaque {};
+const hb_glyph_extents_t = extern struct {
+    x_bearing: i32,
+    y_bearing: i32,
+    width: i32,
+    height: i32,
+};
 
-// HarfBuzz font funcs destroy (resolved at link time).
+// HarfBuzz font funcs API externs.
+extern fn hb_font_funcs_create() ?*hb_font_funcs_t;
 extern fn hb_font_funcs_destroy(funcs: *hb_font_funcs_t) void;
+extern fn hb_font_funcs_make_immutable(funcs: *hb_font_funcs_t) void;
 
-// destroy_font_manager: signals FT shutdown and destroys the HB custom font funcs singleton.
-// Called by xetex-ini.c BEFORE the font cleanup loop, so FT shutdown is deferred
-// (ft_lib_shutdown_pending + maybe_shutdown_ft pattern).
+// HarfBuzz font funcs setter types: each takes (funcs, callback, user_data, destroy).
+// The callback signatures vary per setter -- we declare them as ?*const anyopaque and cast.
+extern fn hb_font_funcs_set_nominal_glyph_func(funcs: *hb_font_funcs_t, func: ?*const anyopaque, data: ?*anyopaque, destroy: ?*anyopaque) void;
+extern fn hb_font_funcs_set_variation_glyph_func(funcs: *hb_font_funcs_t, func: ?*const anyopaque, data: ?*anyopaque, destroy: ?*anyopaque) void;
+extern fn hb_font_funcs_set_glyph_h_advance_func(funcs: *hb_font_funcs_t, func: ?*const anyopaque, data: ?*anyopaque, destroy: ?*anyopaque) void;
+extern fn hb_font_funcs_set_glyph_v_advance_func(funcs: *hb_font_funcs_t, func: ?*const anyopaque, data: ?*anyopaque, destroy: ?*anyopaque) void;
+extern fn hb_font_funcs_set_glyph_h_origin_func(funcs: *hb_font_funcs_t, func: ?*const anyopaque, data: ?*anyopaque, destroy: ?*anyopaque) void;
+extern fn hb_font_funcs_set_glyph_v_origin_func(funcs: *hb_font_funcs_t, func: ?*const anyopaque, data: ?*anyopaque, destroy: ?*anyopaque) void;
+extern fn hb_font_funcs_set_glyph_h_kerning_func(funcs: *hb_font_funcs_t, func: ?*const anyopaque, data: ?*anyopaque, destroy: ?*anyopaque) void;
+extern fn hb_font_funcs_set_glyph_extents_func(funcs: *hb_font_funcs_t, func: ?*const anyopaque, data: ?*anyopaque, destroy: ?*anyopaque) void;
+extern fn hb_font_funcs_set_glyph_contour_point_func(funcs: *hb_font_funcs_t, func: ?*const anyopaque, data: ?*anyopaque, destroy: ?*anyopaque) void;
+extern fn hb_font_funcs_set_glyph_name_func(funcs: *hb_font_funcs_t, func: ?*const anyopaque, data: ?*anyopaque, destroy: ?*anyopaque) void;
+
+// HarfBuzz face/font/blob creation externs.
+extern fn hb_face_create_for_tables(reference_table_func: ?*const anyopaque, user_data: ?*anyopaque, destroy: ?*const anyopaque) ?*hb_face_t;
+extern fn hb_face_set_index(face: *hb_face_t, index: c_uint) void;
+extern fn hb_face_set_upem(face: *hb_face_t, upem: c_uint) void;
+extern fn hb_face_destroy(face: *hb_face_t) void;
+extern fn hb_font_create(face: *hb_face_t) ?*hb_font_t;
+extern fn hb_font_set_funcs(font: *hb_font_t, klass: *hb_font_funcs_t, font_data: ?*anyopaque, destroy: ?*anyopaque) void;
+extern fn hb_font_set_user_data(font: *hb_font_t, key: *anyopaque, data: ?*anyopaque, destroy: ?*anyopaque, replace: c_int) c_int;
+extern fn hb_font_set_scale(font: *hb_font_t, x_scale: c_int, y_scale: c_int) void;
+extern fn hb_font_set_ppem(font: *hb_font_t, x_ppem: c_uint, y_ppem: c_uint) void;
+extern fn hb_blob_create(data: [*]const u8, length: c_uint, mode: c_uint, user_data: ?*anyopaque, destroy: ?*const anyopaque) ?*hb_blob_t;
+extern fn hb_blob_get_empty() ?*hb_blob_t;
+
+// HarfBuzz memory mode constants.
+const HB_MEMORY_MODE_WRITABLE: c_uint = 2;
+
+// -- FreeType library singleton state --
+var ft_lib: ?*anyopaque = null;
+var ft_face_count: c_int = 0;
+var ft_lib_shutdown_pending: c_int = 0;
+
+fn get_ft_library() ?*anyopaque {
+    if (ft_lib) |lib| return lib;
+    var lib_out: ?*anyopaque = null;
+    const err = FT_Init_FreeType(&lib_out);
+    if (err != 0) return null;
+    ft_lib = lib_out;
+    return lib_out;
+}
+
+fn maybe_shutdown_ft() void {
+    if (ft_lib_shutdown_pending != 0 and ft_face_count == 0) {
+        if (ft_lib) |lib| {
+            _ = FT_Done_FreeType(lib);
+            ft_lib = null;
+            ft_lib_shutdown_pending = 0;
+        }
+    }
+}
+
+// -- Custom HarfBuzz font callbacks (ported from layout.c) --
+
+var custom_font_funcs: ?*hb_font_funcs_t = null;
+var ft_face_user_data_key: u8 = 0;
+
+fn hb_nominal_glyph_func(_: ?*anyopaque, font_data: ?*anyopaque, unicode: u32, glyph: *u32, _: ?*anyopaque) callconv(.c) c_int {
+    const face: *anyopaque = font_data orelse return 0;
+    const gid = FT_Get_Char_Index(face, @intCast(unicode));
+    if (gid == 0) return 0;
+    glyph.* = gid;
+    return 1;
+}
+
+fn hb_variation_glyph_func(_: ?*anyopaque, font_data: ?*anyopaque, unicode: u32, variation_selector: u32, glyph: *u32, _: ?*anyopaque) callconv(.c) c_int {
+    const face: *anyopaque = font_data orelse return 0;
+    const gid = FT_Face_GetCharVariantIndex(face, @intCast(unicode), @intCast(variation_selector));
+    if (gid == 0) return 0;
+    glyph.* = gid;
+    return 1;
+}
+
+fn get_glyph_advance_raw(face: *anyopaque, gid: c_uint, vertical: bool) c_long {
+    var flags: i32 = FT_LOAD_NO_SCALE;
+    if (vertical) flags |= FT_LOAD_VERTICAL_LAYOUT;
+    var advance: c_long = 0;
+    const err = FT_Get_Advance(face, gid, flags, &advance);
+    if (err != 0) return 0;
+    if (vertical) return -advance;
+    return advance;
+}
+
+fn hb_h_advance_func(_: ?*anyopaque, font_data: ?*anyopaque, glyph: u32, _: ?*anyopaque) callconv(.c) i32 {
+    const face: *anyopaque = font_data orelse return 0;
+    return @intCast(get_glyph_advance_raw(face, @intCast(glyph), false));
+}
+
+fn hb_v_advance_func(_: ?*anyopaque, font_data: ?*anyopaque, glyph: u32, _: ?*anyopaque) callconv(.c) i32 {
+    const face: *anyopaque = font_data orelse return 0;
+    return @intCast(get_glyph_advance_raw(face, @intCast(glyph), true));
+}
+
+fn hb_h_origin_func(_: ?*anyopaque, _: ?*anyopaque, _: u32, x: *i32, y: *i32, _: ?*anyopaque) callconv(.c) c_int {
+    x.* = 0;
+    y.* = 0;
+    return 1;
+}
+
+fn hb_v_origin_func(_: ?*anyopaque, _: ?*anyopaque, _: u32, x: *i32, y: *i32, _: ?*anyopaque) callconv(.c) c_int {
+    x.* = 0;
+    y.* = 0;
+    return 1;
+}
+
+fn hb_h_kerning_func(_: ?*anyopaque, font_data: ?*anyopaque, first_glyph: u32, second_glyph: u32, _: ?*anyopaque) callconv(.c) i32 {
+    const face: *anyopaque = font_data orelse return 0;
+    var kerning: FT_Vector_Long = .{ .x = 0, .y = 0 };
+    const err = FT_Get_Kerning(face, @intCast(first_glyph), @intCast(second_glyph), FT_KERNING_UNSCALED, &kerning);
+    if (err != 0) return 0;
+    return @intCast(kerning.x);
+}
+
+fn hb_extents_func(_: ?*anyopaque, font_data: ?*anyopaque, glyph: u32, extents: *hb_glyph_extents_t, _: ?*anyopaque) callconv(.c) c_int {
+    const face: *anyopaque = font_data orelse return 0;
+    if (FT_Load_Glyph(face, @intCast(glyph), FT_LOAD_NO_SCALE) != 0) return 0;
+    const face_partial: *const FT_FacePartial = @ptrCast(@alignCast(face));
+    const slot: *const FT_GlyphSlotPartial = @ptrCast(@alignCast(face_partial.glyph orelse return 0));
+    extents.x_bearing = @intCast(slot.metrics.hori_bearing_x);
+    extents.y_bearing = @intCast(slot.metrics.hori_bearing_y);
+    extents.width = @intCast(slot.metrics.width);
+    extents.height = -@as(i32, @intCast(slot.metrics.height));
+    return 1;
+}
+
+fn hb_contour_point_func(_: ?*anyopaque, font_data: ?*anyopaque, glyph: u32, point_index: c_uint, x: *i32, y: *i32, _: ?*anyopaque) callconv(.c) c_int {
+    const face: *anyopaque = font_data orelse return 0;
+    if (FT_Load_Glyph(face, @intCast(glyph), FT_LOAD_NO_SCALE) != 0) return 0;
+    const face_partial: *const FT_FacePartial = @ptrCast(@alignCast(face));
+    const slot: *const FT_GlyphSlotPartial = @ptrCast(@alignCast(face_partial.glyph orelse return 0));
+    if (slot.format != FT_GLYPH_FORMAT_OUTLINE) return 0;
+    if (point_index >= @as(c_uint, @intCast(slot.outline.n_points))) return 0;
+    x.* = @intCast(slot.outline.points[point_index].x);
+    y.* = @intCast(slot.outline.points[point_index].y);
+    return 1;
+}
+
+fn hb_glyph_name_func(_: ?*anyopaque, font_data: ?*anyopaque, glyph: u32, name: [*]u8, size: c_uint, _: ?*anyopaque) callconv(.c) c_int {
+    const face: *anyopaque = font_data orelse return 0;
+    const err = FT_Get_Glyph_Name(face, @intCast(glyph), name, size);
+    if (err != 0 or name[0] == 0) return 0;
+    return 1;
+}
+
+fn get_font_funcs() *hb_font_funcs_t {
+    if (custom_font_funcs) |funcs| return funcs;
+    const funcs = hb_font_funcs_create() orelse unreachable;
+    hb_font_funcs_set_nominal_glyph_func(funcs, @ptrCast(&hb_nominal_glyph_func), null, null);
+    hb_font_funcs_set_variation_glyph_func(funcs, @ptrCast(&hb_variation_glyph_func), null, null);
+    hb_font_funcs_set_glyph_h_advance_func(funcs, @ptrCast(&hb_h_advance_func), null, null);
+    hb_font_funcs_set_glyph_v_advance_func(funcs, @ptrCast(&hb_v_advance_func), null, null);
+    hb_font_funcs_set_glyph_h_origin_func(funcs, @ptrCast(&hb_h_origin_func), null, null);
+    hb_font_funcs_set_glyph_v_origin_func(funcs, @ptrCast(&hb_v_origin_func), null, null);
+    hb_font_funcs_set_glyph_h_kerning_func(funcs, @ptrCast(&hb_h_kerning_func), null, null);
+    hb_font_funcs_set_glyph_extents_func(funcs, @ptrCast(&hb_extents_func), null, null);
+    hb_font_funcs_set_glyph_contour_point_func(funcs, @ptrCast(&hb_contour_point_func), null, null);
+    hb_font_funcs_set_glyph_name_func(funcs, @ptrCast(&hb_glyph_name_func), null, null);
+    hb_font_funcs_make_immutable(funcs);
+    custom_font_funcs = funcs;
+    return funcs;
+}
+
+// -- HarfBuzz reference-table callback (for hb_face_create_for_tables) --
+
+fn hb_reference_table_func(_: ?*anyopaque, tag: u32, user_data: ?*anyopaque) callconv(.c) ?*hb_blob_t {
+    // user_data points to a malloc'd pointer holding the FT_Face
+    const data_ptr: *?*anyopaque = @ptrCast(@alignCast(user_data orelse return hb_blob_get_empty()));
+    const ft_face: *anyopaque = data_ptr.* orelse return hb_blob_get_empty();
+    var length: c_ulong = 0;
+    if (FT_Load_Sfnt_Table(ft_face, @intCast(tag), 0, null, &length) != 0) return hb_blob_get_empty();
+    if (length == 0) return hb_blob_get_empty();
+    const buffer = malloc(@intCast(length)) orelse return hb_blob_get_empty();
+    if (FT_Load_Sfnt_Table(ft_face, @intCast(tag), 0, buffer, &length) != 0) {
+        free(@ptrCast(buffer));
+        return hb_blob_get_empty();
+    }
+    return hb_blob_create(buffer, @intCast(length), HB_MEMORY_MODE_WRITABLE, @ptrCast(buffer), @ptrCast(&free));
+}
+
+// -- HarfBuzz font initialization (ported from layout.c initialize_hb_font) --
+
+fn initialize_hb_font(font: *XeTeXFont_rec) c_int {
+    // allocate hb_face_data: a single pointer holding the FT_Face
+    const hb_data_raw = malloc(@sizeOf(?*anyopaque)) orelse return -1;
+    const hb_data: *?*anyopaque = @ptrCast(@alignCast(hb_data_raw));
+    hb_data.* = font.ft_face;
+
+    const hb_face: *hb_face_t = hb_face_create_for_tables(
+        @ptrCast(&hb_reference_table_func),
+        @ptrCast(hb_data_raw),
+        @ptrCast(&free),
+    ) orelse return -1;
+    hb_face_set_index(hb_face, font.index);
+    hb_face_set_upem(hb_face, font.units_per_em);
+
+    const hb_font_ptr: *hb_font_t = hb_font_create(hb_face) orelse {
+        hb_face_destroy(hb_face);
+        return -1;
+    };
+    font.hb_font = hb_font_ptr;
+    hb_face_destroy(hb_face);
+
+    hb_font_set_funcs(hb_font_ptr, get_font_funcs(), font.ft_face, null);
+    _ = hb_font_set_user_data(hb_font_ptr, @ptrCast(&ft_face_user_data_key), font.ft_face, null, 0);
+    hb_font_set_scale(hb_font_ptr, @intCast(font.units_per_em), @intCast(font.units_per_em));
+    hb_font_set_ppem(hb_font_ptr, 0, 0);
+    return 0;
+}
+
+// ========================================
+// Font manager lifecycle
+// ========================================
+
 export fn destroy_font_manager() void {
     ft_lib_shutdown_pending = 1;
     maybe_shutdown_ft();

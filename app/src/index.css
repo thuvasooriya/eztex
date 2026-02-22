@@ -202,24 +202,23 @@ body {
   animation: icon-glow 2.5s ease-in-out infinite;
 }
 
-.toolbar-toggle.watch {
-  position: relative;
+.toolbar-toggle.watch.active.dirty {
+  color: var(--yellow);
 }
 
-.watch-dirty-dot {
-  position: absolute;
-  top: 3px;
-  right: 3px;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--yellow);
-  pointer-events: none;
+.toolbar-toggle.watch.active.dirty svg {
+  filter: drop-shadow(0 0 3px rgba(224, 175, 104, 0.6));
+  animation: icon-glow-yellow 2.5s ease-in-out infinite;
 }
 
 @keyframes icon-glow {
   0%, 100% { filter: drop-shadow(0 0 2px rgba(158, 206, 106, 0.4)); }
   50% { filter: drop-shadow(0 0 6px rgba(158, 206, 106, 0.8)); }
+}
+
+@keyframes icon-glow-yellow {
+  0%, 100% { filter: drop-shadow(0 0 2px rgba(224, 175, 104, 0.4)); }
+  50% { filter: drop-shadow(0 0 6px rgba(224, 175, 104, 0.8)); }
 }
 
 /* compile spinner */

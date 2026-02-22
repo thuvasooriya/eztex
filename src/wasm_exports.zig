@@ -14,7 +14,7 @@
 
 const std = @import("std");
 const fs = std.fs;
-const bridge = @import("bridge.zig");
+const Engine = @import("Engine.zig");
 const Config = @import("Config.zig");
 const BundleStore = @import("BundleStore.zig");
 const seeds = @import("seeds.zig");
@@ -49,7 +49,7 @@ pub export fn eztex_set_debug(enabled: u32) void {
 pub export fn eztex_push_index(data_ptr: [*]const u8, data_len: usize) i32 {
     dbg("wasm_export", "eztex_push_index: {d} bytes", .{data_len});
     const content = data_ptr[0..data_len];
-    const bs = bridge.ensure_bundle_store();
+    const bs = Engine.ensure_bundle_store();
     bs.load_index(content) catch |err| {
         dbg("wasm_export", "eztex_push_index: parse failed: {}", .{err});
         return -1;
@@ -69,7 +69,7 @@ pub export fn eztex_query_index(
 ) i32 {
     const name = name_ptr[0..name_len];
     dbg("wasm_export", "eztex_query_index: \"{s}\"", .{name});
-    const bs = bridge.ensure_bundle_store();
+    const bs = Engine.ensure_bundle_store();
     const entry = bs.resolve_index_entry(name) orelse {
         dbg("wasm_export", "eztex_query_index: not found", .{});
         return -1;

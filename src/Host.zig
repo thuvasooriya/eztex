@@ -13,7 +13,7 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
-const bridge = @import("bridge.zig");
+const Engine = @import("Engine.zig");
 
 pub const is_wasm = builtin.cpu.arch == .wasm32;
 
@@ -43,7 +43,7 @@ pub const SeedResult = struct {
 
 // platform-specific setup: cache discovery + BundleStore init (native) or JS host init (WASM).
 // returns cache directory path on native, null on WASM.
-pub fn setup(world: *bridge.World, verbose: bool, cache_dir_override: ?[]const u8) ?[]const u8 {
+pub fn setup(world: *Engine.World, verbose: bool, cache_dir_override: ?[]const u8) ?[]const u8 {
     return Impl.setup(world, verbose, cache_dir_override);
 }
 

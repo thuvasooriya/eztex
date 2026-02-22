@@ -53,7 +53,6 @@ pub fn build(b: *std.Build) void {
         // pure zig modules (no C deps)
         const pure_test_srcs: []const []const u8 = &.{
             "src/Config.zig",
-            "src/Format.zig",
             "src/FormatCache.zig",
             "src/MainDetect.zig",
             "src/Watcher.zig",
@@ -158,13 +157,6 @@ fn buildEztex(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bui
     const icuuc_lib = icu_dep.artifact("icuuc");
     const graphite2_lib = graphite2_dep.artifact("graphite2");
 
-    // -- header prefix remapping for harfbuzz --
-    const hb_upstream = harfbuzz_dep.builder.dependency("harfbuzz", .{});
-    const hb_headers = b.addWriteFiles();
-    _ = hb_headers.addCopyDirectory(hb_upstream.path("src"), "harfbuzz", .{
-        .include_extensions = &.{".h"},
-    });
-
     // -- engine package: 5 C/C++ engine libraries --
     const tectonic_dep = b.dependency("tectonic", .{
         .target = target,
@@ -198,34 +190,6 @@ fn buildEztex(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bui
         "-fno-sanitize=undefined",
         "-std=gnu11",
     }, wasm_sjlj_flags, wasm_c_compat_flags);
-
-    // -- static library: xetex_layout (local stub) --
-    const xetex_layout_mod = b.createModule(.{
-        .target = target,
-        .optimize = optimize,
-        .link_libc = true,
-    });
-    xetex_layout_mod.linkLibrary(bridge_core);
-    xetex_layout_mod.linkLibrary(engine_xetex_c);
-    xetex_layout_mod.addIncludePath(hb_headers.getDirectory());
-    xetex_layout_mod.linkLibrary(harfbuzz_lib);
-    xetex_layout_mod.linkLibrary(freetype_lib);
-    xetex_layout_mod.linkLibrary(icuuc_lib);
-    xetex_layout_mod.linkLibrary(graphite2_lib);
-    addPlatformMacro(xetex_layout_mod, is_wasm);
-
-    if (is_wasm) {
-        xetex_layout_mod.addIncludePath(tectonic_dep.path("src/wasm_stubs"));
-    }
-
-    const xetex_layout = b.addLibrary(.{
-        .name = "tectonic_xetex_layout",
-        .root_module = xetex_layout_mod,
-    });
-    xetex_layout.addCSourceFile(.{
-        .file = b.path("csrc/xetex/layout.c"),
-        .flags = c_flags,
-    });
 
     // -- static library: wasm_posix_stubs (WASM only) --
     const wasm_posix_stubs = if (is_wasm) blk: {
@@ -280,11 +244,8 @@ fn buildEztex(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bui
     exe_mod.linkLibrary(bridge_core);
     exe_mod.linkLibrary(engine_bibtex);
 
-    // local stubs
-    exe_mod.linkLibrary(xetex_layout);
-    exe_mod.linkLibrary(graphite2_lib);
-
     // external dependencies
+    exe_mod.linkLibrary(graphite2_lib);
     exe_mod.linkLibrary(harfbuzz_lib);
     exe_mod.linkLibrary(freetype_lib);
     exe_mod.linkLibrary(libpng_lib);
@@ -319,14 +280,6 @@ fn buildEztex(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bui
     }
 
     return exe;
-}
-
-fn addPlatformMacro(mod: *std.Build.Module, is_wasm: bool) void {
-    if (is_wasm) {
-        mod.addCMacro("XETEX_WASM", "1");
-    } else {
-        mod.addCMacro("XETEX_MAC", "1");
-    }
 }
 
 fn buildFlags(b: *std.Build, base: []const []const u8, extra: []const []const u8) []const []const u8 {

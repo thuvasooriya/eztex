@@ -11,7 +11,7 @@ const http = std.http;
 const Io = std.Io;
 const Cache = @import("../Cache.zig");
 const Host = @import("../Host.zig");
-const bridge = @import("../bridge.zig");
+const Engine = @import("../Engine.zig");
 const Log = @import("../Log.zig");
 const Config = @import("../Config.zig");
 const BundleStore = @import("../BundleStore.zig");
@@ -435,7 +435,7 @@ var g_cache_dir_buf: [512]u8 = undefined;
 var g_manifest_buf: [1024]u8 = undefined;
 var g_setup_digest_buf: [128]u8 = undefined;
 
-pub fn setup(world: *bridge.World, _: bool, cache_dir_override: ?[]const u8) ?[]const u8 {
+pub fn setup(world: *Engine.World, _: bool, cache_dir_override: ?[]const u8) ?[]const u8 {
     const cache_dir = if (cache_dir_override) |override| blk: {
         if (fs.path.isAbsolute(override)) {
             if (override.len > g_cache_dir_buf.len) {
@@ -499,8 +499,8 @@ pub fn setup(world: *bridge.World, _: bool, cache_dir_override: ?[]const u8) ?[]
     // create PM with config-derived URL and digest
     const bs = BundleStore.init(std.heap.c_allocator, Config.default_bundle_url, digest);
 
-    bridge.set_bundle_store(bs);
-    world.bundle_store = bridge.get_bundle_store();
+    Engine.set_bundle_store(bs);
+    world.bundle_store = Engine.get_bundle_store();
     Log.dbg("eztex", "bundle store initialized", .{});
 
     return cache_dir;

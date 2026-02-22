@@ -12,6 +12,8 @@ const fs = std.fs;
 const Allocator = std.mem.Allocator;
 const Host = @import("Host.zig");
 const Log = @import("Log.zig");
+const Compiler = @import("Compiler.zig");
+const Project = @import("Project.zig");
 
 // file extensions we watch for changes
 const watched_extensions = [_][]const u8{ ".tex", ".bib", ".bst", ".cls", ".sty", ".def", ".cfg", ".clo", ".dtx", ".fd", ".zon" };
@@ -370,6 +372,72 @@ pub fn is_watched_extension(name: []const u8) bool {
         if (std.mem.endsWith(u8, name, ext)) return true;
     }
     return false;
+}
+
+// -- watch command (integrated from main.zig) --
+
+pub fn do_watch(config: Compiler.CompileConfig) u8 {
+    if (comptime Host.is_wasm) {
+        Log.log("eztex", .err, "watch mode is not supported on WASM", .{});
+        return 1;
+    }
+
+    const input_file = config.input_file orelse {
+        Log.log("eztex", .err, "no input file specified for watch", .{});
+        return 1;
+    };
+
+    const project = Project.resolve_project_input(std.heap.c_allocator, input_file, config.verbose) orelse return 1;
+    defer if (project.temp_dir) |tmp| {
+        fs.cwd().deleteTree(tmp) catch {};
+    };
+
+    fs.cwd().access(project.tex_file, .{}) catch {
+        Log.log("eztex", .err, "input file '{s}' not found", .{project.tex_file});
+        return 1;
+    };
+
+    const watch_root = project.project_dir orelse std.fs.path.dirname(project.tex_file) orelse ".";
+
+    var watcher = Watcher.init(std.heap.c_allocator) catch |err| {
+        Log.log("eztex", .err, "failed to initialize file watcher: {}", .{err});
+        return 1;
+    };
+    defer watcher.deinit();
+
+    watcher.watch_dir_recursive(watch_root) catch |err| {
+        Log.log("eztex", .err, "failed to watch directory '{s}': {}", .{ watch_root, err });
+        return 1;
+    };
+
+    Log.log("eztex", .info, "watching '{s}' ({d} files) for changes... (Ctrl+C to stop)", .{ watch_root, watcher.watched_count() });
+
+    Log.log("eztex", .info, "initial compile...", .{});
+    _ = Compiler.compile(&config, null);
+
+    const debounce_ms: u32 = 200;
+    while (true) {
+        const got_event = watcher.wait_for_event(60_000) catch |err| {
+            Log.log("eztex", .warn, "watcher error: {}", .{err});
+            std.Thread.sleep(1000 * std.time.ns_per_ms);
+            continue;
+        };
+        if (!got_event) continue;
+
+        while (true) {
+            const more = watcher.wait_for_event(debounce_ms) catch break;
+            if (!more) break;
+        }
+
+        Log.log("eztex", .info, "change detected, recompiling...", .{});
+        _ = Compiler.compile(&config, null);
+
+        watcher.reset();
+        watcher.watch_dir_recursive(watch_root) catch |err| {
+            Log.log("eztex", .warn, "failed to re-watch directory: {}", .{err});
+        };
+        Log.dbg("eztex", "re-watching {d} files", .{watcher.watched_count()});
+    }
 }
 
 // -- tests --
