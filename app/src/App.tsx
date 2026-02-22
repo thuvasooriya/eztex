@@ -12,6 +12,7 @@ import CachePill from "./components/CachePill";
 import ResizeHandle from "./components/ResizeHandle";
 
 const NARROW_BREAKPOINT = 900;
+const TOO_NARROW_BREAKPOINT = 600;
 const PREVIEW_WIDTH_KEY = "eztex_preview_width";
 const SPLIT_DIR_KEY = "eztex_split_dir";
 
@@ -35,6 +36,7 @@ const App: Component = () => {
   const [files_visible, set_files_visible] = createSignal(window.innerWidth >= NARROW_BREAKPOINT);
   const [preview_visible, set_preview_visible] = createSignal(true);
   const [is_narrow, set_is_narrow] = createSignal(window.innerWidth < NARROW_BREAKPOINT);
+  const [is_too_narrow, set_is_too_narrow] = createSignal(window.innerWidth <= TOO_NARROW_BREAKPOINT);
   const [show_preview_in_narrow, set_show_preview_in_narrow] = createSignal(false);
   const [split_dir, set_split_dir] = createSignal<"horizontal" | "vertical">(
     (localStorage.getItem(SPLIT_DIR_KEY) as "horizontal" | "vertical") || "horizontal"
@@ -43,12 +45,15 @@ const App: Component = () => {
   // in narrow mode, file panel is always overlay
   const files_overlay = () => is_narrow() && files_visible();
 
+  // horizontal split in narrow mode requires swap (too narrow for side-by-side)
+  const use_swap_mode = () => is_narrow() && split_dir() === "horizontal";
+
   function toggle_files() {
     set_files_visible((v) => !v);
   }
 
   function toggle_preview() {
-    if (is_narrow()) {
+    if (use_swap_mode()) {
       set_show_preview_in_narrow((v) => !v);
     } else {
       set_preview_visible((v) => !v);
@@ -98,8 +103,10 @@ const App: Component = () => {
     });
 
     const on_resize = () => {
-      const narrow = window.innerWidth < NARROW_BREAKPOINT;
+      const w = window.innerWidth;
+      const narrow = w < NARROW_BREAKPOINT;
       set_is_narrow(narrow);
+      set_is_too_narrow(w <= TOO_NARROW_BREAKPOINT);
       if (!narrow) {
         set_show_preview_in_narrow(false);
       }
@@ -150,7 +157,7 @@ const App: Component = () => {
   const workspace_class = () => {
     let cls = "workspace";
     if (is_narrow()) cls += " narrow-mode";
-    if (show_preview_in_narrow()) cls += " show-preview";
+    if (use_swap_mode() && show_preview_in_narrow()) cls += " show-preview";
     cls += ` split-${split_dir()}`;
     return cls;
   };
@@ -163,8 +170,9 @@ const App: Component = () => {
         on_toggle_preview={toggle_preview}
         on_toggle_split={toggle_split}
         files_visible={files_visible()}
-        preview_visible={is_narrow() ? show_preview_in_narrow() : preview_visible()}
+        preview_visible={use_swap_mode() ? show_preview_in_narrow() : preview_visible()}
         split_dir={split_dir()}
+        swap_mode={use_swap_mode()}
       />
       <div class={workspace_class()}>
         {/* file panel: inline in wide mode */}
@@ -186,7 +194,8 @@ const App: Component = () => {
             <Editor store={store} />
           </div>
 
-          <Show when={!is_narrow() && preview_visible()}>
+          {/* Wide mode OR narrow+vertical stacked: show preview with resize handle */}
+          <Show when={!use_swap_mode() && preview_visible()}>
             <ResizeHandle
               direction={split_dir() === "vertical" ? "vertical" : "horizontal"}
               on_resize={handle_preview_resize}
@@ -202,8 +211,8 @@ const App: Component = () => {
             </div>
           </Show>
 
-          {/* narrow mode: full-width preview replaces editor */}
-          <Show when={is_narrow() && show_preview_in_narrow()}>
+          {/* Narrow swap mode (side-by-side/horizontal in narrow): full swap */}
+          <Show when={use_swap_mode() && show_preview_in_narrow()}>
             <div class="preview-wrapper panel-wrapper panel-box" style={{ flex: 1 }}>
               <Preview />
             </div>
@@ -215,6 +224,19 @@ const App: Component = () => {
       <Show when={files_overlay()}>
         <div class="file-panel-wrapper overlay-mode panel-wrapper panel-box">
           <FilePanel store={store} />
+        </div>
+      </Show>
+
+      <Show when={is_too_narrow()}>
+        <div class="too-narrow-overlay">
+          <div class="too-narrow-content">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <rect x="5" y="2" width="14" height="20" rx="2" />
+              <line x1="12" y1="18" x2="12.01" y2="18" stroke-linecap="round" />
+            </svg>
+            <p>Screen too narrow</p>
+            <p class="too-narrow-hint">Please resize your window or rotate your device.</p>
+          </div>
         </div>
       </Show>
 

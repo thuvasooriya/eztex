@@ -16,6 +16,7 @@ type Props = {
   files_visible?: boolean;
   preview_visible?: boolean;
   split_dir?: "horizontal" | "vertical";
+  swap_mode?: boolean;
 };
 
 const Logo: Component = () => (
@@ -318,9 +319,9 @@ const Toolbar: Component<Props> = (props) => {
         </Show>
         <Show when={props.on_toggle_split}>
           <button
-            class="toolbar-toggle"
+            class={`toolbar-toggle${props.swap_mode ? " muted" : ""}`}
             onClick={props.on_toggle_split}
-            title={props.split_dir === "horizontal" ? "Switch to vertical split" : "Switch to horizontal split"}
+            title={props.split_dir === "horizontal" ? "Switch to stacked layout" : "Switch to side-by-side layout"}
           >
             <Show
               when={props.split_dir === "horizontal"}
@@ -342,13 +343,37 @@ const Toolbar: Component<Props> = (props) => {
           <button
             class={`toolbar-toggle ${props.preview_visible ? "active" : ""}`}
             onClick={props.on_toggle_preview}
-            title="Toggle preview"
+            title={props.swap_mode
+              ? (props.preview_visible ? "Show editor" : "Show PDF")
+              : "Toggle preview"
+            }
           >
-            {/* panel-right icon */}
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-              <rect x="3" y="3" width="18" height="18" rx="2" />
-              <line x1="15" y1="3" x2="15" y2="21" />
-            </svg>
+            <Show
+              when={props.swap_mode}
+              fallback={
+                <Show
+                  when={props.split_dir === "vertical"}
+                  fallback={
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                      <rect x="3" y="3" width="18" height="18" rx="2" />
+                      <line x1="15" y1="3" x2="15" y2="21" />
+                    </svg>
+                  }
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <rect x="3" y="3" width="18" height="18" rx="2" />
+                    <line x1="3" y1="15" x2="21" y2="15" />
+                  </svg>
+                </Show>
+              }
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <polyline points="17 1 21 5 17 9" />
+                <path d="M3 11V9a4 4 0 0 1 4-4h14" />
+                <polyline points="7 23 3 19 7 15" />
+                <path d="M21 13v2a4 4 0 0 1-4 4H3" />
+              </svg>
+            </Show>
           </button>
         </Show>
         <button

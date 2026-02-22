@@ -16,7 +16,7 @@ run file:
 # run test suite
 test:
     zig build test
-    zig build test-integtation
+    zig build test-integration
 
 app-dev: build-wasm
     cd app && bun dev
@@ -24,8 +24,10 @@ app-dev: build-wasm
 app-build: build-wasm
     cd app && bun run build
 
-git-push:
+git-push desc:
+    jj desc -m "{{ desc }}"
     jj bookmark move main --to @
     jj git push -b main
 
 alias ad := app-dev
+alias gp := git-push

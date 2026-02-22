@@ -65,7 +65,7 @@ body {
   align-items: center;
   justify-content: space-between;
   height: 44px;
-  padding: 0 12px;
+  padding: 2px 12px 0px 12px;
   background: var(--bg-dark);
   flex-shrink: 0;
   gap: 8px;
@@ -192,6 +192,14 @@ body {
   background: rgba(122, 162, 247, 0.1);
 }
 
+.toolbar-toggle.muted {
+  color: var(--fg-dark);
+  opacity: 0.6;
+}
+.toolbar-toggle.muted:hover {
+  opacity: 0.9;
+}
+
 /* watch icon glow */
 .toolbar-toggle.watch.active {
   color: var(--green);
@@ -284,7 +292,7 @@ body {
   flex: 1;
   overflow: hidden;
   position: relative;
-  padding: 8px;
+  padding: 4px 8px 8px 8px;
 }
 
 .split-container {
@@ -1040,20 +1048,21 @@ body {
   }
 }
 
-/* narrow: code/preview toggle mode */
-.workspace.narrow-mode .split-container .preview-wrapper,
-.workspace.narrow-mode .split-container .resize-handle {
+/* narrow + horizontal (side-by-side): swap mode */
+.workspace.narrow-mode.split-horizontal .split-container .preview-wrapper,
+.workspace.narrow-mode.split-horizontal .split-container .resize-handle {
   display: none;
 }
-.workspace.narrow-mode.show-preview .split-container .editor-wrapper {
+.workspace.narrow-mode.split-horizontal.show-preview .split-container .editor-wrapper {
   display: none;
 }
-.workspace.narrow-mode.show-preview .split-container .preview-wrapper {
+.workspace.narrow-mode.split-horizontal.show-preview .split-container .preview-wrapper {
   display: flex;
   flex: 1;
   width: auto !important;
   height: auto !important;
 }
+/* narrow + vertical (stacked): both panels shown, JSX Show handles rendering */
 
 @media (max-width: 700px) {
   .toolbar-file-actions {
@@ -1088,6 +1097,37 @@ body {
   .resize-handle.vertical {
     height: 4px;
   }
+}
+
+/* too-narrow overlay */
+.too-narrow-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 500;
+  background: var(--bg-dark);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+.too-narrow-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  color: var(--fg-muted);
+  padding: 24px;
+}
+.too-narrow-content p {
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--fg-dim);
+  margin: 0;
+}
+.too-narrow-content .too-narrow-hint {
+  font-size: 13px;
+  color: var(--fg-muted);
+  font-weight: 400;
 }
 
 /* === context menu === */

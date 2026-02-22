@@ -2,12 +2,15 @@ AGENT MUST NOT BE CONCERNED WITH THIS FILE.
 THIS FILE IS PURELY FOR THE USER TO TRACK AND ANALYZE
 
 - [ ] docs: config examples
-- [ ] config tests
+- [ ] tests coverage: config, wasm boundary
 - [ ] docs: bundle/index urls
+- [ ] optimize cold start
 - [ ] optimize seed fetches
 - [ ] even better font configuration
 - [ ] mcp
-- [ ] agentic cli
+- [ ] cli windows support
+- [ ] cli releases
+- [ ] better cli interface, agentic?
 
 - [ ] app improvements
   - [ ] synctex integration
