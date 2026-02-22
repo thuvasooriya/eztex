@@ -116,7 +116,9 @@ function make_fetch_env(): {
       const exports = wasm_instance!.exports as unknown as WasmExports;
       const mem = new Uint8Array(exports.memory.buffer);
       const name = decoder.decode(mem.subarray(name_ptr, name_ptr + name_len));
-      dbg("fetch_range", `called: ${name} offset=${offset_lo + offset_hi * 0x100000000} len=${length}`);
+      // WASM i32 ABI: u32 values >= 2^31 arrive as negative JS numbers; >>> 0 restores unsigned interpretation
+      const offset = (offset_lo >>> 0) + (offset_hi >>> 0) * 0x100000000;
+      dbg("fetch_range", `called: ${name} offset=${offset} len=${length}`);
 
       // 1. check memory cache
       let data = cached_files?.get(name);
@@ -131,8 +133,7 @@ function make_fetch_env(): {
         stats.cache_hits++;
       } else {
         // 2. synchronous XHR Range fetch (1 retry on failure)
-        const offset = offset_lo + offset_hi * 0x100000000;
-        const range_end = offset + length - 1;
+        const range_end = offset + (length >>> 0) - 1;
         let last_err: string | null = null;
         for (let attempt = 0; attempt < 2; attempt++) {
           try {

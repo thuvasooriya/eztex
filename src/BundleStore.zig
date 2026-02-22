@@ -87,11 +87,13 @@ pub fn open_file(self: *BundleStore, name: []const u8) !fs.File {
     return file;
 }
 
-// check if a file exists in cache or index
+// check if a file exists in cache or index (case-insensitive for index)
 pub fn has(self: *BundleStore, name: []const u8) !bool {
     if (Host.cache_check(name) == .hit) return true;
     try self.ensure_index();
-    return self.bundle_index.contains(name);
+    var buf: [1024]u8 = undefined;
+    const lower = lower_into(&buf, name) orelse return false;
+    return self.bundle_index.contains(lower);
 }
 
 pub fn count(self: *BundleStore) !usize {
@@ -99,15 +101,25 @@ pub fn count(self: *BundleStore) !usize {
     return self.bundle_index.count();
 }
 
-// resolve name to index entry, handling fonts/ prefix stripping
+// resolve name to index entry, handling case-insensitive lookup and fonts/ prefix stripping.
+// index keys are stored lowercased (see parse_index_into), so we lowercase the query too.
 pub fn resolve_index_entry(self: *BundleStore, name: []const u8) ?IndexEntry {
-    if (self.bundle_index.get(name)) |entry| return entry;
+    var buf: [1024]u8 = undefined;
+    const lower = lower_into(&buf, name) orelse return null;
+    if (self.bundle_index.get(lower)) |entry| return entry;
     // try stripping fonts/ prefix (WASM fetches use bare names in index)
     const fonts_prefix = "fonts/";
-    if (name.len > fonts_prefix.len and std.mem.eql(u8, name[0..fonts_prefix.len], fonts_prefix)) {
-        return self.bundle_index.get(name[fonts_prefix.len..]);
+    if (lower.len > fonts_prefix.len and std.mem.eql(u8, lower[0..fonts_prefix.len], fonts_prefix)) {
+        return self.bundle_index.get(lower[fonts_prefix.len..]);
     }
     return null;
+}
+
+fn lower_into(buf: []u8, s: []const u8) ?[]u8 {
+    if (s.len > buf.len) return null;
+    @memcpy(buf[0..s.len], s);
+    ascii_lower(buf[0..s.len]);
+    return buf[0..s.len];
 }
 
 // -- index management --
@@ -161,6 +173,8 @@ fn parse_index(self: *BundleStore, content: []const u8) !void {
 }
 
 // standalone index parser: populate any StringHashMap(IndexEntry) from ITAR index text.
+// keys are lowercased for case-insensitive lookup (TeX requests lowercase but
+// the bundle index stores mixed-case filenames like "T1PTSerif-TLF.fd").
 pub fn parse_index_into(
     allocator: std.mem.Allocator,
     index: *std.StringHashMap(IndexEntry),
@@ -182,10 +196,17 @@ pub fn parse_index_into(
         const length = std.fmt.parseInt(u32, length_str, 10) catch continue;
 
         const owned_name = try allocator.dupe(u8, name);
+        ascii_lower(owned_name);
         index.put(owned_name, .{ .offset = offset, .length = length }) catch {
             allocator.free(owned_name);
             continue;
         };
+    }
+}
+
+fn ascii_lower(s: []u8) void {
+    for (s) |*c| {
+        if (c.* >= 'A' and c.* <= 'Z') c.* += 32;
     }
 }
 
@@ -220,7 +241,7 @@ pub fn seed_cache(self: *BundleStore, names: []const []const u8, concurrency: us
             skipped_cached += 1;
             continue;
         }
-        const entry = self.bundle_index.get(name) orelse {
+        const entry = self.resolve_index_entry(name) orelse {
             skipped_unknown += 1;
             continue;
         };

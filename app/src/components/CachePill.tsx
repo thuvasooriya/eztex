@@ -1,13 +1,8 @@
 import { type Component, createSignal, onMount, createEffect, Show } from "solid-js";
 import { worker_client } from "../lib/worker_client";
-import { clear_project } from "../lib/project_persist";
-import type { ProjectStore } from "../lib/project_store";
+import { clear_bundle_cache } from "../lib/project_persist";
 
-type Props = {
-  store: ProjectStore;
-};
-
-const CachePill: Component<Props> = (props) => {
+const CachePill: Component = () => {
   const [cache_bytes, set_cache_bytes] = createSignal(0);
   const [clearing, set_clearing] = createSignal(false);
 
@@ -33,16 +28,16 @@ const CachePill: Component<Props> = (props) => {
           }
         }
       }
-      await walk(root);
+      // only measure eztex-cache, not project files
+      try {
+        const cache_dir = await root.getDirectoryHandle("eztex-cache");
+        await walk(cache_dir);
+      } catch {
+        // cache dir doesn't exist yet
+      }
       set_cache_bytes(total);
     } catch {
-      // fallback to storage estimate
-      try {
-        const est = await navigator.storage.estimate();
-        set_cache_bytes(est.usage || 0);
-      } catch {
-        set_cache_bytes(0);
-      }
+      set_cache_bytes(0);
     }
   }
 
@@ -59,12 +54,9 @@ const CachePill: Component<Props> = (props) => {
   async function handle_clear() {
     set_clearing(true);
     try {
-      await Promise.all([
-        worker_client.clear_cache(),
-        clear_project(),
-      ]);
+      worker_client.clear_cache();
+      await clear_bundle_cache();
     } catch { /* noop */ }
-    props.store.clear_all();
     await estimate_opfs();
     set_clearing(false);
   }

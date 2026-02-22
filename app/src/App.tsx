@@ -13,6 +13,7 @@ import ResizeHandle from "./components/ResizeHandle";
 
 const NARROW_BREAKPOINT = 900;
 const PREVIEW_WIDTH_KEY = "eztex_preview_width";
+const SPLIT_DIR_KEY = "eztex_split_dir";
 
 function get_initial_preview_width(): number {
   const stored = localStorage.getItem(PREVIEW_WIDTH_KEY);
@@ -30,10 +31,14 @@ const App: Component = () => {
 
   const [file_panel_width, set_file_panel_width] = createSignal(200);
   const [preview_width, set_preview_width] = createSignal(get_initial_preview_width());
-  const [files_visible, set_files_visible] = createSignal(true);
+  const [preview_height, set_preview_height] = createSignal(Math.floor((window.innerHeight - 44) / 2));
+  const [files_visible, set_files_visible] = createSignal(window.innerWidth >= NARROW_BREAKPOINT);
   const [preview_visible, set_preview_visible] = createSignal(true);
   const [is_narrow, set_is_narrow] = createSignal(window.innerWidth < NARROW_BREAKPOINT);
   const [show_preview_in_narrow, set_show_preview_in_narrow] = createSignal(false);
+  const [split_dir, set_split_dir] = createSignal<"horizontal" | "vertical">(
+    (localStorage.getItem(SPLIT_DIR_KEY) as "horizontal" | "vertical") || "horizontal"
+  );
 
   // in narrow mode, file panel is always overlay
   const files_overlay = () => is_narrow() && files_visible();
@@ -48,6 +53,14 @@ const App: Component = () => {
     } else {
       set_preview_visible((v) => !v);
     }
+  }
+
+  function toggle_split() {
+    set_split_dir((d) => {
+      const next = d === "horizontal" ? "vertical" : "horizontal";
+      localStorage.setItem(SPLIT_DIR_KEY, next);
+      return next;
+    });
   }
 
   onMount(async () => {
@@ -123,17 +136,22 @@ const App: Component = () => {
   }
 
   function handle_preview_resize(delta: number) {
-    set_preview_width((w) => {
-      const next = Math.max(250, Math.min(900, w - delta));
-      localStorage.setItem(PREVIEW_WIDTH_KEY, String(next));
-      return next;
-    });
+    if (split_dir() === "vertical") {
+      set_preview_height((h) => Math.max(100, Math.min(window.innerHeight - 200, h - delta)));
+    } else {
+      set_preview_width((w) => {
+        const next = Math.max(250, Math.min(900, w - delta));
+        localStorage.setItem(PREVIEW_WIDTH_KEY, String(next));
+        return next;
+      });
+    }
   }
 
   const workspace_class = () => {
     let cls = "workspace";
     if (is_narrow()) cls += " narrow-mode";
     if (show_preview_in_narrow()) cls += " show-preview";
+    cls += ` split-${split_dir()}`;
     return cls;
   };
 
@@ -143,14 +161,16 @@ const App: Component = () => {
         store={store}
         on_toggle_files={toggle_files}
         on_toggle_preview={toggle_preview}
+        on_toggle_split={toggle_split}
         files_visible={files_visible()}
         preview_visible={is_narrow() ? show_preview_in_narrow() : preview_visible()}
+        split_dir={split_dir()}
       />
       <div class={workspace_class()}>
-        {/* file panel: overlay in narrow, inline in wide */}
+        {/* file panel: inline in wide mode */}
         <Show when={files_visible() && !is_narrow()}>
           <div
-            class="file-panel-wrapper panel-wrapper"
+            class="file-panel-wrapper panel-wrapper panel-box"
             style={{ width: `${file_panel_width()}px`, "flex-shrink": 0 }}
           >
             <FilePanel store={store} />
@@ -161,40 +181,44 @@ const App: Component = () => {
           />
         </Show>
 
-        <div class="editor-wrapper">
-          <Editor store={store} />
+        <div class={`split-container split-${split_dir()}`}>
+          <div class="editor-wrapper panel-box">
+            <Editor store={store} />
+          </div>
+
+          <Show when={!is_narrow() && preview_visible()}>
+            <ResizeHandle
+              direction={split_dir() === "vertical" ? "vertical" : "horizontal"}
+              on_resize={handle_preview_resize}
+            />
+            <div
+              class="preview-wrapper panel-wrapper panel-box"
+              style={split_dir() === "vertical"
+                ? { height: `${preview_height()}px`, "flex-shrink": 0 }
+                : { width: `${preview_width()}px`, "flex-shrink": 0 }
+              }
+            >
+              <Preview />
+            </div>
+          </Show>
+
+          {/* narrow mode: full-width preview replaces editor */}
+          <Show when={is_narrow() && show_preview_in_narrow()}>
+            <div class="preview-wrapper panel-wrapper panel-box" style={{ flex: 1 }}>
+              <Preview />
+            </div>
+          </Show>
         </div>
-
-        <Show when={!is_narrow() && preview_visible()}>
-          <ResizeHandle
-            direction="horizontal"
-            on_resize={handle_preview_resize}
-          />
-          <div
-            class="preview-wrapper panel-wrapper"
-            style={{ width: `${preview_width()}px`, "flex-shrink": 0 }}
-          >
-            <Preview />
-          </div>
-        </Show>
-
-        {/* narrow mode: full-width preview replaces editor */}
-        <Show when={is_narrow() && show_preview_in_narrow()}>
-          <div class="preview-wrapper panel-wrapper" style={{ flex: 1 }}>
-            <Preview />
-          </div>
-        </Show>
       </div>
 
       {/* file panel overlay for narrow screens */}
       <Show when={files_overlay()}>
-        <div class="file-panel-overlay" onClick={() => set_files_visible(false)} />
-        <div class="file-panel-wrapper overlay-mode">
+        <div class="file-panel-wrapper overlay-mode panel-wrapper panel-box">
           <FilePanel store={store} />
         </div>
       </Show>
 
-      <CachePill store={store} />
+      <CachePill />
       <StatusPill store={store} />
     </div>
   );

@@ -12,8 +12,10 @@ type Props = {
   store: ProjectStore;
   on_toggle_files?: () => void;
   on_toggle_preview?: () => void;
+  on_toggle_split?: () => void;
   files_visible?: boolean;
   preview_visible?: boolean;
+  split_dir?: "horizontal" | "vertical";
 };
 
 const Logo: Component = () => (
@@ -288,12 +290,14 @@ const Toolbar: Component<Props> = (props) => {
                     </svg>
                     Upload Folder
                   </button>
+                  <button class="upload-dropdown-item" onClick={() => { zip_input_ref?.click(); set_show_upload_menu(false); }}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-file-archive-icon lucide-file-archive"><path d="M13.659 22H18a2 2 0 0 0 2-2V8a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 14 2H6a2 2 0 0 0-2 2v11.5"/><path d="M14 2v5a1 1 0 0 0 1 1h5"/><path d="M8 12v-1"/><path d="M8 18v-2"/><path d="M8 7V6"/><circle cx="8" cy="20" r="2"/>
+                    </svg>
+                    Import Zip
+                  </button>
                 </div>
               </Show>
             </div>
-            <button class="toolbar-toggle" title="Import zip" onClick={() => zip_input_ref?.click()}>
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-package-open-icon lucide-package-open"><path d="M12 22v-9"/><path d="M15.17 2.21a1.67 1.67 0 0 1 1.63 0L21 4.57a1.93 1.93 0 0 1 0 3.36L8.82 14.79a1.655 1.655 0 0 1-1.64 0L3 12.43a1.93 1.93 0 0 1 0-3.36z"/><path d="M20 13v3.87a2.06 2.06 0 0 1-1.11 1.83l-6 3.08a1.93 1.93 0 0 1-1.78 0l-6-3.08A2.06 2.06 0 0 1 4 16.87V13"/><path d="M21 12.43a1.93 1.93 0 0 0 0-3.36L8.83 2.2a1.64 1.64 0 0 0-1.63 0L3 4.57a1.93 1.93 0 0 0 0 3.36l12.18 6.86a1.636 1.636 0 0 0 1.63 0z"/></svg>
-            </button>
             <button class="toolbar-toggle" title="Download zip" onClick={handle_download_zip}>
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-package-icon lucide-package"><path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z"/><path d="M12 22V12"/><polyline points="3.29 7 12 12 20.71 7"/><path d="m7.5 4.27 9 5.15"/></svg>
             </button>
@@ -310,6 +314,28 @@ const Toolbar: Component<Props> = (props) => {
               <polyline points="7,10 12,15 17,10"/>
               <line x1="12" y1="15" x2="12" y2="3"/>
             </svg>
+          </button>
+        </Show>
+        <Show when={props.on_toggle_split}>
+          <button
+            class="toolbar-toggle"
+            onClick={props.on_toggle_split}
+            title={props.split_dir === "horizontal" ? "Switch to vertical split" : "Switch to horizontal split"}
+          >
+            <Show
+              when={props.split_dir === "horizontal"}
+              fallback={
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <rect x="3" y="3" width="18" height="18" rx="2" />
+                  <line x1="3" y1="12" x2="21" y2="12" />
+                </svg>
+              }
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <rect x="3" y="3" width="18" height="18" rx="2" />
+                <line x1="12" y1="3" x2="12" y2="21" />
+              </svg>
+            </Show>
           </button>
         </Show>
         <Show when={props.on_toggle_preview}>
