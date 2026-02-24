@@ -65,6 +65,10 @@ export function create_watch_controller(deps: WatchDeps) {
   let last_compiled_hash: number = 0;
   let pre_compile_hash: number = 0;
   let compile_started_at: number = 0;
+  // when watch was enabled from localStorage (session restore), the first notify_change
+  // should seed the hash rather than schedule a compile -- the restored PDF already
+  // matches the restored files, so no compile is needed
+  let needs_seed = enabled();
 
   function clear_timers() {
     if (debounce_timer !== undefined) { clearTimeout(debounce_timer); debounce_timer = undefined; }
@@ -75,6 +79,7 @@ export function create_watch_controller(deps: WatchDeps) {
     clear_timers();
     if (!deps.is_ready()) {
       set_state("idle");
+      set_dirty(false);
       return;
     }
 
@@ -121,6 +126,15 @@ export function create_watch_controller(deps: WatchDeps) {
   // called by project_store on any content/structure change
   function notify_change() {
     if (!enabled()) return;
+
+    // on session restore, seed hash from the first batch of loaded files
+    // so we don't spuriously mark dirty or schedule a compile
+    if (needs_seed) {
+      needs_seed = false;
+      last_compiled_hash = hash_files(deps.get_files());
+      return;
+    }
+
     const current = state();
 
     if (current === "compiling" || current === "dirty_compiling") {
@@ -166,6 +180,7 @@ export function create_watch_controller(deps: WatchDeps) {
   // toggle watch -- seed hash so enabling doesn't spuriously compile unchanged content
   function toggle(on?: boolean) {
     const next = on !== undefined ? on : !enabled();
+    needs_seed = false;
     if (next && !enabled()) {
       // seeding hash on enable prevents compile of unchanged content
       last_compiled_hash = hash_files(deps.get_files());
