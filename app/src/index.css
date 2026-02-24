@@ -739,7 +739,7 @@ body {
   gap: 6px;
   padding: 5px 10px;
   border: 1px solid var(--border);
-  border-radius: 20px;
+  border-radius: var(--radius-lg);
   background: var(--bg);
   color: var(--fg-dim);
   font-family: var(--font-sans);
@@ -790,7 +790,7 @@ body {
   gap: 6px;
   padding: 5px 12px;
   border: 1px solid var(--border);
-  border-radius: 20px;
+  border-radius: var(--radius-lg);
   background: var(--bg);
   color: var(--fg-dim);
   font-family: var(--font-sans);
