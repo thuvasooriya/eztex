@@ -174,12 +174,12 @@ const Toolbar: Component<Props> = (props) => {
     return "log-line";
   }
 
-  function status_color(): string {
+  function status_bg(): string {
     const s = worker_client.status();
-    if (s === "loading" || s === "compiling") return "var(--yellow)";
-    if (s === "success") return "var(--green)";
-    if (s === "error") return "var(--red)";
-    return "var(--fg-muted)";
+    if (s === "loading" || s === "compiling") return "rgba(224, 175, 104, 0.15)";
+    if (s === "success") return "rgba(158, 206, 106, 0.15)";
+    if (s === "error") return "rgba(247, 118, 142, 0.15)";
+    return "var(--bg-light)";
   }
 
   // watch controller -- imperative state machine, no SolidJS reactive scheduling
@@ -504,6 +504,56 @@ const Toolbar: Component<Props> = (props) => {
       </Show>
 
       <div class="toolbar-right">
+        <div class="compile-group" ref={compile_group_ref}>
+          <Show when={show_logs()}>
+            <div class="compile-logs-popover">
+              <div class="compile-logs-scroll" ref={log_ref}>
+                <For each={worker_client.logs()}>
+                  {(entry) => <div class={log_class(entry)}>{entry.msg}</div>}
+                </For>
+                <Show when={worker_client.logs().length === 0}>
+                  <div class="log-empty">No logs yet.</div>
+                </Show>
+              </div>
+            </div>
+          </Show>
+          <button
+            class={`compile-group-status ${show_logs() ? "expanded" : ""}`}
+            onClick={() => set_show_logs(v => !v)}
+            title="Show compilation logs"
+            style={{ background: status_bg() }}
+          >
+            <span class="compile-group-text">{worker_client.status_text()}</span>
+            <Show when={worker_client.last_elapsed()}>
+              <span class="compile-group-elapsed">{worker_client.last_elapsed()}</span>
+            </Show>
+          </button>
+          <button
+            class={`compile-group-watch ${watch.enabled() ? "active" : ""} ${watch.dirty() ? "dirty" : ""}`}
+            onClick={() => watch.toggle()}
+            title={watch.enabled() ? "Disable auto-compile" : "Enable auto-compile"}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+              <circle cx="12" cy="12" r="3" />
+            </svg>
+          </button>
+          <button
+            class="compile-group-play"
+            onClick={handle_compile}
+            disabled={!worker_client.ready() || worker_client.compiling()}
+            title="Compile"
+          >
+            <Show
+              when={!worker_client.compiling()}
+              fallback={<span class="compile-spinner" />}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                <polygon points="5 3 19 12 5 21 5 3" />
+              </svg>
+            </Show>
+          </button>
+        </div>
         <Show when={props.on_toggle_split}>
           <button
             class={`toolbar-toggle${props.swap_mode ? " muted" : ""}`}
@@ -563,56 +613,6 @@ const Toolbar: Component<Props> = (props) => {
             </Show>
           </button>
         </Show>
-        <div class="compile-group" ref={compile_group_ref}>
-          <Show when={show_logs()}>
-            <div class="compile-logs-popover">
-              <div class="compile-logs-scroll" ref={log_ref}>
-                <For each={worker_client.logs()}>
-                  {(entry) => <div class={log_class(entry)}>{entry.msg}</div>}
-                </For>
-                <Show when={worker_client.logs().length === 0}>
-                  <div class="log-empty">No logs yet.</div>
-                </Show>
-              </div>
-            </div>
-          </Show>
-          <button
-            class="compile-group-play"
-            onClick={handle_compile}
-            disabled={!worker_client.ready() || worker_client.compiling()}
-            title="Compile"
-          >
-            <Show
-              when={!worker_client.compiling()}
-              fallback={<span class="compile-spinner" />}
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-                <polygon points="5 3 19 12 5 21 5 3" />
-              </svg>
-            </Show>
-          </button>
-          <button
-            class={`compile-group-watch ${watch.enabled() ? "active" : ""} ${watch.dirty() ? "dirty" : ""}`}
-            onClick={() => watch.toggle()}
-            title={watch.enabled() ? "Disable auto-compile" : "Enable auto-compile"}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-              <circle cx="12" cy="12" r="3" />
-            </svg>
-          </button>
-          <button
-            class={`compile-group-status ${show_logs() ? "expanded" : ""}`}
-            onClick={() => set_show_logs(v => !v)}
-            title="Show compilation logs"
-          >
-            <span class="status-dot" style={{ background: status_color() }} />
-            <span class="compile-group-text">{worker_client.status_text()}</span>
-            <Show when={worker_client.last_elapsed()}>
-              <span class="compile-group-elapsed">{worker_client.last_elapsed()}</span>
-            </Show>
-          </button>
-        </div>
       </div>
       <ProgressBar />
     </header>
