@@ -174,12 +174,12 @@ const Toolbar: Component<Props> = (props) => {
     return "log-line";
   }
 
-  function status_bg(): string {
+  function status_color(): string {
     const s = worker_client.status();
-    if (s === "loading" || s === "compiling") return "rgba(224, 175, 104, 0.15)";
-    if (s === "success") return "rgba(158, 206, 106, 0.15)";
-    if (s === "error") return "rgba(247, 118, 142, 0.15)";
-    return "var(--bg-light)";
+    if (s === "loading" || s === "compiling") return "var(--yellow)";
+    if (s === "success") return "var(--green)";
+    if (s === "error") return "var(--red)";
+    return "var(--fg-dim)";
   }
 
   // watch controller -- imperative state machine, no SolidJS reactive scheduling
@@ -521,7 +521,7 @@ const Toolbar: Component<Props> = (props) => {
             class={`compile-group-status ${show_logs() ? "expanded" : ""}`}
             onClick={() => set_show_logs(v => !v)}
             title="Show compilation logs"
-            style={{ background: status_bg() }}
+            style={{ color: status_color() }}
           >
             <span class="compile-group-text">{worker_client.status_text()}</span>
             <Show when={worker_client.last_elapsed()}>
@@ -533,10 +533,7 @@ const Toolbar: Component<Props> = (props) => {
             onClick={() => watch.toggle()}
             title={watch.enabled() ? "Disable auto-compile" : "Enable auto-compile"}
           >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-              <circle cx="12" cy="12" r="3" />
-            </svg>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-eye-icon lucide-eye"><path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/><circle cx="12" cy="12" r="3"/></svg>
           </button>
           <button
             class="compile-group-play"
@@ -548,9 +545,7 @@ const Toolbar: Component<Props> = (props) => {
               when={!worker_client.compiling()}
               fallback={<span class="compile-spinner" />}
             >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-                <polygon points="5 3 19 12 5 21 5 3" />
-              </svg>
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-play-icon lucide-play"><path d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z"/></svg>
             </Show>
           </button>
         </div>
