@@ -2,7 +2,9 @@ import { type Component, onMount, onCleanup, createSignal, createEffect, Show } 
 import { worker_client } from "./lib/worker_client";
 import { create_project_store } from "./lib/project_store";
 import { save_project, load_project, load_pdf } from "./lib/project_persist";
+import { create_local_folder_sync, type ConflictInfo } from "./lib/local_folder_sync";
 import Toolbar from "./components/Toolbar";
+import ConflictDialog from "./components/ConflictDialog";
 
 import FilePanel from "./components/FilePanel";
 import Editor from "./components/Editor";
@@ -29,6 +31,7 @@ function get_initial_preview_width(): number {
 
 const App: Component = () => {
   const store = create_project_store();
+  const folder_sync = create_local_folder_sync(store);
 
   const [file_panel_width, set_file_panel_width] = createSignal(200);
   const [preview_width, set_preview_width] = createSignal(get_initial_preview_width());
@@ -41,6 +44,14 @@ const App: Component = () => {
   const [split_dir, set_split_dir] = createSignal<"horizontal" | "vertical">(
     (localStorage.getItem(SPLIT_DIR_KEY) as "horizontal" | "vertical") || "horizontal"
   );
+
+  // conflict dialog state
+  const [conflicts, set_conflicts] = createSignal<ConflictInfo[]>([]);
+  const show_conflicts = () => conflicts().length > 0;
+
+  // reconnect banner state
+  const [show_reconnect, set_show_reconnect] = createSignal(false);
+  const [reconnect_folder_name, set_reconnect_folder_name] = createSignal("");
 
   // in narrow mode, file panel is always overlay
   const files_overlay = () => is_narrow() && files_visible();
@@ -68,6 +79,13 @@ const App: Component = () => {
     });
   }
 
+  // handle sync results -- check for conflicts
+  async function handle_sync_result(result: Awaited<ReturnType<typeof folder_sync.sync_now>>) {
+    if (result.status === "conflict") {
+      set_conflicts(result.conflicts);
+    }
+  }
+
   onMount(async () => {
     // start engine loading in parallel with OPFS reads
     worker_client.init();
@@ -93,14 +111,32 @@ const App: Component = () => {
       }
     });
 
-    // auto-save project on changes (debounced)
+    // auto-save project on changes (debounced) -- disabled when folder sync is active
     let save_timer: ReturnType<typeof setTimeout> | undefined;
     store.on_change(() => {
+      if (folder_sync.state().active) return; // folder sync handles persistence
       if (save_timer !== undefined) clearTimeout(save_timer);
       save_timer = setTimeout(() => {
         save_project(store.files).catch(() => {});
       }, 1000);
     });
+
+    // sync trigger: compile complete
+    worker_client.on_compile_done(() => {
+      if (folder_sync.state().active && folder_sync.state().dirty_files.size > 0) {
+        folder_sync.sync_now().then(handle_sync_result);
+      }
+    });
+
+    // check for stored folder handle and show reconnect banner
+    if (folder_sync.is_supported()) {
+      const has_handle = await folder_sync.has_stored_handle();
+      if (has_handle) {
+        const name = await folder_sync.get_stored_folder_name();
+        set_reconnect_folder_name(name ?? "folder");
+        set_show_reconnect(true);
+      }
+    }
 
     const on_resize = () => {
       const w = window.innerWidth;
@@ -127,7 +163,27 @@ const App: Component = () => {
       e.preventDefault();
       toggle_preview();
     }
+    // Cmd+S / Ctrl+S: trigger folder sync for current file
+    if ((e.metaKey || e.ctrlKey) && e.key === "s") {
+      e.preventDefault();
+      if (folder_sync.state().active) {
+        folder_sync.sync_now().then(handle_sync_result);
+      }
+    }
   }
+
+  // sync trigger: file switch -- sync the file being switched away from
+  let prev_file = store.current_file();
+  createEffect(() => {
+    const current = store.current_file();
+    if (current !== prev_file && folder_sync.state().active) {
+      const file_to_sync = prev_file;
+      if (folder_sync.state().dirty_files.has(file_to_sync)) {
+        folder_sync.sync_file(file_to_sync).then(handle_sync_result);
+      }
+    }
+    prev_file = current;
+  });
 
   // when a diagnostic goto is requested, switch to the target file first
   createEffect(() => {
@@ -162,6 +218,15 @@ const App: Component = () => {
     return cls;
   };
 
+  async function handle_reconnect() {
+    set_show_reconnect(false);
+    await folder_sync.reconnect();
+  }
+
+  function dismiss_reconnect() {
+    set_show_reconnect(false);
+  }
+
   return (
     <div class="app">
       <Toolbar
@@ -173,7 +238,23 @@ const App: Component = () => {
         preview_visible={use_swap_mode() ? show_preview_in_narrow() : preview_visible()}
         split_dir={split_dir()}
         swap_mode={use_swap_mode()}
+        folder_sync={folder_sync}
       />
+
+      {/* reconnect banner */}
+      <Show when={show_reconnect()}>
+        <div class="reconnect-banner">
+          <span>Reconnect to <strong>{reconnect_folder_name()}/</strong>?</span>
+          <button class="reconnect-btn" onClick={handle_reconnect}>Reconnect</button>
+          <button class="reconnect-dismiss" onClick={dismiss_reconnect}>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
+      </Show>
+
       <div class={workspace_class()}>
         {/* file panel: inline in wide mode */}
         <Show when={files_visible() && !is_narrow()}>
@@ -238,6 +319,18 @@ const App: Component = () => {
             <p class="too-narrow-hint">Please resize your window or rotate your device.</p>
           </div>
         </div>
+      </Show>
+
+      {/* conflict resolution dialog */}
+      <Show when={show_conflicts()}>
+        <ConflictDialog
+          conflicts={conflicts()}
+          on_resolve={(path, resolution) => {
+            folder_sync.resolve_conflict(path, resolution);
+            set_conflicts(prev => prev.filter(c => c.path !== path));
+          }}
+          on_close={() => set_conflicts([])}
+        />
       </Show>
 
       <CachePill />

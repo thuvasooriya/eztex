@@ -7,6 +7,8 @@ import type { ProjectStore } from "../lib/project_store";
 import { is_binary, is_text_ext } from "../lib/project_store";
 import type { ProjectFiles } from "../lib/project_store";
 import { save_pdf, clear_project, clear_bundle_cache } from "../lib/project_persist";
+import type { LocalFolderSync } from "../lib/local_folder_sync";
+import FolderSyncStatus from "./FolderSyncStatus";
 
 type Props = {
   store: ProjectStore;
@@ -17,6 +19,7 @@ type Props = {
   preview_visible?: boolean;
   split_dir?: "horizontal" | "vertical";
   swap_mode?: boolean;
+  folder_sync?: LocalFolderSync;
 };
 
 const Logo: Component = () => (
@@ -302,6 +305,27 @@ const Toolbar: Component<Props> = (props) => {
             <button class="toolbar-toggle" title="Download zip" onClick={handle_download_zip}>
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-package-icon lucide-package"><path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z"/><path d="M12 22V12"/><polyline points="3.29 7 12 12 20.71 7"/><path d="m7.5 4.27 9 5.15"/></svg>
             </button>
+            <Show when={props.folder_sync?.is_supported()}>
+              <Show
+                when={!props.folder_sync?.state().active}
+                fallback={
+                  <FolderSyncStatus
+                    state={props.folder_sync!.state()}
+                    on_disconnect={() => props.folder_sync!.disconnect()}
+                  />
+                }
+              >
+                <button
+                  class="toolbar-toggle"
+                  title="Open local folder"
+                  onClick={() => props.folder_sync?.open_folder()}
+                >
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z" />
+                  </svg>
+                </button>
+              </Show>
+            </Show>
           </div>
         <input ref={zip_input_ref} type="file" accept=".zip" style={{ display: "none" }} onChange={handle_zip_upload} />
         <input ref={file_input_ref} type="file" multiple accept=".tex,.bib,.sty,.cls,.png,.jpg,.jpeg,.gif,.webp,.svg,.ttf,.otf,.woff,.woff2,.pdf" style={{ display: "none" }} onChange={handle_file_upload} />
