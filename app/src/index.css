@@ -697,6 +697,16 @@ body {
   background: rgba(247, 118, 142, 0.12);
 }
 
+.upload-dropdown-item:disabled,
+.upload-dropdown-item.clearing {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.upload-dropdown-item .spin {
+  animation: spin 0.6s linear infinite;
+}
+
 .logo-menu-wrapper {
   position: relative;
 }
@@ -723,57 +733,6 @@ body {
   margin: auto;
   padding: 16px;
   box-sizing: border-box;
-}
-
-/* === cache pill (bottom-left) === */
-.cache-pill-container {
-  position: fixed;
-  bottom: 12px;
-  left: 12px;
-  z-index: 100;
-}
-
-.cache-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--bg);
-  color: var(--fg-dim);
-  font-family: var(--font-sans);
-  font-size: 11.5px;
-  white-space: nowrap;
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  transition: all var(--transition);
-  cursor: pointer;
-}
-
-.cache-pill:hover {
-  background: var(--bg-light);
-  border-color: var(--border-light);
-  color: var(--fg);
-}
-
-.cache-pill:active {
-  transform: scale(0.97);
-}
-
-.cache-pill.clearing {
-  opacity: 0.6;
-  pointer-events: none;
-}
-
-.cache-pill-label {
-  color: var(--fg-muted);
-  font-size: 10.5px;
-  font-family: var(--font-mono);
-}
-
-.cache-pill .spin {
-  animation: spin 0.6s linear infinite;
 }
 
 /* === status pill === */
@@ -1072,9 +1031,6 @@ body {
     display: none;
   }
   .status-pill-text {
-    display: none;
-  }
-  .cache-pill .cache-pill-label {
     display: none;
   }
 }

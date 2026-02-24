@@ -1,4 +1,4 @@
-import { type Component, Show, onCleanup, createSignal, createEffect } from "solid-js";
+import { type Component, Show, onCleanup, onMount, createSignal, createEffect } from "solid-js";
 import { worker_client } from "../lib/worker_client";
 import ProgressBar from "./ProgressBar";
 import { create_watch_controller } from "../lib/watch_controller";
@@ -44,6 +44,62 @@ const Toolbar: Component<Props> = (props) => {
   const [show_upload_menu, set_show_upload_menu] = createSignal(false);
   const [show_new_menu, set_show_new_menu] = createSignal(false);
   const [show_logo_menu, set_show_logo_menu] = createSignal(false);
+
+  // cache state (moved from CachePill)
+  const [cache_bytes, set_cache_bytes] = createSignal(0);
+  const [clearing_cache, set_clearing_cache] = createSignal(false);
+
+  function format_cache_size(bytes: number): string {
+    if (bytes <= 0) return "0 B";
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+  }
+
+  async function estimate_opfs() {
+    try {
+      const root = await navigator.storage.getDirectory();
+      let total = 0;
+      async function walk(dir: FileSystemDirectoryHandle) {
+        for await (const [, handle] of (dir as any).entries()) {
+          if (handle.kind === "file") {
+            const file = await (handle as FileSystemFileHandle).getFile();
+            total += file.size;
+          } else if (handle.kind === "directory") {
+            await walk(handle as FileSystemDirectoryHandle);
+          }
+        }
+      }
+      try {
+        const cache_dir = await root.getDirectoryHandle("eztex-cache");
+        await walk(cache_dir);
+      } catch { /* cache dir doesn't exist yet */ }
+      set_cache_bytes(total);
+    } catch {
+      set_cache_bytes(0);
+    }
+  }
+
+  onMount(estimate_opfs);
+
+  // re-estimate after compile finishes
+  createEffect(() => {
+    const s = worker_client.status();
+    if (s === "success" || s === "error") {
+      setTimeout(estimate_opfs, 300);
+    }
+  });
+
+  async function handle_clear_cache() {
+    set_clearing_cache(true);
+    try {
+      worker_client.clear_cache();
+      await clear_bundle_cache();
+    } catch { /* noop */ }
+    await estimate_opfs();
+    set_clearing_cache(false);
+  }
 
   // close upload menu on click outside
   createEffect(() => {
@@ -278,6 +334,28 @@ const Toolbar: Component<Props> = (props) => {
           </button>
           <Show when={show_logo_menu()}>
             <div class="upload-dropdown logo-dropdown">
+              <Show when={cache_bytes() > 0}>
+                <button
+                  class={`upload-dropdown-item ${clearing_cache() ? "clearing" : ""}`}
+                  onClick={handle_clear_cache}
+                  disabled={clearing_cache()}
+                >
+                  <Show
+                    when={!clearing_cache()}
+                    fallback={
+                      <svg class="spin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 12a9 9 0 11-6.2-8.6" />
+                      </svg>
+                    }
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                      <polyline points="3 6 5 6 21 6" />
+                      <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
+                    </svg>
+                  </Show>
+                  Clear cache ({format_cache_size(cache_bytes())})
+                </button>
+              </Show>
               <button class="upload-dropdown-item danger-item" onClick={handle_reset}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
                   <polyline points="3 6 5 6 21 6" />

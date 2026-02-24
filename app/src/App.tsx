@@ -10,7 +10,6 @@ import FilePanel from "./components/FilePanel";
 import Editor from "./components/Editor";
 import Preview from "./components/Preview";
 import StatusPill from "./components/StatusPill";
-import CachePill from "./components/CachePill";
 import ResizeHandle from "./components/ResizeHandle";
 
 const NARROW_BREAKPOINT = 900;
@@ -352,7 +351,6 @@ const App: Component = () => {
         />
       </Show>
 
-      <CachePill />
       <StatusPill store={store} />
     </div>
   );
