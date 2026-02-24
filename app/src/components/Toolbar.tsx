@@ -1,5 +1,5 @@
-import { type Component, Show, onCleanup, onMount, createSignal, createEffect } from "solid-js";
-import { worker_client } from "../lib/worker_client";
+import { type Component, Show, For, onCleanup, onMount, createSignal, createEffect } from "solid-js";
+import { worker_client, type LogEntry } from "../lib/worker_client";
 import ProgressBar from "./ProgressBar";
 import { create_watch_controller } from "../lib/watch_controller";
 import { read_zip, write_zip } from "../lib/zip_utils";
@@ -46,6 +46,9 @@ const Toolbar: Component<Props> = (props) => {
   const [show_upload_menu, set_show_upload_menu] = createSignal(false);
   const [show_download_menu, set_show_download_menu] = createSignal(false);
   const [show_logo_menu, set_show_logo_menu] = createSignal(false);
+  const [show_logs, set_show_logs] = createSignal(false);
+  let compile_group_ref: HTMLDivElement | undefined;
+  let log_ref: HTMLDivElement | undefined;
 
   // cache state (moved from CachePill)
   const [cache_bytes, set_cache_bytes] = createSignal(0);
@@ -138,6 +141,46 @@ const Toolbar: Component<Props> = (props) => {
     document.addEventListener("click", handler);
     onCleanup(() => document.removeEventListener("click", handler));
   });
+
+  // close logs popover on click outside
+  createEffect(() => {
+    if (!show_logs()) return;
+    const handler = (e: MouseEvent) => {
+      if (compile_group_ref && !compile_group_ref.contains(e.target as Node)) {
+        set_show_logs(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    onCleanup(() => document.removeEventListener("mousedown", handler));
+  });
+
+  // auto-scroll logs when new entries arrive and popover is open
+  createEffect(() => {
+    void worker_client.logs();
+    if (show_logs() && log_ref) {
+      requestAnimationFrame(() => { log_ref!.scrollTop = log_ref!.scrollHeight; });
+    }
+  });
+
+  // auto-open logs on compile error
+  createEffect(() => {
+    if (worker_client.status() === "error") set_show_logs(true);
+  });
+
+  function log_class(entry: LogEntry): string {
+    if (entry.cls.includes("error")) return "log-line log-error";
+    if (entry.cls.includes("warn")) return "log-line log-warn";
+    if (entry.cls.includes("info")) return "log-line log-info";
+    return "log-line";
+  }
+
+  function status_color(): string {
+    const s = worker_client.status();
+    if (s === "loading" || s === "compiling") return "var(--yellow)";
+    if (s === "success") return "var(--green)";
+    if (s === "error") return "var(--red)";
+    return "var(--fg-muted)";
+  }
 
   // watch controller -- imperative state machine, no SolidJS reactive scheduling
   const watch = create_watch_controller({
@@ -520,31 +563,56 @@ const Toolbar: Component<Props> = (props) => {
             </Show>
           </button>
         </Show>
-        <button
-          class={`toolbar-toggle watch ${watch.enabled() ? "active" : ""} ${watch.dirty() ? "dirty" : ""}`}
-          onClick={() => watch.toggle()}
-          title={watch.enabled() ? "Disable auto-compile" : "Enable auto-compile"}
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-            <circle cx="12" cy="12" r="3" />
-          </svg>
-        </button>
-        <button
-          class="toolbar-btn primary"
-          onClick={handle_compile}
-          disabled={!worker_client.ready() || worker_client.compiling()}
-        >
-          <Show
-            when={!worker_client.compiling()}
-            fallback={<span class="compile-spinner" />}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-              <polygon points="5 3 19 12 5 21 5 3" />
-            </svg>
+        <div class="compile-group" ref={compile_group_ref}>
+          <Show when={show_logs()}>
+            <div class="compile-logs-popover">
+              <div class="compile-logs-scroll" ref={log_ref}>
+                <For each={worker_client.logs()}>
+                  {(entry) => <div class={log_class(entry)}>{entry.msg}</div>}
+                </For>
+                <Show when={worker_client.logs().length === 0}>
+                  <div class="log-empty">No logs yet.</div>
+                </Show>
+              </div>
+            </div>
           </Show>
-          {worker_client.compiling() ? "Compiling..." : "Compile"}
-        </button>
+          <button
+            class="compile-group-play"
+            onClick={handle_compile}
+            disabled={!worker_client.ready() || worker_client.compiling()}
+            title="Compile"
+          >
+            <Show
+              when={!worker_client.compiling()}
+              fallback={<span class="compile-spinner" />}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                <polygon points="5 3 19 12 5 21 5 3" />
+              </svg>
+            </Show>
+          </button>
+          <button
+            class={`compile-group-watch ${watch.enabled() ? "active" : ""} ${watch.dirty() ? "dirty" : ""}`}
+            onClick={() => watch.toggle()}
+            title={watch.enabled() ? "Disable auto-compile" : "Enable auto-compile"}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+              <circle cx="12" cy="12" r="3" />
+            </svg>
+          </button>
+          <button
+            class={`compile-group-status ${show_logs() ? "expanded" : ""}`}
+            onClick={() => set_show_logs(v => !v)}
+            title="Show compilation logs"
+          >
+            <span class="status-dot" style={{ background: status_color() }} />
+            <span class="compile-group-text">{worker_client.status_text()}</span>
+            <Show when={worker_client.last_elapsed()}>
+              <span class="compile-group-elapsed">{worker_client.last_elapsed()}</span>
+            </Show>
+          </button>
+        </div>
       </div>
       <ProgressBar />
     </header>

@@ -9,7 +9,7 @@ import ConflictDialog from "./components/ConflictDialog";
 import FilePanel from "./components/FilePanel";
 import Editor from "./components/Editor";
 import Preview from "./components/Preview";
-import StatusPill from "./components/StatusPill";
+import DiagnosticPill from "./components/DiagnosticPill";
 import ResizeHandle from "./components/ResizeHandle";
 
 const NARROW_BREAKPOINT = 900;
@@ -340,7 +340,7 @@ const App: Component = () => {
         />
       </Show>
 
-      <StatusPill store={store} />
+      <DiagnosticPill store={store} />
     </div>
   );
 };
