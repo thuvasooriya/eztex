@@ -194,6 +194,7 @@ const FilePanel: Component<Props> = (props) => {
         onDragEnd={() => { set_dragging(null); set_drop_target(null); }}
         onContextMenu={(e) => {
           e.preventDefault();
+          e.stopPropagation();
           const x = Math.min(e.clientX, window.innerWidth - 160);
           const y = Math.min(e.clientY, window.innerHeight - 120);
           set_ctx_menu({ file: name, x, y });
@@ -263,6 +264,7 @@ const FilePanel: Component<Props> = (props) => {
           onDrop={(e) => { e.preventDefault(); e.stopPropagation(); handle_internal_drop(node.path); }}
           onContextMenu={(e) => {
             e.preventDefault();
+            e.stopPropagation();
             const x = Math.min(e.clientX, window.innerWidth - 160);
             const y = Math.min(e.clientY, window.innerHeight - 120);
             set_ctx_menu({ file: node.path, x, y });
@@ -375,7 +377,6 @@ const FilePanel: Component<Props> = (props) => {
                   Delete
                 </button>
               </Show>
-              <div class="ctx-menu-divider" />
             </Show>
             {/* folder-specific actions */}
             <Show when={menu().file !== "__empty__" && menu().file.endsWith("/")}>
@@ -393,21 +394,23 @@ const FilePanel: Component<Props> = (props) => {
               }}>Delete folder</button>
               <div class="ctx-menu-divider" />
             </Show>
-            {/* always show new file / new folder */}
-            <button class="ctx-menu-item" onClick={() => {
-              const prefix = menu().file.endsWith("/") ? menu().file : undefined;
-              handle_add_file(prefix);
-              set_ctx_menu(null);
-            }}>
-              New File
-            </button>
-            <button class="ctx-menu-item" onClick={() => {
-              const prefix = menu().file.endsWith("/") ? menu().file : undefined;
-              handle_add_folder(prefix);
-              set_ctx_menu(null);
-            }}>
-              New Folder
-            </button>
+            {/* new file / new folder: empty area and folders */}
+            <Show when={menu().file === "__empty__" || menu().file.endsWith("/")}>
+              <button class="ctx-menu-item" onClick={() => {
+                const prefix = menu().file.endsWith("/") ? menu().file : undefined;
+                handle_add_file(prefix);
+                set_ctx_menu(null);
+              }}>
+                New File
+              </button>
+              <button class="ctx-menu-item" onClick={() => {
+                const prefix = menu().file.endsWith("/") ? menu().file : undefined;
+                handle_add_folder(prefix);
+                set_ctx_menu(null);
+              }}>
+                New Folder
+              </button>
+            </Show>
           </div>
         )}
       </Show>
