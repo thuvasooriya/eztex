@@ -137,6 +137,17 @@ This is a test document compiled with \\textbf{eztex} --- XeLaTeX in WebAssembly
     _notify();
   }
 
+  // merge files into the existing project without replacing (for uploads into existing projects)
+  function merge_files(new_files: ProjectFiles) {
+    set_files(produce((f) => {
+      for (const [name, content] of Object.entries(new_files)) {
+        f[name] = content;
+      }
+    }));
+    set_revision(r => r + 1);
+    _notify();
+  }
+
   return {
     files,
     current_file,
@@ -153,6 +164,7 @@ This is a test document compiled with \\textbf{eztex} --- XeLaTeX in WebAssembly
     get_text_content,
     clear_all,
     load_files,
+    merge_files,
     on_change,
   };
 }

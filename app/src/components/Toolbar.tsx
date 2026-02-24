@@ -7,7 +7,7 @@ import type { ProjectStore } from "../lib/project_store";
 import { is_binary, is_text_ext } from "../lib/project_store";
 import type { ProjectFiles } from "../lib/project_store";
 import { save_pdf, clear_project, clear_bundle_cache } from "../lib/project_persist";
-import type { LocalFolderSync } from "../lib/local_folder_sync";
+import type { LocalFolderSync, ConflictInfo } from "../lib/local_folder_sync";
 import FolderSyncStatus from "./FolderSyncStatus";
 
 type Props = {
@@ -20,6 +20,7 @@ type Props = {
   split_dir?: "horizontal" | "vertical";
   swap_mode?: boolean;
   folder_sync?: LocalFolderSync;
+  on_upload_conflicts?: (conflicts: ConflictInfo[]) => void;
 };
 
 const Logo: Component = () => (
@@ -133,6 +134,58 @@ const Toolbar: Component<Props> = (props) => {
     props.store.set_current_file(prev);
   }
 
+  // compare content for equality (handles both string and Uint8Array)
+  function content_equal(a: string | Uint8Array, b: string | Uint8Array): boolean {
+    if (typeof a === "string" && typeof b === "string") return a === b;
+    if (a instanceof Uint8Array && b instanceof Uint8Array) {
+      if (a.byteLength !== b.byteLength) return false;
+      for (let i = 0; i < a.byteLength; i++) { if (a[i] !== b[i]) return false; }
+      return true;
+    }
+    return false;
+  }
+
+  // merge uploaded files into existing project with conflict detection
+  // if the project only has default content, replace entirely (load_files)
+  // otherwise, merge non-conflicting files and report conflicts
+  function merge_or_load(incoming: ProjectFiles) {
+    const existing_names = props.store.file_names();
+    const is_default_project = existing_names.length === 1 && existing_names[0] === "main.tex";
+
+    if (is_default_project) {
+      props.store.load_files(incoming);
+      return;
+    }
+
+    const non_conflicting: ProjectFiles = {};
+    const conflicts: ConflictInfo[] = [];
+
+    for (const [name, content] of Object.entries(incoming)) {
+      const existing = props.store.files[name];
+      if (existing === undefined) {
+        non_conflicting[name] = content;
+      } else if (content_equal(existing, content)) {
+        // same content, skip
+      } else {
+        conflicts.push({
+          path: name,
+          eztex_content: existing,
+          disk_content: content,
+          eztex_hash: "",
+          disk_hash: "",
+        });
+      }
+    }
+
+    if (Object.keys(non_conflicting).length > 0) {
+      props.store.merge_files(non_conflicting);
+    }
+
+    if (conflicts.length > 0 && props.on_upload_conflicts) {
+      props.on_upload_conflicts(conflicts);
+    }
+  }
+
   async function handle_zip_upload(e: Event) {
     const input = e.target as HTMLInputElement;
     const file = input.files?.[0];
@@ -140,7 +193,7 @@ const Toolbar: Component<Props> = (props) => {
     try {
       const files = await read_zip(file);
       if (Object.keys(files).length === 0) { alert("No .tex files found in zip."); return; }
-      props.store.load_files(files);
+      merge_or_load(files);
     } catch (err: any) {
       alert("Failed to read zip: " + err.message);
     }
@@ -165,7 +218,7 @@ const Toolbar: Component<Props> = (props) => {
       }
     }
     if (Object.keys(files).length === 0) { alert("No supported files found in folder."); return; }
-    props.store.load_files(files);
+    merge_or_load(files);
     input.value = "";
   }
 
@@ -185,7 +238,7 @@ const Toolbar: Component<Props> = (props) => {
       }
     }
     if (Object.keys(files).length === 0) { alert("No supported files found."); return; }
-    props.store.load_files(files);
+    merge_or_load(files);
     input.value = "";
   }
 

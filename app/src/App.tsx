@@ -239,6 +239,7 @@ const App: Component = () => {
         split_dir={split_dir()}
         swap_mode={use_swap_mode()}
         folder_sync={folder_sync}
+        on_upload_conflicts={(c) => set_conflicts(c)}
       />
 
       {/* reconnect banner */}
@@ -326,7 +327,16 @@ const App: Component = () => {
         <ConflictDialog
           conflicts={conflicts()}
           on_resolve={(path, resolution) => {
-            folder_sync.resolve_conflict(path, resolution);
+            const conflict = conflicts().find(c => c.path === path);
+            const is_upload = conflict && !conflict.eztex_hash && !conflict.disk_hash;
+            if (is_upload) {
+              // upload conflict: "disk" = accept uploaded, "eztex" = keep existing
+              if (resolution === "disk" && conflict) {
+                store.update_content(path, conflict.disk_content);
+              }
+            } else {
+              folder_sync.resolve_conflict(path, resolution);
+            }
             set_conflicts(prev => prev.filter(c => c.path !== path));
           }}
           on_close={() => set_conflicts([])}
