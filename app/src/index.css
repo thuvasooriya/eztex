@@ -1520,3 +1520,79 @@ body {
 .conflict-btn-eztex:hover {
   background: rgba(122, 162, 247, 0.25);
 }
+
+.conflict-btn-apply {
+  background: var(--accent);
+  color: var(--bg);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+.conflict-btn-apply:hover {
+  background: var(--accent-dim);
+}
+
+/* hunk-level selection UI */
+.conflict-hunk {
+  margin: 0;
+}
+
+.hunk-change {
+  position: relative;
+  border-left: 2px solid var(--border);
+  margin-left: 4px;
+  transition: border-color var(--transition);
+}
+
+.hunk-change.hunk-sel-disk {
+  border-left-color: var(--red);
+}
+
+.hunk-change.hunk-sel-eztex {
+  border-left-color: var(--green);
+}
+
+.hunk-toggle {
+  display: flex;
+  gap: 2px;
+  padding: 2px 8px;
+  margin: 2px 0;
+}
+
+.hunk-toggle-btn {
+  padding: 1px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.hunk-toggle-btn:hover {
+  background: var(--bg-lighter);
+  color: var(--fg);
+}
+
+.hunk-toggle-btn.active {
+  background: var(--bg-lighter);
+  color: var(--fg);
+  border-color: var(--border-light);
+  font-weight: 600;
+}
+
+.hunk-side {
+  transition: opacity var(--transition);
+}
+
+.hunk-dimmed {
+  opacity: 0.35;
+}
+
+.hunk-separator {
+  height: 1px;
+  background: var(--border);
+  margin: 6px 0;
+}

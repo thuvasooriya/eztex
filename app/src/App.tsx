@@ -330,12 +330,21 @@ const App: Component = () => {
             const conflict = conflicts().find(c => c.path === path);
             const is_upload = conflict && !conflict.eztex_hash && !conflict.disk_hash;
             if (is_upload) {
-              // upload conflict: "disk" = accept uploaded, "eztex" = keep existing
               if (resolution === "disk" && conflict) {
                 store.update_content(path, conflict.disk_content);
               }
             } else {
               folder_sync.resolve_conflict(path, resolution);
+            }
+            set_conflicts(prev => prev.filter(c => c.path !== path));
+          }}
+          on_resolve_merged={(path, content) => {
+            const conflict = conflicts().find(c => c.path === path);
+            const is_upload = conflict && !conflict.eztex_hash && !conflict.disk_hash;
+            if (is_upload) {
+              store.update_content(path, content);
+            } else {
+              folder_sync.resolve_conflict_with_content(path, content);
             }
             set_conflicts(prev => prev.filter(c => c.path !== path));
           }}

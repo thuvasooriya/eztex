@@ -64,6 +64,7 @@ export interface LocalFolderSync {
   sync_now: () => Promise<SyncResult>;
   sync_file: (path: string) => Promise<SyncResult>;
   resolve_conflict: (path: string, resolution: "eztex" | "disk") => Promise<void>;
+  resolve_conflict_with_content: (path: string, content: FileContent) => Promise<void>;
   write_pdf: (bytes: Uint8Array) => Promise<void>;
   is_supported: () => boolean;
   has_stored_handle: () => Promise<boolean>;
@@ -641,6 +642,23 @@ export function create_local_folder_sync(store: ProjectStore): LocalFolderSync {
     }
   }
 
+  // resolve a conflict with merged content -- updates both store and disk
+  async function resolve_conflict_with_content(path: string, content: FileContent): Promise<void> {
+    const s = state();
+    store.update_content(path, content);
+    if (s.dir_handle) {
+      await write_file(s.dir_handle, path, content);
+      const h = await hash_content(content);
+      set_state(prev => {
+        const new_baseline = new Map(prev.baseline_hashes);
+        new_baseline.set(path, h);
+        const new_dirty = new Set(prev.dirty_files);
+        new_dirty.delete(path);
+        return { ...prev, baseline_hashes: new_baseline, dirty_files: new_dirty };
+      });
+    }
+  }
+
   function is_supported(): boolean {
     return supports_folder_sync();
   }
@@ -674,6 +692,7 @@ export function create_local_folder_sync(store: ProjectStore): LocalFolderSync {
     sync_now,
     sync_file,
     resolve_conflict,
+    resolve_conflict_with_content,
     write_pdf,
     is_supported,
     has_stored_handle,
