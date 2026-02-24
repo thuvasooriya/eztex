@@ -64,6 +64,7 @@ export interface LocalFolderSync {
   sync_now: () => Promise<SyncResult>;
   sync_file: (path: string) => Promise<SyncResult>;
   resolve_conflict: (path: string, resolution: "eztex" | "disk") => Promise<void>;
+  write_pdf: (bytes: Uint8Array) => Promise<void>;
   is_supported: () => boolean;
   has_stored_handle: () => Promise<boolean>;
   get_stored_folder_name: () => Promise<string | null>;
@@ -653,6 +654,18 @@ export function create_local_folder_sync(store: ProjectStore): LocalFolderSync {
     return load_folder_name();
   }
 
+  // write compiled PDF to synced folder (derived from main file name)
+  async function write_pdf(bytes: Uint8Array): Promise<void> {
+    const s = state();
+    if (!s.active || !s.dir_handle) return;
+    const pdf_name = store.main_file().replace(/\.tex$/, ".pdf");
+    try {
+      await write_file(s.dir_handle, pdf_name, bytes);
+    } catch {
+      // silently ignore -- folder may have been revoked
+    }
+  }
+
   return {
     state,
     open_folder,
@@ -661,6 +674,7 @@ export function create_local_folder_sync(store: ProjectStore): LocalFolderSync {
     sync_now,
     sync_file,
     resolve_conflict,
+    write_pdf,
     is_supported,
     has_stored_handle,
     get_stored_folder_name,

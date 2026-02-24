@@ -93,12 +93,18 @@ const Toolbar: Component<Props> = (props) => {
   props.store.on_change(() => watch.notify_change());
   worker_client.on_compile_done(() => {
     watch.notify_compile_done();
-    // persist PDF to OPFS after successful compile
+    // persist PDF to OPFS (and synced folder if active) after successful compile
     const url = worker_client.pdf_url();
     if (url) {
       fetch(url)
         .then((r) => r.arrayBuffer())
-        .then((buf) => save_pdf(new Uint8Array(buf)))
+        .then((buf) => {
+          const bytes = new Uint8Array(buf);
+          save_pdf(bytes).catch(() => {});
+          if (props.folder_sync?.state().active) {
+            props.folder_sync.write_pdf(bytes).catch(() => {});
+          }
+        })
         .catch(() => {});
     }
   });
