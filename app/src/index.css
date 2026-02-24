@@ -29,12 +29,40 @@
   --cyan: #7dcfff;
   --magenta: #bb9af7;
   --orange: #ff9e64;
+  --green-hover: #b0dc82;
+  --yellow-hover: #e8be7e;
+  --editor-gradient-1: #16171f;
+  --editor-gradient-2: #13141c;
+  --editor-gradient-3: #151620;
+  --syntax-keyword: #bb9af7;
+  --syntax-comment: #565f89;
+  --syntax-string: #9ece6a;
+  --syntax-number: #ff9e64;
+  --syntax-operator: #7dcfff;
+  --syntax-meta: #e0af68;
+  --syntax-bracket: #a9b1d6;
+  --syntax-tag: #f7768e;
+  --syntax-attr-name: #e0af68;
+  --syntax-attr-value: #9ece6a;
+  --syntax-definition: #7aa2f7;
+  --syntax-atom: #ff9e64;
+  --syntax-type: #7dcfff;
+  --syntax-property: #7aa2f7;
+  --syntax-variable: #c0caf5;
+  --syntax-bool: #ff9e64;
   --font-sans: "Space Grotesk", system-ui, -apple-system, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
   --radius-sm: 4px;
   --radius-md: 6px;
   --radius-lg: 8px;
   --transition: 150ms ease;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in: cubic-bezier(0.55, 0.06, 0.68, 0.19);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --duration-instant: 80ms;
+  --duration-fast: 150ms;
+  --duration-normal: 200ms;
+  --duration-slow: 300ms;
 }
 
 html,
@@ -279,7 +307,7 @@ body {
 }
 
 .compile-group-watch.active:hover {
-  background: #b0dc82;
+  background: var(--green-hover);
 }
 
 .compile-group-watch.active.dirty {
@@ -288,7 +316,7 @@ body {
 }
 
 .compile-group-watch.active.dirty:hover {
-  background: #e8be7e;
+  background: var(--yellow-hover);
 }
 
 .compile-group-status {
@@ -341,7 +369,7 @@ body {
   border-radius: var(--radius-lg);
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.2);
   overflow: hidden;
-  animation: popover-in 150ms ease;
+  animation: slide-down var(--duration-fast) var(--ease-out);
   z-index: 200;
 }
 
@@ -661,7 +689,7 @@ body {
   height: 100%;
   background:
     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23n)' opacity='0.02'/%3E%3C/svg%3E"),
-    linear-gradient(170deg, #16171f 0%, #13141c 50%, #151620 100%);
+    linear-gradient(170deg, var(--editor-gradient-1) 0%, var(--editor-gradient-2) 50%, var(--editor-gradient-3) 100%);
   overflow: hidden;
 }
 
@@ -731,7 +759,7 @@ body {
   width: 100%;
   height: 100%;
   border: none;
-  background: white;
+  background: #ffffff;
 }
 
 .preview-empty {
@@ -927,7 +955,7 @@ body {
   border-radius: var(--radius-lg);
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.2);
   overflow: hidden;
-  animation: popover-in 150ms ease;
+  animation: slide-up var(--duration-fast) var(--ease-out);
 }
 
 .diag-pill-header {
@@ -956,6 +984,32 @@ body {
     opacity: 1;
     transform: translateY(0);
   }
+}
+
+@keyframes scale-in {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes slide-down {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes success-flash {
+  0% { background: rgba(158, 206, 106, 0.2); }
+  100% { background: transparent; }
+}
+
+@keyframes badge-bump {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.2); }
+  100% { transform: scale(1); }
 }
 
 .log-line {
@@ -1282,7 +1336,7 @@ body {
   height: 14px;
   color: var(--fg-dark);
   flex-shrink: 0;
-  transition: color 150ms;
+  transition: color var(--transition);
 }
 
 .folder-item:hover .folder-chevron {
@@ -1384,7 +1438,7 @@ body {
   font-size: 12px;
   color: var(--fg-dim);
   white-space: nowrap;
-  animation: popover-in 150ms ease;
+  animation: scale-in var(--duration-fast) var(--ease-out);
 }
 
 .reconnect-pill-btn {
@@ -1707,4 +1761,66 @@ body {
   height: 1px;
   background: var(--border);
   margin: 6px 0;
+}
+
+/* === press feedback for all interactive elements === */
+.toolbar-toggle:active,
+.compile-group-play:active,
+.compile-group-watch:active,
+.compile-group-status:active,
+.icon-btn:active,
+.ctx-menu-item:active,
+.upload-dropdown-item:active,
+.conflict-btn:active,
+.reconnect-pill-btn:active,
+.diag-pill:active {
+  transform: scale(0.95);
+}
+
+/* === compile success flash === */
+.compile-group-status.flash-success {
+  animation: success-flash 600ms var(--ease-out);
+}
+
+/* === resize handle grabbed state === */
+.resize-handle:active::after,
+.resize-handle.dragging::after {
+  opacity: 1;
+}
+
+.resize-handle.horizontal:active::after,
+.resize-handle.horizontal.dragging::after {
+  height: 40px;
+}
+
+.resize-handle.vertical:active::after,
+.resize-handle.vertical.dragging::after {
+  width: 40px;
+}
+
+/* === context menu entrance === */
+.ctx-menu {
+  animation: scale-in var(--duration-fast) var(--ease-out);
+  transform-origin: top left;
+}
+
+/* === upload/download dropdown entrance === */
+.upload-dropdown {
+  animation: slide-down var(--duration-fast) var(--ease-out);
+}
+
+/* === conflict dialog entrance === */
+.conflict-dialog {
+  animation: scale-in var(--duration-normal) var(--ease-out);
+}
+
+/* === prefers-reduced-motion === */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

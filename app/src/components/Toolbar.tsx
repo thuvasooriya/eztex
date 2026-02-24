@@ -167,6 +167,16 @@ const Toolbar: Component<Props> = (props) => {
     if (worker_client.status() === "error") set_show_logs(true);
   });
 
+  // compile success flash
+  let status_btn_ref: HTMLButtonElement | undefined;
+  createEffect(() => {
+    if (worker_client.status() === "success" && status_btn_ref) {
+      status_btn_ref.classList.remove("flash-success");
+      void status_btn_ref.offsetWidth;
+      status_btn_ref.classList.add("flash-success");
+    }
+  });
+
   function log_class(entry: LogEntry): string {
     if (entry.cls.includes("error")) return "log-line log-error";
     if (entry.cls.includes("warn")) return "log-line log-warn";
@@ -518,6 +528,7 @@ const Toolbar: Component<Props> = (props) => {
             </div>
           </Show>
           <button
+            ref={status_btn_ref}
             class={`compile-group-status ${show_logs() ? "expanded" : ""}`}
             onClick={() => set_show_logs(v => !v)}
             title="Show compilation logs"

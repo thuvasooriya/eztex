@@ -28,23 +28,18 @@ THIS FILE IS PURELY FOR THE USER TO TRACK AND ANALYZE
 
 ## app
 
-- [ ] watch dirty state breaking on startup
-- [x] local file syncing
 - [ ] synctex integration
 - [ ] update logo
 - [ ] cleanup logs
-- [ ] better diagnostic panel
 - [ ] keyboard navigation and shortcuts
 - [ ] first launch guide/carrousal
 - [ ] read more about and why notifications
-- [ ] online sharing
+- [ ] share projects
 - [ ] collaboration
-- [ ] satisfying snappy animations and transitions
 - [ ] pdf color inversion / repaint
 - [ ] webp image auto optimization
 - [ ] git integration
 - [ ] vim navigation
-- [ ] separate diagnostic panel
 
 ## thoughts
 
