@@ -707,6 +707,12 @@ body {
   animation: spin 0.6s linear infinite;
 }
 
+.upload-dropdown-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 3px 4px;
+}
+
 .logo-menu-wrapper {
   position: relative;
 }
@@ -1123,6 +1129,12 @@ body {
   color: var(--red);
 }
 
+.ctx-menu-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 3px 4px;
+}
+
 /* === OS drag-drop overlay === */
 .file-panel.drag-over {
   outline: 2px dashed var(--accent);
@@ -1160,37 +1172,58 @@ body {
   color: var(--fg-muted);
 }
 
-/* === folder sync status === */
+/* === folder sync status (file panel bar) === */
+.folder-sync-panel-bar {
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
 .folder-sync-status {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 5px;
-  padding: 2px 8px;
-  border-radius: 12px;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: var(--radius-md);
   font-size: 11px;
   font-family: var(--font-sans);
   color: var(--fg-muted);
   background: var(--bg-light);
-  border: 1px solid var(--border);
   transition: all var(--transition);
   white-space: nowrap;
-  height: 26px;
+  height: 24px;
 }
 
 .folder-sync-status:hover {
-  border-color: var(--border-light);
+  background: var(--bg-lighter);
 }
 
-.folder-sync-dot {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
+.folder-sync-icon {
   flex-shrink: 0;
 }
 
-.folder-sync-text {
+.folder-sync-name {
   color: var(--fg-dim);
   font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+
+.folder-sync-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--yellow);
+  color: var(--bg-dark);
+  font-size: 10px;
+  font-weight: 700;
+  flex-shrink: 0;
 }
 
 .folder-sync-disconnect {
@@ -1206,7 +1239,7 @@ body {
   cursor: pointer;
   padding: 0;
   transition: all var(--transition);
-  margin-left: 2px;
+  margin-left: auto;
 }
 
 .folder-sync-disconnect:hover {
@@ -1214,69 +1247,75 @@ body {
   color: var(--red);
 }
 
-.folder-sync-syncing {
-  border-color: var(--yellow);
+.folder-sync-syncing .folder-sync-icon {
+  animation: spin 0.8s linear infinite;
 }
 
-.folder-sync-error {
-  border-color: var(--red);
-}
-
-.folder-sync-error .folder-sync-text {
+.folder-sync-error .folder-sync-name {
   color: var(--red);
 }
 
-/* === reconnect banner === */
-.reconnect-banner {
+/* === reconnect pill (toolbar center) === */
+.toolbar-center-pill {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 6px 16px;
+  gap: 6px;
+  padding: 3px 8px 3px 3px;
+  border-radius: 20px;
   background: var(--bg-light);
-  border-bottom: 1px solid var(--border);
-  font-size: 12.5px;
+  border: 1px solid var(--border);
+  font-size: 12px;
   color: var(--fg-dim);
-  flex-shrink: 0;
+  white-space: nowrap;
+  animation: popover-in 150ms ease;
 }
 
-.reconnect-banner strong {
-  color: var(--fg);
-  font-weight: 600;
-}
-
-.reconnect-btn {
-  padding: 3px 12px;
+.reconnect-pill-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 10px;
   border: 1px solid var(--accent);
-  border-radius: var(--radius-md);
+  border-radius: 16px;
   background: rgba(122, 162, 247, 0.1);
   color: var(--accent);
   font-family: var(--font-sans);
-  font-size: 12px;
+  font-size: 11.5px;
   font-weight: 500;
   cursor: pointer;
   transition: all var(--transition);
 }
 
-.reconnect-btn:hover {
+.reconnect-pill-btn:hover {
   background: rgba(122, 162, 247, 0.2);
 }
 
-.reconnect-dismiss {
+.reconnect-pill-text {
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+
+.reconnect-pill-text strong {
+  color: var(--fg);
+  font-weight: 600;
+}
+
+.reconnect-pill-dismiss {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
   border: none;
-  border-radius: var(--radius-sm);
+  border-radius: 50%;
   background: transparent;
   color: var(--fg-dark);
   cursor: pointer;
+  padding: 0;
   transition: all var(--transition);
-  margin-left: auto;
 }
 
-.reconnect-dismiss:hover {
+.reconnect-pill-dismiss:hover {
   background: var(--bg-lighter);
   color: var(--fg-muted);
 }

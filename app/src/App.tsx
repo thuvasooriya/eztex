@@ -239,21 +239,10 @@ const App: Component = () => {
         swap_mode={use_swap_mode()}
         folder_sync={folder_sync}
         on_upload_conflicts={(c) => set_conflicts(c)}
+        reconnect_folder={show_reconnect() ? reconnect_folder_name() : null}
+        on_reconnect={handle_reconnect}
+        on_dismiss_reconnect={dismiss_reconnect}
       />
-
-      {/* reconnect banner */}
-      <Show when={show_reconnect()}>
-        <div class="reconnect-banner">
-          <span>Reconnect to <strong>{reconnect_folder_name()}/</strong>?</span>
-          <button class="reconnect-btn" onClick={handle_reconnect}>Reconnect</button>
-          <button class="reconnect-dismiss" onClick={dismiss_reconnect}>
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <line x1="18" y1="6" x2="6" y2="18" />
-              <line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
-          </button>
-        </div>
-      </Show>
 
       <div class={workspace_class()}>
         {/* file panel: inline in wide mode */}
@@ -262,7 +251,7 @@ const App: Component = () => {
             class="file-panel-wrapper panel-wrapper panel-box"
             style={{ width: `${file_panel_width()}px`, "flex-shrink": 0 }}
           >
-            <FilePanel store={store} />
+            <FilePanel store={store} folder_sync={folder_sync} />
           </div>
           <ResizeHandle
             direction="horizontal"
@@ -304,7 +293,7 @@ const App: Component = () => {
       {/* file panel overlay for narrow screens */}
       <Show when={files_overlay()}>
         <div class="file-panel-wrapper overlay-mode panel-wrapper panel-box">
-          <FilePanel store={store} />
+          <FilePanel store={store} folder_sync={folder_sync} />
         </div>
       </Show>
 

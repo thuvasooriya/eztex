@@ -2,6 +2,8 @@ import { type Component, For, Show, createSignal, createEffect, onCleanup, type 
 import type { ProjectStore } from "../lib/project_store";
 import { is_binary } from "../lib/project_store";
 import { build_tree, collect_folder_paths, auto_suffix, type TreeNode } from "../lib/file_tree";
+import type { LocalFolderSync } from "../lib/local_folder_sync";
+import FolderSyncStatus from "./FolderSyncStatus";
 
 function file_icon(name: string): string {
   const ext = name.split(".").pop()?.toLowerCase() ?? "";
@@ -18,6 +20,7 @@ function file_icon(name: string): string {
 
 type Props = {
   store: ProjectStore;
+  folder_sync?: LocalFolderSync;
 };
 
 const FilePanel: Component<Props> = (props) => {
@@ -100,6 +103,28 @@ const FilePanel: Component<Props> = (props) => {
       else next.add(path);
       return next;
     });
+  }
+
+  function handle_add_file(folder_prefix?: string) {
+    const existing = props.store.file_names();
+    let name = folder_prefix ? `${folder_prefix}untitled.tex` : "untitled.tex";
+    if (existing.includes(name)) name = auto_suffix(name, existing);
+    props.store.add_file(name, "");
+    start_rename(name);
+  }
+
+  function handle_add_folder(folder_prefix?: string) {
+    const existing = props.store.file_names();
+    const base = folder_prefix ? `${folder_prefix}new-folder/` : "new-folder/";
+    let folder_name = base.replace(/\/$/, "");
+    let counter = 1;
+    while (existing.some(f => f.startsWith(folder_name + "/"))) {
+      folder_name = `${base.replace(/\/$/, "")}-${counter}`;
+      counter++;
+    }
+    const placeholder = `${folder_name}/.gitkeep`;
+    props.store.add_file(placeholder, "");
+    start_rename(folder_name + "/");
   }
 
   // OS drag-drop handler
@@ -288,7 +313,12 @@ const FilePanel: Component<Props> = (props) => {
   return (
     <div
       class={`file-panel ${os_drag_over() ? "drag-over" : ""}`}
-      onContextMenu={(e) => e.preventDefault()}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        const x = Math.min(e.clientX, window.innerWidth - 160);
+        const y = Math.min(e.clientY, window.innerHeight - 120);
+        set_ctx_menu({ file: "__empty__", x, y });
+      }}
       onDragOver={(e) => {
         if (e.dataTransfer?.types.includes("Files")) {
           e.preventDefault();
@@ -309,6 +339,14 @@ const FilePanel: Component<Props> = (props) => {
         }
       }}
     >
+      <Show when={props.folder_sync?.state().active}>
+        <div class="folder-sync-panel-bar">
+          <FolderSyncStatus
+            state={props.folder_sync!.state()}
+            on_disconnect={() => props.folder_sync?.disconnect()}
+          />
+        </div>
+      </Show>
       <div
         class={`file-list ${drop_target() === "__root__" ? "drop-target-root" : ""}`}
         onDragOver={(e) => { if (dragging() && e.target === e.currentTarget) { e.preventDefault(); set_drop_target("__root__"); } }}
@@ -322,7 +360,8 @@ const FilePanel: Component<Props> = (props) => {
           <div class="ctx-menu"
             style={{ position: "fixed", left: `${menu().x}px`, top: `${menu().y}px` }}
             onClick={(e) => e.stopPropagation()}>
-            <Show when={!menu().file.endsWith("/")}>
+            {/* file-specific actions */}
+            <Show when={menu().file !== "__empty__" && !menu().file.endsWith("/")}>
               <button class="ctx-menu-item" onClick={() => { start_rename(menu().file); set_ctx_menu(null); }}>
                 Rename
               </button>
@@ -336,8 +375,10 @@ const FilePanel: Component<Props> = (props) => {
                   Delete
                 </button>
               </Show>
+              <div class="ctx-menu-divider" />
             </Show>
-            <Show when={menu().file.endsWith("/")}>
+            {/* folder-specific actions */}
+            <Show when={menu().file !== "__empty__" && menu().file.endsWith("/")}>
               <button class="ctx-menu-item" onClick={() => { start_rename(menu().file); set_ctx_menu(null); }}>
                 Rename
               </button>
@@ -350,7 +391,23 @@ const FilePanel: Component<Props> = (props) => {
                 for (const f of all) props.store.remove_file(f);
                 set_ctx_menu(null);
               }}>Delete folder</button>
+              <div class="ctx-menu-divider" />
             </Show>
+            {/* always show new file / new folder */}
+            <button class="ctx-menu-item" onClick={() => {
+              const prefix = menu().file.endsWith("/") ? menu().file : undefined;
+              handle_add_file(prefix);
+              set_ctx_menu(null);
+            }}>
+              New File
+            </button>
+            <button class="ctx-menu-item" onClick={() => {
+              const prefix = menu().file.endsWith("/") ? menu().file : undefined;
+              handle_add_folder(prefix);
+              set_ctx_menu(null);
+            }}>
+              New Folder
+            </button>
           </div>
         )}
       </Show>

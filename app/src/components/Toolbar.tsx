@@ -8,7 +8,6 @@ import { is_binary, is_text_ext } from "../lib/project_store";
 import type { ProjectFiles } from "../lib/project_store";
 import { save_pdf, clear_project, clear_bundle_cache } from "../lib/project_persist";
 import type { LocalFolderSync, ConflictInfo } from "../lib/local_folder_sync";
-import FolderSyncStatus from "./FolderSyncStatus";
 
 type Props = {
   store: ProjectStore;
@@ -21,6 +20,9 @@ type Props = {
   swap_mode?: boolean;
   folder_sync?: LocalFolderSync;
   on_upload_conflicts?: (conflicts: ConflictInfo[]) => void;
+  reconnect_folder?: string | null;
+  on_reconnect?: () => void;
+  on_dismiss_reconnect?: () => void;
 };
 
 const Logo: Component = () => (
@@ -38,11 +40,11 @@ const Toolbar: Component<Props> = (props) => {
   let folder_input_ref: HTMLInputElement | undefined;
   let file_input_ref: HTMLInputElement | undefined;
   let upload_btn_ref: HTMLDivElement | undefined;
-  let new_btn_ref: HTMLDivElement | undefined;
+  let download_btn_ref: HTMLDivElement | undefined;
   let logo_btn_ref: HTMLDivElement | undefined;
 
   const [show_upload_menu, set_show_upload_menu] = createSignal(false);
-  const [show_new_menu, set_show_new_menu] = createSignal(false);
+  const [show_download_menu, set_show_download_menu] = createSignal(false);
   const [show_logo_menu, set_show_logo_menu] = createSignal(false);
 
   // cache state (moved from CachePill)
@@ -113,12 +115,12 @@ const Toolbar: Component<Props> = (props) => {
     onCleanup(() => document.removeEventListener("click", handler));
   });
 
-  // close new menu on click outside
+  // close download menu on click outside
   createEffect(() => {
-    if (!show_new_menu()) return;
+    if (!show_download_menu()) return;
     const handler = (e: MouseEvent) => {
-      if (new_btn_ref && !new_btn_ref.contains(e.target as Node)) {
-        set_show_new_menu(false);
+      if (download_btn_ref && !download_btn_ref.contains(e.target as Node)) {
+        set_show_download_menu(false);
       }
     };
     document.addEventListener("click", handler);
@@ -171,23 +173,6 @@ const Toolbar: Component<Props> = (props) => {
   function handle_compile() {
     const files = { ...props.store.files };
     worker_client.compile({ files, main: props.store.main_file() });
-  }
-
-  // file actions (moved from FilePanel)
-  function handle_add_file() {
-    const name = prompt("File name (e.g. chapter1.tex or chapters/intro.tex):");
-    if (!name || name.trim() === "") return;
-    props.store.add_file(name.trim());
-  }
-
-  function handle_add_folder() {
-    const prev = props.store.current_file();
-    const name = prompt("Folder name (e.g. chapters):");
-    if (!name || !name.trim()) return;
-    let folder = name.trim().replace(/\/$/, "");
-    props.store.add_file(folder + "/.gitkeep");
-    // restore current file so .gitkeep doesn't open in editor
-    props.store.set_current_file(prev);
   }
 
   // compare content for equality (handles both string and Uint8Array)
@@ -375,7 +360,6 @@ const Toolbar: Component<Props> = (props) => {
             onClick={props.on_toggle_files}
             title="Toggle file panel"
           >
-            {/* panel-left icon */}
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
               <rect x="3" y="3" width="18" height="18" rx="2" />
               <line x1="9" y1="3" x2="9" y2="21" />
@@ -383,31 +367,6 @@ const Toolbar: Component<Props> = (props) => {
           </button>
         </Show>
         <div class="toolbar-file-actions">
-            <div class="upload-menu-wrapper" ref={new_btn_ref}>
-              <button class="toolbar-toggle" title="New file or folder" onClick={() => set_show_new_menu(v => !v)}>
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                  <line x1="12" y1="5" x2="12" y2="19" />
-                  <line x1="5" y1="12" x2="19" y2="12" />
-                </svg>
-              </button>
-              <Show when={show_new_menu()}>
-                <div class="upload-dropdown">
-                  <button class="upload-dropdown-item" onClick={() => { handle_add_file(); set_show_new_menu(false); }}>
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                      <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
-                      <polyline points="14 2 14 8 20 8" />
-                    </svg>
-                    New File
-                  </button>
-                  <button class="upload-dropdown-item" onClick={() => { handle_add_folder(); set_show_new_menu(false); }}>
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                      <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z" />
-                    </svg>
-                    New Folder
-                  </button>
-                </div>
-              </Show>
-            </div>
             <div class="upload-menu-wrapper" ref={upload_btn_ref}>
               <button class="toolbar-toggle" title="Upload files or folder" onClick={() => set_show_upload_menu(v => !v)}>
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -432,52 +391,76 @@ const Toolbar: Component<Props> = (props) => {
                     Upload Folder
                   </button>
                   <button class="upload-dropdown-item" onClick={() => { zip_input_ref?.click(); set_show_upload_menu(false); }}>
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-file-archive-icon lucide-file-archive"><path d="M13.659 22H18a2 2 0 0 0 2-2V8a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 14 2H6a2 2 0 0 0-2 2v11.5"/><path d="M14 2v5a1 1 0 0 0 1 1h5"/><path d="M8 12v-1"/><path d="M8 18v-2"/><path d="M8 7V6"/><circle cx="8" cy="20" r="2"/>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13.659 22H18a2 2 0 0 0 2-2V8a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 14 2H6a2 2 0 0 0-2 2v11.5"/><path d="M14 2v5a1 1 0 0 0 1 1h5"/><path d="M8 12v-1"/><path d="M8 18v-2"/><path d="M8 7V6"/><circle cx="8" cy="20" r="2"/>
                     </svg>
                     Import Zip
+                  </button>
+                  <Show when={props.folder_sync?.is_supported() && !props.folder_sync?.state().active}>
+                    <div class="upload-dropdown-divider" />
+                    <button class="upload-dropdown-item" onClick={() => { props.folder_sync?.open_folder(); set_show_upload_menu(false); }}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-folder-sync-icon lucide-folder-sync"><path d="M9 20H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H20a2 2 0 0 1 2 2v.5"/><path d="M12 10v4h4"/><path d="m12 14 1.535-1.605a5 5 0 0 1 8 1.5"/><path d="M22 22v-4h-4"/><path d="m22 18-1.535 1.605a5 5 0 0 1-8-1.5"/>
+                    </svg>
+                      Open Folder
+                    </button>
+                  </Show>
+                </div>
+              </Show>
+            </div>
+            <div class="upload-menu-wrapper" ref={download_btn_ref}>
+              <button class="toolbar-toggle" title="Download" onClick={() => set_show_download_menu(v => !v)}>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+                  <polyline points="7,10 12,15 17,10"/>
+                  <line x1="12" y1="15" x2="12" y2="3"/>
+                </svg>
+              </button>
+              <Show when={show_download_menu()}>
+                <div class="upload-dropdown">
+                  <Show when={worker_client.pdf_url()}>
+                    <button class="upload-dropdown-item" onClick={() => { handle_download_pdf(); set_show_download_menu(false); }}>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+                        <polyline points="14 2 14 8 20 8" />
+                        <line x1="16" y1="13" x2="8" y2="13"/>
+                        <line x1="16" y1="17" x2="8" y2="17"/>
+                      </svg>
+                      Download PDF
+                    </button>
+                  </Show>
+                  <button class="upload-dropdown-item" onClick={() => { handle_download_zip(); set_show_download_menu(false); }}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z"/><path d="M12 22V12"/><polyline points="3.29 7 12 12 20.71 7"/><path d="m7.5 4.27 9 5.15"/></svg>
+                    Export Zip
                   </button>
                 </div>
               </Show>
             </div>
-            <button class="toolbar-toggle" title="Download zip" onClick={handle_download_zip}>
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-package-icon lucide-package"><path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z"/><path d="M12 22V12"/><polyline points="3.29 7 12 12 20.71 7"/><path d="m7.5 4.27 9 5.15"/></svg>
-            </button>
-            <Show when={props.folder_sync?.is_supported()}>
-              <Show
-                when={!props.folder_sync?.state().active}
-                fallback={
-                  <FolderSyncStatus
-                    state={props.folder_sync!.state()}
-                    on_disconnect={() => props.folder_sync!.disconnect()}
-                  />
-                }
-              >
-                <button
-                  class="toolbar-toggle"
-                  title="Open local folder"
-                  onClick={() => props.folder_sync?.open_folder()}
-                >
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                    <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z" />
-                  </svg>
-                </button>
-              </Show>
-            </Show>
           </div>
         <input ref={zip_input_ref} type="file" accept=".zip" style={{ display: "none" }} onChange={handle_zip_upload} />
         <input ref={file_input_ref} type="file" multiple accept=".tex,.bib,.sty,.cls,.png,.jpg,.jpeg,.gif,.webp,.svg,.ttf,.otf,.woff,.woff2,.pdf" style={{ display: "none" }} onChange={handle_file_upload} />
         <input ref={folder_input_ref} type="file" {...{ webkitdirectory: true } as any} style={{ display: "none" }} onChange={handle_folder_upload} />
       </div>
-      <div class="toolbar-right">
-        <Show when={worker_client.pdf_url()}>
-          <button class="toolbar-toggle" title="Download PDF" onClick={handle_download_pdf}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-              <polyline points="7,10 12,15 17,10"/>
-              <line x1="12" y1="15" x2="12" y2="3"/>
+
+      {/* center: reconnect pill (reusable notification area) */}
+      <Show when={props.reconnect_folder}>
+        <div class="toolbar-center-pill">
+          <button class="reconnect-pill-btn" onClick={props.on_reconnect}>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="23 4 23 10 17 10" />
+              <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+            </svg>
+            Reconnect
+          </button>
+          <span class="reconnect-pill-text">to <strong>{props.reconnect_folder}/</strong></span>
+          <button class="reconnect-pill-dismiss" onClick={props.on_dismiss_reconnect}>
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
             </svg>
           </button>
-        </Show>
+        </div>
+      </Show>
+
+      <div class="toolbar-right">
         <Show when={props.on_toggle_split}>
           <button
             class={`toolbar-toggle${props.swap_mode ? " muted" : ""}`}
