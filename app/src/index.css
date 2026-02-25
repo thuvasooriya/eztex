@@ -1374,19 +1374,6 @@ body {
 }
 /* narrow + vertical (stacked): both panels shown, JSX Show handles rendering */
 
-@media (max-width: 700px) {
-  .toolbar-file-actions {
-    gap: 2px;
-  }
-  .toolbar-btn span {
-    display: none;
-  }
-  .compile-group-text {
-    display: none;
-  }
-  .compile-group-elapsed {
-    display: none;
-  }
 /* click interceptor overlay behind popovers -- catches iframe clicks */
 .click-interceptor {
   position: fixed;
@@ -1421,7 +1408,20 @@ body {
   background: rgba(122, 162, 247, 0.12);
 }
 
-.compile-logs-popover {
+@media (max-width: 700px) {
+  .toolbar-file-actions {
+    gap: 2px;
+  }
+  .toolbar-btn span {
+    display: none;
+  }
+  .compile-group-text {
+    display: none;
+  }
+  .compile-group-elapsed {
+    display: none;
+  }
+  .compile-logs-popover {
     width: 320px;
   }
 }
