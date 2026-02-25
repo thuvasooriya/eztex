@@ -868,7 +868,7 @@ body {
 }
 
 .logo-btn:hover {
-  background: var(--bg-lighter);
+  color: var(--accent);
 }
 
 /* === info modal === */

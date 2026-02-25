@@ -96,6 +96,8 @@ const App: Component = () => {
     let pdf_restored = false;
     if (saved && Object.keys(saved).length > 0) {
       store.load_files(saved);
+    } else {
+      await store.init_from_template();
     }
     if (pdf_bytes && pdf_bytes.length > 0) {
       const url = URL.createObjectURL(new Blob([pdf_bytes.buffer as ArrayBuffer], { type: "application/pdf" }));

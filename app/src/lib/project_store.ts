@@ -23,25 +23,7 @@ export function is_text_ext(name: string): boolean {
 
 export function create_project_store() {
   const [files, set_files] = createStore<ProjectFiles>({
-    "main.tex": `\\documentclass{article}
-\\usepackage{amsmath}
-
-\\title{Hello from eztex}
-\\author{You}
-\\date{\\today}
-
-\\begin{document}
-\\maketitle
-
-\\section{Introduction}
-This is a test document compiled with \\textbf{eztex} --- XeLaTeX in WebAssembly.
-
-\\begin{equation}
-  E = mc^2
-\\end{equation}
-
-\\end{document}
-`,
+    "main.tex": "",
   });
 
   const [current_file, set_current_file] = createSignal("main.tex");
@@ -148,6 +130,30 @@ This is a test document compiled with \\textbf{eztex} --- XeLaTeX in WebAssembly
     _notify();
   }
 
+  // load initial project template from public/init/
+  async function init_from_template(): Promise<void> {
+    try {
+      const manifest_resp = await fetch("/init/manifest.json");
+      if (!manifest_resp.ok) return;
+      const manifest: { files: string[] } = await manifest_resp.json();
+      const template: ProjectFiles = {};
+      await Promise.all(manifest.files.map(async (name) => {
+        const resp = await fetch(`/init/${name}`);
+        if (!resp.ok) return;
+        if (is_binary(name)) {
+          template[name] = new Uint8Array(await resp.arrayBuffer());
+        } else {
+          template[name] = await resp.text();
+        }
+      }));
+      if (Object.keys(template).length > 0) {
+        load_files(template);
+      }
+    } catch {
+      // silently fall back to empty project
+    }
+  }
+
   return {
     files,
     current_file,
@@ -166,6 +172,7 @@ This is a test document compiled with \\textbf{eztex} --- XeLaTeX in WebAssembly
     load_files,
     merge_files,
     on_change,
+    init_from_template,
   };
 }
 
