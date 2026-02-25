@@ -226,29 +226,27 @@ const FilePanel: Component<Props> = (props) => {
               {file_icon(name)}
             </span>
             <span class="file-name">{node.name}</span>
-            <div class="file-item-actions">
-              <Show when={show_main_controls() && name.endsWith(".tex")}>
-                <button
-                  class={`set-main-btn ${name === props.store.main_file() ? "active" : ""}`}
-                  title={name === props.store.main_file() ? "Entry file" : "Set as entry file"}
-                  onClick={(e) => { e.stopPropagation(); set_entry_and_compile(name); }}
-                >
-                  <Show
-                    when={name === props.store.main_file()}
-                    fallback={
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <circle cx="12" cy="12" r="10" />
-                      </svg>
-                    }
-                  >
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="var(--accent)" stroke="var(--accent)" stroke-width="2">
+            <Show when={show_main_controls() && name.endsWith(".tex")}>
+              <button
+                class={`set-main-btn ${name === props.store.main_file() ? "active" : ""}`}
+                title={name === props.store.main_file() ? "Entry file" : "Set as entry file"}
+                onClick={(e) => { e.stopPropagation(); set_entry_and_compile(name); }}
+              >
+                <Show
+                  when={name === props.store.main_file()}
+                  fallback={
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                       <circle cx="12" cy="12" r="10" />
-                      <circle cx="12" cy="12" r="4" fill="var(--bg-dark)" />
                     </svg>
-                  </Show>
-                </button>
-              </Show>
-            </div>
+                  }
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="var(--accent)" stroke="var(--accent)" stroke-width="2">
+                    <circle cx="12" cy="12" r="10" />
+                    <circle cx="12" cy="12" r="4" fill="var(--bg-dark)" />
+                  </svg>
+                </Show>
+              </button>
+            </Show>
           </>
         )}
       </div>

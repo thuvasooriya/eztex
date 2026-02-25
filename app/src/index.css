@@ -592,17 +592,6 @@ body {
   color: var(--fg);
 }
 
-.file-item-actions {
-  display: flex;
-  gap: 2px;
-  opacity: 0;
-  transition: opacity var(--transition);
-}
-
-.file-item:hover .file-item-actions {
-  opacity: 1;
-}
-
 .set-main-btn {
   display: inline-flex;
   align-items: center;
@@ -614,12 +603,14 @@ body {
   background: transparent;
   color: var(--fg-dark);
   cursor: pointer;
+  opacity: 0.3;
   transition: all var(--transition);
 }
 
 .set-main-btn:hover {
   background: var(--bg-highlight);
   color: var(--fg-muted);
+  opacity: 1;
 }
 
 .set-main-btn.active {
@@ -627,8 +618,11 @@ body {
   opacity: 1;
 }
 
-.file-item:hover .set-main-btn.active,
-.set-main-btn.active {
+.file-item:hover .set-main-btn {
+  opacity: 0.7;
+}
+
+.file-item:hover .set-main-btn.active {
   opacity: 1;
 }
 
