@@ -2098,14 +2098,19 @@ body {
   position: fixed;
   inset: 0;
   z-index: 600;
-  background: rgba(0, 0, 0, 0.5);
+  background: transparent;
+}
+
+.onboard-tour-backdrop.dimmed {
+  background: rgba(0, 0, 0, 0.55);
 }
 
 .onboard-highlight {
   border-radius: var(--radius-md);
-  box-shadow: 0 0 0 4000px rgba(0, 0, 0, 0.5), 0 0 0 2px var(--accent), 0 0 12px rgba(122, 162, 247, 0.3);
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.55), 0 0 0 4px var(--accent), 0 0 16px rgba(122, 162, 247, 0.3);
   background: transparent;
   pointer-events: none;
+  cursor: default;
   transition: top var(--duration-normal) var(--ease-out),
               left var(--duration-normal) var(--ease-out),
               width var(--duration-normal) var(--ease-out),

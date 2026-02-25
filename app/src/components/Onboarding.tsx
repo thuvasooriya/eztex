@@ -38,13 +38,13 @@ const tour_steps: TourStep[] = [
   {
     target_selector: ".file-panel-wrapper:not(.overlay-mode)",
     title: "File panel",
-    description: "Your project files live here. Click to open, right-click for options like rename and delete.",
+    description: "Your project files live here. Click to open, right-click for rename, delete, or to create new files and folders.",
     position_hint: "right",
   },
   {
-    target_selector: ".file-panel",
-    title: "Right-click for actions",
-    description: "Right-click empty space to create new files or folders.",
+    target_selector: ".set-main-btn",
+    title: "Entry file",
+    description: "Click the dot next to a file to set it as the entry point for compilation.",
     position_hint: "right",
   },
   {
@@ -293,7 +293,7 @@ const Onboarding: Component<Props> = (props) => {
 
       {/* tour overlay */}
       <Show when={phase() === "tour" && current_step()}>
-        <div class="onboard-tour-backdrop" onClick={finish} />
+        <div class={`onboard-tour-backdrop ${target_rect() ? "" : "dimmed"}`} onClick={finish} />
         <Show when={target_rect()}>
           <div class="onboard-highlight" style={highlight_style()} />
         </Show>
