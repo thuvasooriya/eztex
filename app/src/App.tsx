@@ -4,7 +4,11 @@ import { parse_synctex } from "./lib/synctex";
 import { create_project_store } from "./lib/project_store";
 import { save_project, load_project, load_pdf, load_synctex } from "./lib/project_persist";
 import { create_local_folder_sync, type ConflictInfo } from "./lib/local_folder_sync";
+import { create_watch_controller } from "./lib/watch_controller";
+import { palette_open, get_all_commands } from "./lib/commands";
+import { init_commands } from "./lib/register_commands";
 import Toolbar from "./components/Toolbar";
+import CommandPalette from "./components/CommandPalette";
 import ConflictDialog from "./components/ConflictDialog";
 
 import FilePanel from "./components/FilePanel";
@@ -20,6 +24,7 @@ const PREVIEW_WIDTH_KEY = "eztex_preview_width";
 const SPLIT_DIR_KEY = "eztex_split_dir";
 const FILES_VISIBLE_KEY = "eztex_files_visible";
 const PREVIEW_VISIBLE_KEY = "eztex_preview_visible";
+const VIM_ENABLED_KEY = "eztex_vim_enabled";
 
 function get_initial_preview_width(): number {
   const stored = localStorage.getItem(PREVIEW_WIDTH_KEY);
@@ -60,6 +65,38 @@ const App: Component = () => {
 
   // onboarding state
   const [show_onboarding, set_show_onboarding] = createSignal(!is_onboarded());
+
+  // lifted from Toolbar: compile logs visibility
+  const [show_logs, set_show_logs] = createSignal(false);
+  // lifted from Toolbar: info modal visibility
+  const [show_info_modal, set_show_info_modal] = createSignal(false);
+
+  // vim mode state (persisted to localStorage)
+  const [vim_enabled, set_vim_enabled] = createSignal(localStorage.getItem(VIM_ENABLED_KEY) === "true");
+  createEffect(() => localStorage.setItem(VIM_ENABLED_KEY, String(vim_enabled())));
+
+  // editor view getter -- set by Editor component via prop callback
+  let _editor_view: any = undefined;
+  function set_editor_view_ref(v: any) { _editor_view = v; }
+  function get_editor_view() { return _editor_view; }
+
+  // file input triggers -- set by Toolbar via prop callbacks
+  let _trigger_file_upload = () => {};
+  let _trigger_folder_upload = () => {};
+  let _trigger_zip_upload = () => {};
+
+  // watch controller (lifted from Toolbar so commands can access it)
+  const watch = create_watch_controller({
+    get_files: () => store.files,
+    get_main: () => store.main_file(),
+    is_ready: () => worker_client.ready() && !worker_client.compiling(),
+    compile: (req) => worker_client.compile(req),
+    cancel_and_recompile: (req) => worker_client.cancel_and_recompile(req),
+  });
+  // wire imperative watch callbacks
+  store.on_change(() => watch.notify_change());
+  worker_client.on_compile_done(() => watch.notify_compile_done());
+  onCleanup(() => watch.cleanup());
 
   // conflict dialog state
   const [conflicts, set_conflicts] = createSignal<ConflictInfo[]>([]);
@@ -105,6 +142,30 @@ const App: Component = () => {
       set_conflicts(result.conflicts);
     }
   }
+
+  // initialize command registry
+  init_commands({
+    store,
+    folder_sync,
+    watch,
+    files_visible,
+    set_files_visible,
+    preview_visible,
+    set_preview_visible,
+    split_dir,
+    toggle_split,
+    toggle_preview,
+    show_logs,
+    set_show_logs,
+    set_show_info_modal,
+    set_show_onboarding,
+    get_editor_view,
+    set_vim_enabled,
+    vim_enabled,
+    trigger_file_upload: () => _trigger_file_upload(),
+    trigger_folder_upload: () => _trigger_folder_upload(),
+    trigger_zip_upload: () => _trigger_zip_upload(),
+  });
 
   // track event listeners for cleanup -- registered synchronously so SolidJS
   // can associate the onCleanup with the reactive root (before any awaits)
@@ -202,20 +263,54 @@ const App: Component = () => {
     _cleanup_keydown = () => document.removeEventListener("keydown", handle_keydown);
   });
 
+  // unified keybinding dispatch: match KeyboardEvent against registered command keybindings
   function handle_keydown(e: KeyboardEvent) {
-    if ((e.metaKey || e.ctrlKey) && e.key === "b") {
-      e.preventDefault();
-      toggle_files();
+    // palette is open -- let the palette component handle keys
+    if (palette_open()) return;
+
+    // ignore keys when focused in an input/textarea (except our palette)
+    const tag = (e.target as HTMLElement)?.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+
+    const mod = e.metaKey || e.ctrlKey;
+    const shift = e.shiftKey;
+    const key = e.key;
+
+    // build a keybinding string matching our format
+    const parts: string[] = [];
+    if (mod) parts.push("Cmd");
+    if (shift) parts.push("Shift");
+    // normalize key name
+    let key_name = key;
+    if (key === "Enter") key_name = "Enter";
+    else if (key === "/") key_name = "/";
+    else if (key === ".") key_name = ".";
+    else if (key.length === 1) key_name = key.toUpperCase();
+    parts.push(key_name);
+    const binding = parts.join("+");
+
+    // find matching command
+    const cmds = get_all_commands();
+    for (const cmd of cmds) {
+      if (!cmd.keybinding) continue;
+      if (cmd.keybinding === binding) {
+        if (cmd.when && !cmd.when()) continue;
+        e.preventDefault();
+        cmd.action();
+        return;
+      }
     }
-    if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === "p") {
-      e.preventDefault();
-      toggle_preview();
-    }
-    // Cmd+S / Ctrl+S: trigger folder sync for current file
-    if ((e.metaKey || e.ctrlKey) && e.key === "s") {
-      e.preventDefault();
-      if (folder_sync.state().active) {
-        folder_sync.sync_now().then(handle_sync_result);
+
+    // handle F-keys (no modifier prefix)
+    if (key === "F8" && !mod) {
+      const fk_binding = shift ? "Shift+F8" : "F8";
+      for (const cmd of cmds) {
+        if (cmd.keybinding === fk_binding) {
+          if (cmd.when && !cmd.when()) continue;
+          e.preventDefault();
+          cmd.action();
+          return;
+        }
       }
     }
   }
@@ -285,6 +380,7 @@ const App: Component = () => {
     <div class="app">
       <Toolbar
         store={store}
+        watch={watch}
         on_toggle_files={toggle_files}
         on_toggle_preview={toggle_preview}
         on_toggle_split={toggle_split}
@@ -298,6 +394,15 @@ const App: Component = () => {
         on_reconnect={handle_reconnect}
         on_dismiss_reconnect={dismiss_reconnect}
         on_start_tour={() => set_show_onboarding(true)}
+        show_logs={show_logs()}
+        set_show_logs={set_show_logs}
+        show_info_modal={show_info_modal()}
+        set_show_info_modal={set_show_info_modal}
+        register_file_triggers={(file_fn, folder_fn, zip_fn) => {
+          _trigger_file_upload = file_fn;
+          _trigger_folder_upload = folder_fn;
+          _trigger_zip_upload = zip_fn;
+        }}
       />
 
       <div class={workspace_class()}>
@@ -319,7 +424,11 @@ const App: Component = () => {
 
         <div class={`split-container split-${split_dir()}`}>
           <div class="editor-wrapper panel-box">
-            <Editor store={store} />
+            <Editor
+              store={store}
+              vim_enabled={vim_enabled()}
+              on_editor_view={set_editor_view_ref}
+            />
           </div>
 
           {/* Wide mode OR narrow+vertical stacked: show preview with resize handle */}
@@ -406,6 +515,8 @@ const App: Component = () => {
         visible={show_onboarding()}
         on_close={() => set_show_onboarding(false)}
       />
+
+      <CommandPalette store={store} />
     </div>
   );
 };

@@ -1,17 +1,18 @@
-import { type Component, Show, For, onCleanup, onMount, createSignal, createEffect, untrack } from "solid-js";
+import { type Component, Show, For, onCleanup, onMount, createSignal, createEffect, untrack, type Setter } from "solid-js";
 import { worker_client, type LogEntry } from "../lib/worker_client";
 import ProgressBar from "./ProgressBar";
-import { create_watch_controller } from "../lib/watch_controller";
 import { read_zip, write_zip } from "../lib/zip_utils";
 import type { ProjectStore } from "../lib/project_store";
 import { is_binary, is_text_ext } from "../lib/project_store";
 import type { ProjectFiles } from "../lib/project_store";
 import { save_pdf, clear_bundle_cache, reset_all_persistence } from "../lib/project_persist";
 import type { LocalFolderSync, ConflictInfo } from "../lib/local_folder_sync";
+import type { WatchController } from "../lib/watch_controller";
 import logo_svg from "/logo.svg?raw";
 
 type Props = {
   store: ProjectStore;
+  watch: WatchController;
   on_toggle_files?: () => void;
   on_toggle_preview?: () => void;
   on_toggle_split?: () => void;
@@ -25,6 +26,11 @@ type Props = {
   on_reconnect?: () => void;
   on_dismiss_reconnect?: () => void;
   on_start_tour?: () => void;
+  show_logs: boolean;
+  set_show_logs: Setter<boolean>;
+  show_info_modal: boolean;
+  set_show_info_modal: Setter<boolean>;
+  register_file_triggers?: (file_fn: () => void, folder_fn: () => void, zip_fn: () => void) => void;
 };
 
 const Logo: Component = () => (
@@ -40,8 +46,11 @@ const Toolbar: Component<Props> = (props) => {
 
   const [show_upload_menu, set_show_upload_menu] = createSignal(false);
   const [show_download_menu, set_show_download_menu] = createSignal(false);
-  const [show_info_modal, set_show_info_modal] = createSignal(false);
-  const [show_logs, set_show_logs] = createSignal(false);
+  // show_info_modal and show_logs are now received via props (lifted to App)
+  const show_info_modal = () => props.show_info_modal;
+  const set_show_info_modal = props.set_show_info_modal;
+  const show_logs = () => props.show_logs;
+  const set_show_logs = props.set_show_logs;
   const [logs_pinned, set_logs_pinned] = createSignal(false);
   const [logs_auto_opened, set_logs_auto_opened] = createSignal(false);
   let compile_group_ref: HTMLDivElement | undefined;
@@ -83,7 +92,15 @@ const Toolbar: Component<Props> = (props) => {
     }
   }
 
-  onMount(estimate_opfs);
+  onMount(() => {
+    estimate_opfs();
+    // expose file input trigger callbacks to App via props
+    props.register_file_triggers?.(
+      () => file_input_ref?.click(),
+      () => folder_input_ref?.click(),
+      () => zip_input_ref?.click(),
+    );
+  });
 
   // re-estimate after compile finishes
   createEffect(() => {
@@ -206,20 +223,11 @@ const Toolbar: Component<Props> = (props) => {
     return "var(--fg-dim)";
   }
 
-  // watch controller -- imperative state machine, no SolidJS reactive scheduling
-  const watch = create_watch_controller({
-    get_files: () => props.store.files,
-    get_main: () => props.store.main_file(),
-    is_ready: () => worker_client.ready() && !worker_client.compiling(),
-    compile: (req) => worker_client.compile(req),
-    cancel_and_recompile: (req) => worker_client.cancel_and_recompile(req),
-  });
+  // watch controller is now created in App and passed via props
+  const watch = props.watch;
 
-  // wire imperative callbacks (not reactive effects)
-  props.store.on_change(() => watch.notify_change());
+  // persist PDF to OPFS (and synced folder if active) after successful compile
   worker_client.on_compile_done(() => {
-    watch.notify_compile_done();
-    // persist PDF to OPFS (and synced folder if active) after successful compile
     const url = worker_client.pdf_url();
     if (url) {
       fetch(url)
@@ -233,10 +241,7 @@ const Toolbar: Component<Props> = (props) => {
         })
         .catch(() => {});
     }
-    // persist synctex is now handled by worker_client on parse completion
   });
-
-  onCleanup(() => watch.cleanup());
 
   function handle_compile() {
     const files = { ...props.store.files };

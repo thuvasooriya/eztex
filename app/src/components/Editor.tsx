@@ -1,6 +1,6 @@
 import { type Component, onMount, onCleanup, createEffect, on, Show, createSignal, createMemo } from "solid-js";
 import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightSpecialChars, drawSelection } from "@codemirror/view";
-import { EditorState } from "@codemirror/state";
+import { EditorState, Compartment } from "@codemirror/state";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import {
   StreamLanguage,
@@ -19,6 +19,8 @@ import { worker_client } from "../lib/worker_client";
 
 type Props = {
   store: ProjectStore;
+  vim_enabled: boolean;
+  on_editor_view: (view: EditorView) => void;
 };
 
 const IMAGE_EXTS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"]);
@@ -157,6 +159,9 @@ const Editor: Component<Props> = (props) => {
   let view: EditorView | undefined;
   let updating_from_outside = false;
 
+  // vim mode compartment -- reconfigured when props.vim_enabled changes
+  const vim_compartment = new Compartment();
+
   const current_is_binary = () => is_binary(props.store.current_file());
 
   const image_mime = createMemo(() => {
@@ -213,6 +218,7 @@ const Editor: Component<Props> = (props) => {
         syntaxHighlighting(tokyo_night_highlight),
         tokyo_night_theme,
         keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
+        vim_compartment.of([]),
         EditorView.updateListener.of((update) => {
           if (update.docChanged && !updating_from_outside) {
             props.store.update_content(
@@ -242,7 +248,34 @@ const Editor: Component<Props> = (props) => {
       state,
       parent: container_ref,
     });
+
+    // expose editor view to App for command registry access
+    props.on_editor_view(view);
+
+    // apply initial vim mode if enabled
+    if (props.vim_enabled) {
+      import("@replit/codemirror-vim").then(({ vim }) => {
+        if (view) view.dispatch({ effects: vim_compartment.reconfigure(vim()) });
+      });
+    }
   });
+
+  // reconfigure vim mode when toggled
+  createEffect(
+    on(
+      () => props.vim_enabled,
+      (enabled) => {
+        if (!view) return;
+        if (enabled) {
+          import("@replit/codemirror-vim").then(({ vim }) => {
+            if (view) view.dispatch({ effects: vim_compartment.reconfigure(vim()) });
+          });
+        } else {
+          view.dispatch({ effects: vim_compartment.reconfigure([]) });
+        }
+      },
+    ),
+  );
 
   createEffect(
     on(
