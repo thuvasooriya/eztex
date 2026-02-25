@@ -26,10 +26,11 @@ export async function save_project(files: ProjectFiles, main_file?: string): Pro
   if (!dir) return false;
 
   try {
-    // clear existing files
+    // clear existing project files (preserve sidecar outputs like PDF and synctex)
+    const sidecar = new Set([PDF_FILENAME, SYNCTEX_FILENAME]);
     const to_remove: string[] = [];
     for await (const [name] of (dir as any).entries()) {
-      to_remove.push(name);
+      if (!sidecar.has(name)) to_remove.push(name);
     }
     for (const name of to_remove) {
       await dir.removeEntry(name).catch(() => {});
@@ -141,6 +142,7 @@ export async function clear_project(): Promise<void> {
 }
 
 const PDF_FILENAME = "_output.pdf";
+const SYNCTEX_FILENAME = "_output.synctex";
 
 export async function save_pdf(bytes: Uint8Array): Promise<void> {
   try {
@@ -162,6 +164,31 @@ export async function load_pdf(): Promise<Uint8Array | null> {
     const handle = await dir.getFileHandle(PDF_FILENAME);
     const file = await handle.getFile();
     return new Uint8Array(await file.arrayBuffer());
+  } catch {
+    return null;
+  }
+}
+
+export async function save_synctex(text: string): Promise<void> {
+  try {
+    const dir = await get_project_dir();
+    if (!dir) return;
+    const handle = await dir.getFileHandle(SYNCTEX_FILENAME, { create: true });
+    const writable = await handle.createWritable();
+    await writable.write(new TextEncoder().encode(text));
+    await writable.close();
+  } catch {
+    // graceful degradation
+  }
+}
+
+export async function load_synctex(): Promise<string | null> {
+  try {
+    const dir = await get_project_dir();
+    if (!dir) return null;
+    const handle = await dir.getFileHandle(SYNCTEX_FILENAME);
+    const file = await handle.getFile();
+    return await file.text();
   } catch {
     return null;
   }

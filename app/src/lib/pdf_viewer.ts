@@ -127,17 +127,18 @@ export class PdfViewerWrapper {
     // scroll page into view first
     this.viewer.scrollPageIntoView({ pageNumber: target.page });
 
-    // convert synctex coords (PDF user-space, bottom-left origin) to viewport pixels
-    // target.x, target.y are already in PDF coordinate space (y = bottom of block)
-    // target.y - target.height = top of block in PDF space
-    const vp = page_view.viewport;
-    const pdf_left = target.x;
-    const pdf_bottom = target.y - target.height;
-    const pdf_right = target.x + target.width;
-    const pdf_top = target.y;
-
-    const vp_rect = vp.convertToViewportRectangle([pdf_left, pdf_bottom, pdf_right, pdf_top]);
-    const [left, top, right, bottom] = PDFJS.Util.normalizeRect(vp_rect);
+    // synctex coordinates are in PDF points with origin at top-left, v increasing downward.
+    // the page div also uses top-left origin (CSS). so we just scale by viewport.scale.
+    // target.x = left + offset.x, target.y = baseline_v + offset.y (top-down)
+    // top of box = target.y - target.height
+    const scale = page_view.viewport.scale;
+    const css_left = target.x * scale;
+    const css_top = (target.y - target.height) * scale;
+    const css_width = target.width * scale;
+    const css_height = target.height * scale;
+    console.debug("[synctex:coords] forward highlight", {
+      target, scale, css: { left: css_left, top: css_top, width: css_width, height: css_height },
+    });
 
     // position highlight overlay on the page div
     const page_div = page_view.div as HTMLDivElement;
@@ -146,10 +147,10 @@ export class PdfViewerWrapper {
     const hl = document.createElement("div");
     hl.className = "synctex-highlight";
     hl.style.position = "absolute";
-    hl.style.left = `${left}px`;
-    hl.style.top = `${top}px`;
-    hl.style.width = `${right - left}px`;
-    hl.style.height = `${bottom - top}px`;
+    hl.style.left = `${css_left}px`;
+    hl.style.top = `${css_top}px`;
+    hl.style.width = `${css_width}px`;
+    hl.style.height = `${css_height}px`;
     page_div.style.position = "relative";
     page_div.appendChild(hl);
     this.highlight_el = hl;
@@ -165,7 +166,7 @@ export class PdfViewerWrapper {
     }
   }
 
-  // reverse sync: click event -> {page, x, y} in synctex coords
+  // reverse sync: click event -> {page, x, y} in synctex coords (top-left origin, points)
   click_to_synctex(e: MouseEvent): { page: number; x: number; y: number } | null {
     // find which page was clicked
     const target = (e.target as HTMLElement).closest(".page") as HTMLElement | null;
@@ -179,16 +180,20 @@ export class PdfViewerWrapper {
     const page_view = this.viewer.getPageView(page_index);
     if (!page_view?.viewport) return null;
 
-    const vp = page_view.viewport;
     const page_div = page_view.div as HTMLElement;
     const rect = page_div.getBoundingClientRect();
     const dx = e.clientX - rect.left;
     const dy = e.clientY - rect.top;
 
-    const [pdf_x, pdf_y] = vp.convertToPdfPoint(dx, dy);
-    // convertToPdfPoint returns PDF user-space coords (bottom-left origin)
-    // which is exactly what sync_to_code expects -- no flip needed
-    return { page: page_num, x: pdf_x, y: pdf_y };
+    // synctex coords are in PDF points with top-left origin (v increases downward).
+    // the page div also uses top-left origin. just divide by scale to get points.
+    const scale = page_view.viewport.scale;
+    const synctex_x = dx / scale;
+    const synctex_y = dy / scale;
+    console.debug("[synctex:coords] reverse click", {
+      page_num, dx, dy, scale, synctex_x, synctex_y,
+    });
+    return { page: page_num, x: synctex_x, y: synctex_y };
   }
 
   get page_count(): number {

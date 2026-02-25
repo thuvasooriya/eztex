@@ -33,6 +33,7 @@ const [diagnostics, set_diagnostics] = createSignal<Diagnostic[]>([]);
 
 // synctex state
 const [synctex_data, set_synctex_data] = createSignal<PdfSyncObject | null>(null);
+const [synctex_text, set_synctex_text] = createSignal<string | null>(null);
 const [sync_target, set_sync_target] = createSignal<SyncToPdfResult | null>(null);
 
 // goto request: set by diagnostic clicks or reverse sync, consumed by Editor to jump to file:line
@@ -116,6 +117,7 @@ function handle_message(e: MessageEvent) {
           .then((text) => {
             const parsed = parse_synctex(text);
             if (parsed) {
+              set_synctex_text(text);
               set_synctex_data(parsed);
             }
           })
@@ -188,19 +190,33 @@ function restore_pdf_bytes(bytes: Uint8Array) {
   set_pdf_bytes(bytes);
 }
 
+function restore_synctex(parsed: PdfSyncObject) {
+  set_synctex_data(parsed);
+}
+
 // forward sync: editor cursor -> PDF highlight
 function sync_forward(file: string, line: number): void {
   const data = synctex_data();
-  if (!data) return;
+  if (!data) {
+    console.debug("[synctex:data] sync_forward: synctex_data is null, skipping");
+    return;
+  }
+  console.debug("[synctex:forward] sync_forward called", { file, line });
   const result = sync_to_pdf(data, file, line);
+  console.debug("[synctex:forward] sync_forward result", result);
   set_sync_target(result);
 }
 
 // reverse sync: PDF click -> editor jump
 function do_sync_to_code(page: number, x: number, y: number): void {
   const data = synctex_data();
-  if (!data) return;
+  if (!data) {
+    console.debug("[synctex:data] do_sync_to_code: synctex_data is null, skipping");
+    return;
+  }
+  console.debug("[synctex:reverse] do_sync_to_code called", { page, x, y });
   const result = sync_to_code(data, page, x, y);
+  console.debug("[synctex:reverse] do_sync_to_code result", result);
   if (result) request_goto(result.file, result.line);
 }
 
@@ -214,6 +230,7 @@ export const worker_client = {
   on_ready,
   restore_pdf_url,
   restore_pdf_bytes,
+  restore_synctex,
   request_goto,
   clear_goto: () => set_goto_request(null),
   sync_forward,
@@ -231,5 +248,6 @@ export const worker_client = {
   diagnostics,
   goto_request,
   synctex_data,
+  synctex_text,
   sync_target,
 };

@@ -1,7 +1,8 @@
 import { type Component, onMount, onCleanup, createSignal, createEffect, Show } from "solid-js";
 import { worker_client } from "./lib/worker_client";
+import { parse_synctex } from "./lib/synctex";
 import { create_project_store } from "./lib/project_store";
-import { save_project, load_project, load_pdf } from "./lib/project_persist";
+import { save_project, load_project, load_pdf, load_synctex } from "./lib/project_persist";
 import { create_local_folder_sync, type ConflictInfo } from "./lib/local_folder_sync";
 import Toolbar from "./components/Toolbar";
 import ConflictDialog from "./components/ConflictDialog";
@@ -17,6 +18,8 @@ const NARROW_BREAKPOINT = 900;
 const TOO_NARROW_BREAKPOINT = 600;
 const PREVIEW_WIDTH_KEY = "eztex_preview_width";
 const SPLIT_DIR_KEY = "eztex_split_dir";
+const FILES_VISIBLE_KEY = "eztex_files_visible";
+const PREVIEW_VISIBLE_KEY = "eztex_preview_visible";
 
 function get_initial_preview_width(): number {
   const stored = localStorage.getItem(PREVIEW_WIDTH_KEY);
@@ -36,8 +39,12 @@ const App: Component = () => {
   const [file_panel_width, set_file_panel_width] = createSignal(200);
   const [preview_width, set_preview_width] = createSignal(get_initial_preview_width());
   const [preview_height, set_preview_height] = createSignal(Math.floor((window.innerHeight - 44) / 2));
-  const [files_visible, set_files_visible] = createSignal(window.innerWidth >= NARROW_BREAKPOINT);
-  const [preview_visible, set_preview_visible] = createSignal(true);
+  const [files_visible, set_files_visible] = createSignal(
+    window.innerWidth >= NARROW_BREAKPOINT && localStorage.getItem(FILES_VISIBLE_KEY) !== "false"
+  );
+  const [preview_visible, set_preview_visible] = createSignal(
+    localStorage.getItem(PREVIEW_VISIBLE_KEY) !== "false"
+  );
   const [is_narrow, set_is_narrow] = createSignal(window.innerWidth < NARROW_BREAKPOINT);
   const [is_too_narrow, set_is_too_narrow] = createSignal(window.innerWidth <= TOO_NARROW_BREAKPOINT);
   const [show_preview_in_narrow, set_show_preview_in_narrow] = createSignal(false);
@@ -46,6 +53,10 @@ const App: Component = () => {
   );
   const [is_resizing, set_is_resizing] = createSignal(false);
   const [layout_switching, set_layout_switching] = createSignal(false);
+
+  // persist panel visibility to localStorage
+  createEffect(() => localStorage.setItem(FILES_VISIBLE_KEY, String(files_visible())));
+  createEffect(() => localStorage.setItem(PREVIEW_VISIBLE_KEY, String(preview_visible())));
 
   // onboarding state
   const [show_onboarding, set_show_onboarding] = createSignal(!is_onboarded());
@@ -108,8 +119,8 @@ const App: Component = () => {
     // start engine loading in parallel with OPFS reads
     worker_client.init();
 
-    // wait for both project + PDF restore before registering on_ready
-    const [saved, pdf_bytes] = await Promise.all([load_project(), load_pdf()]);
+    // wait for both project + PDF + synctex restore before registering on_ready
+    const [saved, pdf_bytes, synctex_text] = await Promise.all([load_project(), load_pdf(), load_synctex()]);
 
     let pdf_restored = false;
     if (saved && Object.keys(saved.files).length > 0) {
@@ -126,6 +137,10 @@ const App: Component = () => {
       worker_client.restore_pdf_url(url);
       worker_client.restore_pdf_bytes(new Uint8Array(pdf_bytes));
       pdf_restored = true;
+    }
+    if (synctex_text) {
+      const parsed = parse_synctex(synctex_text);
+      if (parsed) worker_client.restore_synctex(parsed);
     }
 
     // auto-compile when engine becomes ready (if no PDF was restored)

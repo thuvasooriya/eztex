@@ -264,12 +264,19 @@ class Rect {
     this.right = right;
   }
 
-  include(r: Rect): boolean {
-    return this.left <= r.left && this.right >= r.right && this.bottom >= r.bottom && this.top <= r.top;
+  contains(px: number, py: number): boolean {
+    return px >= this.left && px <= this.right && py >= this.top && py <= this.bottom;
   }
 
-  distance_from_center(x: number, y: number): number {
-    return Math.sqrt(((this.left + this.right) / 2 - x) ** 2 + ((this.bottom + this.top) / 2 - y) ** 2);
+  area(): number {
+    return (this.right - this.left) * (this.bottom - this.top);
+  }
+
+  // minimum distance from point to rectangle edge (0 when point is inside)
+  distance_to_point(px: number, py: number): number {
+    const dx = Math.max(this.left - px, 0, px - this.right);
+    const dy = Math.max(this.top - py, 0, py - this.bottom);
+    return Math.sqrt(dx * dx + dy * dy);
   }
 }
 
@@ -319,7 +326,10 @@ function get_blocks_for_line(line_page_blocks: { [line: number]: { [page: number
 
 export function sync_to_pdf(data: PdfSyncObject, file: string, line: number): SyncToPdfResult | null {
   const input_path = find_input_path(data, file);
-  if (!input_path) return null;
+  if (!input_path) {
+    console.debug("[synctex:forward] no input path found for file", file);
+    return null;
+  }
 
   const line_page_blocks = data.blockNumberLine[input_path];
   const line_nums = Object.keys(line_page_blocks).map(Number).sort((a, b) => a - b);
@@ -355,13 +365,29 @@ export function sync_to_pdf(data: PdfSyncObject, file: string, line: number): Sy
 
   if (blocks.length === 0) return null;
 
+  const raw_height = rect.bottom - rect.top;
+  const raw_width = rect.right - rect.left;
+
+  // reject degenerate bounding boxes (preamble lines, unmatched content)
+  // that span most of the page -- no meaningful typeset region to highlight
+  if (raw_height > 200) {
+    console.debug("[synctex:forward] sync_to_pdf rejected (degenerate height)", { file, line, raw_height });
+    return null;
+  }
+
+  // clamp small boxes to readable minimum sizes:
+  // single-character records produce ~10pt boxes, make them visible
+  const width = Math.max(raw_width, 50);
+  const height = Math.max(raw_height, 12);
+
   const result: SyncToPdfResult = {
     page: blocks[0].page,
     x: rect.left + data.offset.x,
     y: rect.bottom + data.offset.y,
-    width: Math.max(rect.right - rect.left, 10),
-    height: Math.max(rect.bottom - rect.top, 10),
+    width,
+    height,
   };
+  console.debug("[synctex:forward] sync_to_pdf", { file, line, input_path, rect: { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right }, offset: data.offset, result });
   return result;
 }
 
@@ -370,11 +396,11 @@ export function sync_to_pdf(data: PdfSyncObject, file: string, line: number): Sy
 export function sync_to_code(data: PdfSyncObject, page: number, x: number, y: number): SyncToCodeResult | null {
   const x0 = x - data.offset.x;
   const y0 = y - data.offset.y;
+  console.debug("[synctex:reverse] sync_to_code input", { page, x, y, offset: data.offset, adjusted: { x0, y0 } });
 
-  let best_input = "";
-  let best_line = 0;
-  let best_dist = 2e16;
-  let best_rect = new Rect(0, 2e16, 0, 2e16);
+  // collect all candidate blocks on this page
+  type Candidate = { file: string; line: number; rect: Rect };
+  const candidates: Candidate[] = [];
 
   for (const file_name in data.blockNumberLine) {
     const line_page_blocks = data.blockNumberLine[file_name];
@@ -385,19 +411,34 @@ export function sync_to_code(data: PdfSyncObject, page: number, x: number, y: nu
         const blocks = page_blocks[Number(page_num_str)];
         for (const block of blocks) {
           if (block.elements !== undefined || block.type === "k" || block.type === "r") continue;
-          const rect = block_to_rect(block);
-          const dist = rect.distance_from_center(x0, y0);
-          if (best_rect.include(rect) || (dist < best_dist && !rect.include(best_rect))) {
-            best_input = file_name;
-            best_line = Number(line_num_str);
-            best_dist = dist;
-            best_rect = rect;
-          }
+          candidates.push({ file: file_name, line: Number(line_num_str), rect: block_to_rect(block) });
         }
       }
     }
   }
 
-  if (!best_input) return null;
-  return { file: normalize_path(best_input), line: best_line };
+  if (candidates.length === 0) return null;
+
+  // pass 1: find smallest containing rect (innermost block that contains the click)
+  let best: Candidate | null = null;
+  for (const c of candidates) {
+    if (!c.rect.contains(x0, y0)) continue;
+    if (!best || c.rect.area() < best.rect.area()) best = c;
+  }
+
+  // pass 2 fallback: nearest block by edge distance
+  if (!best) {
+    let best_dist = Infinity;
+    for (const c of candidates) {
+      const dist = c.rect.distance_to_point(x0, y0);
+      if (dist < best_dist) {
+        best_dist = dist;
+        best = c;
+      }
+    }
+  }
+
+  if (!best) return null;
+  console.debug("[synctex:reverse] sync_to_code result", { file: normalize_path(best.file), line: best.line, dist: best.rect.distance_to_point(x0, y0) });
+  return { file: normalize_path(best.file), line: best.line };
 }
