@@ -305,19 +305,22 @@ export fn ttbc_output_close(handle: Handle) c_int {
                 buf.deinit(std.heap.c_allocator);
                 std.heap.c_allocator.destroy(buf);
             }
+            const data = buf.items;
             // gzdopen takes ownership of the fd; dup so our fs.File.close() is
             // still valid after gzclose (which will close the dup'd fd).
             const raw_fd = slot.file.handle;
             const dup_fd = std.posix.dup(raw_fd) catch {
+                // dup unavailable (e.g. WASM) -- write raw uncompressed data
+                if (data.len > 0) slot.file.writeAll(data) catch {};
                 slot.file.close();
-                return -1;
+                return 0;
             };
             const gz = gzdopen(dup_fd, "wb") orelse {
                 std.posix.close(dup_fd);
+                if (data.len > 0) slot.file.writeAll(data) catch {};
                 slot.file.close();
                 return -1;
             };
-            const data = buf.items;
             if (data.len > 0) {
                 _ = gzwrite(gz, data.ptr, @intCast(data.len));
             }

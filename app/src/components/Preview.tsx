@@ -1,4 +1,4 @@
-import { type Component, Show, onMount, onCleanup, createEffect } from "solid-js";
+import { type Component, Show, onCleanup, createEffect } from "solid-js";
 import { worker_client } from "../lib/worker_client";
 import { PdfViewerWrapper } from "../lib/pdf_viewer";
 
@@ -6,17 +6,19 @@ const Preview: Component = () => {
   let container_ref: HTMLDivElement | undefined;
   let viewer: PdfViewerWrapper | undefined;
 
-  onMount(() => {
-    if (!container_ref) return;
+  function ensure_viewer(): PdfViewerWrapper | undefined {
+    if (viewer) return viewer;
+    if (!container_ref) return undefined;
     viewer = new PdfViewerWrapper(container_ref);
-  });
+    return viewer;
+  }
 
   // load PDF when bytes change
   createEffect(() => {
     const bytes = worker_client.pdf_bytes();
-    if (bytes && viewer) {
-      viewer.load_document(bytes);
-    }
+    if (!bytes) return;
+    const v = ensure_viewer();
+    if (v) v.load_document(bytes);
   });
 
   // forward sync: highlight target in PDF
@@ -42,7 +44,7 @@ const Preview: Component = () => {
   createEffect(() => {
     const url = worker_client.pdf_url();
     const bytes = worker_client.pdf_bytes();
-    if (url && !bytes && viewer) {
+    if (url && !bytes) {
       fetch(url)
         .then((r) => r.arrayBuffer())
         .then((buf) => {

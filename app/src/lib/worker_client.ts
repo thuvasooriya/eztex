@@ -111,7 +111,7 @@ function handle_message(e: MessageEvent) {
         set_pdf_url(url);
       }
       // parse synctex asynchronously
-      if (synctex_raw) {
+      if (synctex_raw && synctex_raw.length > 0) {
         decompress_gzip(synctex_raw)
           .then((text) => {
             const parsed = parse_synctex(text);

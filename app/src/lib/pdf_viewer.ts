@@ -16,6 +16,8 @@ export class PdfViewerWrapper {
   private viewer: PDFViewer;
   private current_doc: PDFJS.PDFDocumentProxy | null = null;
   private highlight_el: HTMLDivElement | null = null;
+  private resize_observer: ResizeObserver | null = null;
+  private load_gen = 0; // generation counter to discard stale async loads
   private scale_key = "eztex_pdf_scale";
 
   constructor(container: HTMLDivElement) {
@@ -46,6 +48,14 @@ export class PdfViewerWrapper {
       }
     });
 
+    // refit on container resize (pane drag, window resize)
+    this.resize_observer = new ResizeObserver(() => {
+      if (!this.current_doc) return;
+      const saved = localStorage.getItem(this.scale_key);
+      this.viewer.currentScaleValue = saved ?? "page-width";
+    });
+    this.resize_observer.observe(container);
+
     // handle ctrl+scroll zoom
     container.addEventListener("wheel", this.handle_wheel, { passive: false });
   }
@@ -63,21 +73,40 @@ export class PdfViewerWrapper {
   };
 
   async load_document(data: Uint8Array): Promise<void> {
+    const gen = ++this.load_gen;
     const prev_page = this.current_doc ? this.viewer.currentPageNumber : 1;
     const prev_scroll = this.container.scrollTop;
 
+    // clear viewer state BEFORE loading the new doc. this triggers
+    // PDFViewer's internal cleanup (which zeros the global PagesMapper
+    // singleton), but returns early without calling getPage because we
+    // pass null. when getDocument resolves below, its GetDoc handler
+    // re-sets PagesMapper.pagesNumber to the correct count, so the
+    // subsequent setDocument(newDoc) -- which skips cleanup since
+    // this.pdfDocument is now null -- can call getPage(1) successfully.
+    const old_doc = this.current_doc;
+    this.current_doc = null;
+    this.viewer.setDocument(null as any);
+    this.link_service.setDocument(null as any);
+    if (old_doc) {
+      old_doc.destroy();
+    }
+
     const doc = await PDFJS.getDocument({ data: data.slice().buffer }).promise;
 
-    if (this.current_doc) {
-      this.current_doc.destroy();
+    // stale load -- a newer load_document call superseded this one
+    if (gen !== this.load_gen) {
+      doc.destroy();
+      return;
     }
-    this.current_doc = doc;
 
+    this.current_doc = doc;
     this.viewer.setDocument(doc);
     this.link_service.setDocument(doc);
 
     // restore scroll after pages render
     this.event_bus.on("pagesloaded", () => {
+      if (gen !== this.load_gen) return; // stale
       if (prev_page <= doc.numPages) {
         this.viewer.currentPageNumber = prev_page;
       }
@@ -169,6 +198,8 @@ export class PdfViewerWrapper {
 
   destroy(): void {
     this.container.removeEventListener("wheel", this.handle_wheel);
+    this.resize_observer?.disconnect();
+    this.resize_observer = null;
     this.clear_highlight();
     if (this.current_doc) {
       this.current_doc.destroy();

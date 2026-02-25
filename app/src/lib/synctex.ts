@@ -55,20 +55,27 @@ export type SyncToCodeResult = {
   line: number;
 };
 
-// -- gzip decompression --
+// -- gzip decompression (with plain-text fallback) --
 
-export async function decompress_gzip(data: Uint8Array): Promise<string> {
-  const ds = new DecompressionStream("gzip");
-  const blob = new Blob([data as BlobPart]);
-  const stream = blob.stream().pipeThrough(ds);
-  const decompressed = await new Response(stream).arrayBuffer();
-  // synctex files are latin1/binary encoded, not utf-8
-  const bytes = new Uint8Array(decompressed);
+function bytes_to_latin1(bytes: Uint8Array): string {
   let result = "";
   for (let i = 0; i < bytes.length; i++) {
     result += String.fromCharCode(bytes[i]);
   }
   return result;
+}
+
+export async function decompress_gzip(data: Uint8Array): Promise<string> {
+  if (data.length === 0) return "";
+  // check gzip magic bytes; if not gzip, treat as plain text
+  if (data.length < 2 || data[0] !== 0x1f || data[1] !== 0x8b) {
+    return bytes_to_latin1(data);
+  }
+  const ds = new DecompressionStream("gzip");
+  const blob = new Blob([data as BlobPart]);
+  const stream = blob.stream().pipeThrough(ds);
+  const decompressed = await new Response(stream).arrayBuffer();
+  return bytes_to_latin1(new Uint8Array(decompressed));
 }
 
 // -- parser (from synctexjs.ts) --
