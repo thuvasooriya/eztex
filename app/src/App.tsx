@@ -45,6 +45,7 @@ const App: Component = () => {
     (localStorage.getItem(SPLIT_DIR_KEY) as "horizontal" | "vertical") || "horizontal"
   );
   const [is_resizing, set_is_resizing] = createSignal(false);
+  const [layout_switching, set_layout_switching] = createSignal(false);
 
   // onboarding state
   const [show_onboarding, set_show_onboarding] = createSignal(!is_onboarded());
@@ -76,11 +77,15 @@ const App: Component = () => {
   }
 
   function toggle_split() {
-    set_split_dir((d) => {
-      const next = d === "horizontal" ? "vertical" : "horizontal";
-      localStorage.setItem(SPLIT_DIR_KEY, next);
-      return next;
-    });
+    set_layout_switching(true);
+    setTimeout(() => {
+      set_split_dir((d) => {
+        const next = d === "horizontal" ? "vertical" : "horizontal";
+        localStorage.setItem(SPLIT_DIR_KEY, next);
+        return next;
+      });
+      setTimeout(() => set_layout_switching(false), 100);
+    }, 100);
   }
 
   // handle sync results -- check for conflicts
@@ -221,6 +226,7 @@ const App: Component = () => {
     if (is_narrow()) cls += " narrow-mode";
     if (use_swap_mode() && show_preview_in_narrow()) cls += " show-preview";
     if (is_resizing()) cls += " is-resizing";
+    if (layout_switching()) cls += " layout-switching";
     cls += ` split-${split_dir()}`;
     return cls;
   };

@@ -425,11 +425,12 @@ body {
   display: flex;
   flex: 1;
   overflow: hidden;
-  transition: flex-direction var(--duration-normal) var(--ease-out);
+  transition: opacity 100ms ease, transform 100ms ease;
 }
 
-.workspace.is-resizing .split-container {
-  transition: none;
+.workspace.layout-switching .split-container {
+  opacity: 0;
+  transform: scale(0.98);
 }
 
 .split-container.split-horizontal {
