@@ -3,6 +3,7 @@ import type { ProjectStore } from "../lib/project_store";
 import { is_binary } from "../lib/project_store";
 import { build_tree, collect_folder_paths, auto_suffix, type TreeNode } from "../lib/file_tree";
 import type { LocalFolderSync } from "../lib/local_folder_sync";
+import { worker_client } from "../lib/worker_client";
 import FolderSyncStatus from "./FolderSyncStatus";
 
 function file_icon(name: string): string {
@@ -34,6 +35,13 @@ const FilePanel: Component<Props> = (props) => {
 
   const tex_files = () => props.store.file_names().filter((n) => n.endsWith(".tex"));
   const show_main_controls = () => tex_files().length > 1;
+
+  function set_entry_and_compile(name: string) {
+    props.store.set_main_file(name);
+    if (worker_client.ready() && !worker_client.compiling()) {
+      worker_client.compile({ files: { ...props.store.files }, main: name });
+    }
+  }
 
   const tree = () => build_tree(props.store.file_names());
 
@@ -223,7 +231,7 @@ const FilePanel: Component<Props> = (props) => {
                 <button
                   class={`set-main-btn ${name === props.store.main_file() ? "active" : ""}`}
                   title={name === props.store.main_file() ? "Entry file" : "Set as entry file"}
-                  onClick={(e) => { e.stopPropagation(); props.store.set_main_file(name); }}
+                  onClick={(e) => { e.stopPropagation(); set_entry_and_compile(name); }}
                 >
                   <Show
                     when={name === props.store.main_file()}
@@ -368,7 +376,7 @@ const FilePanel: Component<Props> = (props) => {
                 Rename
               </button>
               <Show when={menu().file.endsWith(".tex") && menu().file !== props.store.main_file()}>
-                <button class="ctx-menu-item" onClick={() => { props.store.set_main_file(menu().file); set_ctx_menu(null); }}>
+                <button class="ctx-menu-item" onClick={() => { set_entry_and_compile(menu().file); set_ctx_menu(null); }}>
                   Set as entry file
                 </button>
               </Show>
