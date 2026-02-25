@@ -6,7 +6,7 @@ import { create_project_store } from "./lib/project_store";
 import { save_project, load_project, load_pdf, load_synctex } from "./lib/project_persist";
 import { create_local_folder_sync, type ConflictInfo } from "./lib/local_folder_sync";
 import { create_watch_controller } from "./lib/watch_controller";
-import { palette_open, get_all_commands, IS_MAC } from "./lib/commands";
+import { get_all_commands, IS_MAC } from "./lib/commands";
 import { init_commands } from "./lib/register_commands";
 import Toolbar from "./components/Toolbar";
 import CommandPalette from "./components/CommandPalette";
