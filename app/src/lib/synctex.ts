@@ -290,9 +290,9 @@ function blocks_to_rect(blocks: Block[]): Rect {
 }
 
 // -- path normalization --
-// synctex records WASI paths like ./main.tex -- strip leading ./
+// synctex records WASI paths like ./main.tex or //main.tex -- strip leading ./ and /
 function normalize_path(p: string): string {
-  return p.replace(/^\.\//, "");
+  return p.replace(/^[./]+/, "");
 }
 
 function find_input_path(data: PdfSyncObject, file: string): string | undefined {
@@ -355,13 +355,14 @@ export function sync_to_pdf(data: PdfSyncObject, file: string, line: number): Sy
 
   if (blocks.length === 0) return null;
 
-  return {
+  const result: SyncToPdfResult = {
     page: blocks[0].page,
     x: rect.left + data.offset.x,
-    y: rect.top + data.offset.y,
+    y: rect.bottom + data.offset.y,
     width: Math.max(rect.right - rect.left, 10),
     height: Math.max(rect.bottom - rect.top, 10),
   };
+  return result;
 }
 
 // -- reverse sync: PDF click -> editor --

@@ -278,7 +278,8 @@ const Editor: Component<Props> = (props) => {
   createEffect(() => {
     const req = worker_client.goto_request();
     if (!req || !view) return;
-    if (req.file !== props.store.current_file()) return;
+    const file_matches = req.file === props.store.current_file();
+    if (!file_matches) return;
     const line_num = Math.min(req.line, view.state.doc.lines);
     const line_obj = view.state.doc.line(line_num);
     view.dispatch({
@@ -286,6 +287,8 @@ const Editor: Component<Props> = (props) => {
       scrollIntoView: true,
     });
     view.focus();
+    // clear after consuming so stale state doesn't accumulate
+    worker_client.clear_goto();
   });
 
   onCleanup(() => {

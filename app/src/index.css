@@ -756,6 +756,33 @@ body {
   height: 100%;
   position: absolute;
   inset: 0;
+  scrollbar-width: none; /* Firefox: hide by default */
+}
+
+.pdf-container::-webkit-scrollbar {
+  width: 0; /* Chrome/Safari: hide by default */
+}
+
+.pdf-container:hover {
+  scrollbar-width: thin; /* Firefox: show on hover */
+  scrollbar-color: var(--bg-lighter) transparent;
+}
+
+.pdf-container:hover::-webkit-scrollbar {
+  width: 6px;
+}
+
+.pdf-container:hover::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.pdf-container:hover::-webkit-scrollbar-thumb {
+  background: var(--bg-lighter);
+  border-radius: 3px;
+}
+
+.pdf-container:hover::-webkit-scrollbar-thumb:hover {
+  background: var(--border);
 }
 
 .pdf-container .page {

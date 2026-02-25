@@ -16,7 +16,12 @@ async function get_project_dir(): Promise<FileSystemDirectoryHandle | null> {
   }
 }
 
-export async function save_project(files: ProjectFiles): Promise<boolean> {
+export type SavedManifest = {
+  files: { name: string; binary: boolean; safe_name: string }[];
+  main_file?: string;
+};
+
+export async function save_project(files: ProjectFiles, main_file?: string): Promise<boolean> {
   const dir = await get_project_dir();
   if (!dir) return false;
 
@@ -32,7 +37,7 @@ export async function save_project(files: ProjectFiles): Promise<boolean> {
 
     // write files (encode names as safe filenames using base64url for paths with /)
     const encoder = new TextEncoder();
-    const manifest: { name: string; binary: boolean; safe_name: string }[] = [];
+    const file_entries: SavedManifest["files"] = [];
 
     for (const [name, content] of Object.entries(files)) {
       const safe_name = encode_filename(name);
@@ -40,15 +45,16 @@ export async function save_project(files: ProjectFiles): Promise<boolean> {
       const writable = await handle.createWritable();
       if (content instanceof Uint8Array) {
         await writable.write(content as unknown as ArrayBuffer);
-        manifest.push({ name, binary: true, safe_name });
+        file_entries.push({ name, binary: true, safe_name });
       } else {
         await writable.write(encoder.encode(content));
-        manifest.push({ name, binary: false, safe_name });
+        file_entries.push({ name, binary: false, safe_name });
       }
       await writable.close();
     }
 
     // write manifest
+    const manifest: SavedManifest = { files: file_entries, main_file };
     const mh = await dir.getFileHandle("__manifest.json", { create: true });
     const mw = await mh.createWritable();
     await mw.write(encoder.encode(JSON.stringify(manifest)));
@@ -60,17 +66,19 @@ export async function save_project(files: ProjectFiles): Promise<boolean> {
   }
 }
 
-export async function load_project(): Promise<ProjectFiles | null> {
+export async function load_project(): Promise<{ files: ProjectFiles; main_file?: string } | null> {
   const dir = await get_project_dir();
   if (!dir) return null;
 
   try {
     const mh = await dir.getFileHandle("__manifest.json");
     const mf = await mh.getFile();
-    const manifest: { name: string; binary: boolean; safe_name: string }[] = JSON.parse(await mf.text());
+    const raw = JSON.parse(await mf.text());
+    // support old format (array) and new format ({ files, main_file })
+    const manifest: SavedManifest = Array.isArray(raw) ? { files: raw } : raw;
 
     const files: ProjectFiles = {};
-    for (const entry of manifest) {
+    for (const entry of manifest.files) {
       try {
         const fh = await dir.getFileHandle(entry.safe_name);
         const file = await fh.getFile();
@@ -85,7 +93,7 @@ export async function load_project(): Promise<ProjectFiles | null> {
     }
 
     if (Object.keys(files).length === 0) return null;
-    return files;
+    return { files, main_file: manifest.main_file };
   } catch {
     return null;
   }

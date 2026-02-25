@@ -127,17 +127,14 @@ export class PdfViewerWrapper {
     // scroll page into view first
     this.viewer.scrollPageIntoView({ pageNumber: target.page });
 
-    // convert synctex coords (PDF user-space, top-origin after offset) to viewport pixels
+    // convert synctex coords (PDF user-space, bottom-left origin) to viewport pixels
+    // target.x, target.y are already in PDF coordinate space (y = bottom of block)
+    // target.y - target.height = top of block in PDF space
     const vp = page_view.viewport;
-    const page_height = vp.viewBox[3];
-
-    // synctex y is from top (after adding offset), PDF origin is bottom-left
-    // so: pdf_bottom_y = page_height - synctex_y - synctex_height
-    // and: pdf_top_y = page_height - synctex_y
     const pdf_left = target.x;
-    const pdf_bottom = page_height - (target.y + target.height);
+    const pdf_bottom = target.y - target.height;
     const pdf_right = target.x + target.width;
-    const pdf_top = page_height - target.y;
+    const pdf_top = target.y;
 
     const vp_rect = vp.convertToViewportRectangle([pdf_left, pdf_bottom, pdf_right, pdf_top]);
     const [left, top, right, bottom] = PDFJS.Util.normalizeRect(vp_rect);
@@ -172,7 +169,9 @@ export class PdfViewerWrapper {
   click_to_synctex(e: MouseEvent): { page: number; x: number; y: number } | null {
     // find which page was clicked
     const target = (e.target as HTMLElement).closest(".page") as HTMLElement | null;
-    if (!target) return null;
+    if (!target) {
+      return null;
+    }
     const page_num_str = target.getAttribute("data-page-number");
     if (!page_num_str) return null;
     const page_num = parseInt(page_num_str, 10);
@@ -187,9 +186,9 @@ export class PdfViewerWrapper {
     const dy = e.clientY - rect.top;
 
     const [pdf_x, pdf_y] = vp.convertToPdfPoint(dx, dy);
-    // pdf_y is from bottom of page, convert to synctex convention (from top)
-    const sync_y = vp.viewBox[3] - pdf_y;
-    return { page: page_num, x: pdf_x, y: sync_y };
+    // convertToPdfPoint returns PDF user-space coords (bottom-left origin)
+    // which is exactly what sync_to_code expects -- no flip needed
+    return { page: page_num, x: pdf_x, y: pdf_y };
   }
 
   get page_count(): number {

@@ -95,6 +95,15 @@ const App: Component = () => {
     }
   }
 
+  // track event listeners for cleanup -- registered synchronously so SolidJS
+  // can associate the onCleanup with the reactive root (before any awaits)
+  let _cleanup_resize: (() => void) | null = null;
+  let _cleanup_keydown: (() => void) | null = null;
+  onCleanup(() => {
+    _cleanup_resize?.();
+    _cleanup_keydown?.();
+  });
+
   onMount(async () => {
     // start engine loading in parallel with OPFS reads
     worker_client.init();
@@ -103,8 +112,12 @@ const App: Component = () => {
     const [saved, pdf_bytes] = await Promise.all([load_project(), load_pdf()]);
 
     let pdf_restored = false;
-    if (saved && Object.keys(saved).length > 0) {
-      store.load_files(saved);
+    if (saved && Object.keys(saved.files).length > 0) {
+      store.load_files(saved.files);
+      if (saved.main_file && saved.main_file in saved.files) {
+        store.set_main_file(saved.main_file);
+        store.set_current_file(saved.main_file);
+      }
     } else {
       await store.init_from_template();
     }
@@ -129,7 +142,7 @@ const App: Component = () => {
       if (folder_sync.state().active) return; // folder sync handles persistence
       if (save_timer !== undefined) clearTimeout(save_timer);
       save_timer = setTimeout(() => {
-        save_project(store.files).catch(() => {});
+        save_project(store.files, store.main_file()).catch(() => {});
       }, 1000);
     });
 
@@ -160,10 +173,10 @@ const App: Component = () => {
       }
     };
     window.addEventListener("resize", on_resize);
-    onCleanup(() => window.removeEventListener("resize", on_resize));
+    _cleanup_resize = () => window.removeEventListener("resize", on_resize);
 
     document.addEventListener("keydown", handle_keydown);
-    onCleanup(() => document.removeEventListener("keydown", handle_keydown));
+    _cleanup_keydown = () => document.removeEventListener("keydown", handle_keydown);
   });
 
   function handle_keydown(e: KeyboardEvent) {
@@ -197,10 +210,14 @@ const App: Component = () => {
     prev_file = current;
   });
 
-  // when a diagnostic goto is requested, switch to the target file first
+  // when a goto is requested (reverse sync or diagnostic click), switch to the target file first
   createEffect(() => {
     const req = worker_client.goto_request();
     if (!req) return;
+    const file_exists = store.files[req.file] !== undefined;
+    // only switch to files that actually exist in the project -- synctex can reference
+    // LaTeX internals (.cls, .sty) that aren't in the user's file store
+    if (!file_exists) return;
     if (req.file !== store.current_file()) {
       store.set_current_file(req.file);
     }

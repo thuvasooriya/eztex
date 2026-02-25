@@ -27,7 +27,12 @@ export function create_project_store() {
   });
 
   const [current_file, set_current_file] = createSignal("main.tex");
-  const [main_file, set_main_file] = createSignal("main.tex");
+  const [main_file, _set_main_file_raw] = createSignal("main.tex");
+  function set_main_file(name: string) {
+    if (name === main_file()) return;
+    _set_main_file_raw(name);
+    _notify();
+  }
   const [revision, set_revision] = createSignal(0);
 
   // imperative change callbacks -- supports multiple subscribers
@@ -73,7 +78,7 @@ export function create_project_store() {
       delete f[old_name];
     }));
     if (current_file() === old_name) set_current_file(new_name);
-    if (main_file() === old_name) set_main_file(new_name);
+    if (main_file() === old_name) _set_main_file_raw(new_name);
     _notify();
   }
 
@@ -96,7 +101,7 @@ export function create_project_store() {
     const default_content = "\\documentclass{article}\n\\begin{document}\nHello world.\n\\end{document}\n";
     set_files(reconcile({ "main.tex": default_content }));
     set_current_file("main.tex");
-    set_main_file("main.tex");
+    _set_main_file_raw("main.tex");
     set_revision(r => r + 1);
     _notify();
   }
@@ -113,7 +118,7 @@ export function create_project_store() {
       });
     }
     if (!detected) detected = names[0];
-    set_main_file(detected);
+    _set_main_file_raw(detected);
     set_revision(r => r + 1);
     set_current_file(detected);
     _notify();

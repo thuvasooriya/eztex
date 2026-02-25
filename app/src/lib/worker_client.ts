@@ -115,9 +115,11 @@ function handle_message(e: MessageEvent) {
         decompress_gzip(synctex_raw)
           .then((text) => {
             const parsed = parse_synctex(text);
-            if (parsed) set_synctex_data(parsed);
+            if (parsed) {
+              set_synctex_data(parsed);
+            }
           })
-          .catch(() => {}); // graceful degradation
+          .catch(() => {});
       }
       batch(() => {
         set_compiling(false);
@@ -213,6 +215,7 @@ export const worker_client = {
   restore_pdf_url,
   restore_pdf_bytes,
   request_goto,
+  clear_goto: () => set_goto_request(null),
   sync_forward,
   sync_to_code: do_sync_to_code,
   // signals (read-only)
