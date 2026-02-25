@@ -1,4 +1,5 @@
 import { type Component, Show, createSignal, createEffect, onCleanup } from "solid-js";
+import AnimatedShow from "./AnimatedShow";
 import logo_svg from "/logo.svg?raw";
 
 const ONBOARDED_KEY = "eztex_onboarded";
@@ -277,7 +278,7 @@ const Onboarding: Component<Props> = (props) => {
   return (
     <Show when={props.visible && phase() !== "hidden"}>
       {/* welcome modal */}
-      <Show when={phase() === "welcome"}>
+      <AnimatedShow when={phase() === "welcome"}>
         <div class="onboard-overlay" onClick={(e) => { if (e.target === e.currentTarget) finish(); }}>
           <div class="onboard-welcome">
             <div class="onboard-welcome-logo" innerHTML={logo_svg} />
@@ -289,7 +290,7 @@ const Onboarding: Component<Props> = (props) => {
             </div>
           </div>
         </div>
-      </Show>
+      </AnimatedShow>
 
       {/* tour overlay */}
       <Show when={phase() === "tour" && current_step()}>

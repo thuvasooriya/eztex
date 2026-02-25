@@ -1,7 +1,7 @@
 // register all commands -- called once from App.tsx during init
 // single source of truth for all actions, keybindings, and command metadata
 
-import { register_command, set_palette_open, set_palette_filter } from "./commands";
+import { register_command, palette_open, set_palette_open, palette_filter, set_palette_filter, IS_MAC } from "./commands";
 import { worker_client } from "./worker_client";
 import type { ProjectStore } from "./project_store";
 import type { LocalFolderSync } from "./local_folder_sync";
@@ -155,8 +155,13 @@ export function init_commands(d: CommandDeps): void {
     keybinding: "Cmd+P",
     when: () => Object.keys(deps!.store.files).length > 0,
     action: () => {
-      set_palette_open(true);
-      set_palette_filter("> ");
+      if (palette_open() && palette_filter().startsWith("> ")) {
+        set_palette_open(false);
+        set_palette_filter("");
+      } else {
+        set_palette_filter("> ");
+        set_palette_open(true);
+      }
     },
   });
 
@@ -168,8 +173,13 @@ export function init_commands(d: CommandDeps): void {
     category: "Navigate",
     keybinding: "Cmd+G",
     action: () => {
-      set_palette_open(true);
-      set_palette_filter(": ");
+      if (palette_open() && palette_filter().startsWith(": ")) {
+        set_palette_open(false);
+        set_palette_filter("");
+      } else {
+        set_palette_filter(": ");
+        set_palette_open(true);
+      }
     },
   });
 
@@ -399,10 +409,15 @@ export function init_commands(d: CommandDeps): void {
     description: "Open the command palette",
     keywords: ["search", "commands"],
     category: "View",
-    keybinding: "Cmd+K",
+    keybinding: IS_MAC ? "Cmd+K" : "Cmd+Shift+K",
     action: () => {
-      set_palette_open(true);
-      set_palette_filter("");
+      if (palette_open()) {
+        set_palette_open(false);
+        set_palette_filter("");
+      } else {
+        set_palette_filter("");
+        set_palette_open(true);
+      }
     },
   });
 }

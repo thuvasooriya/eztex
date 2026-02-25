@@ -1,17 +1,50 @@
 // command palette -- modal overlay for keyboard-first command execution
 // reads from command registry, owns no business logic
 
-import { type Component, Show, For, createSignal, createEffect, createMemo } from "solid-js";
-import { palette_open, set_palette_open, palette_filter, set_palette_filter, get_visible_commands, fuzzy_match, execute_command } from "../lib/commands";
+import { type Component, Show, For, createEffect, createMemo, type JSX } from "solid-js";
+import { palette_open, set_palette_open, palette_filter, set_palette_filter, get_visible_commands, fuzzy_match, execute_command, IS_MAC } from "../lib/commands";
 import type { Command } from "../lib/commands";
 import { worker_client } from "../lib/worker_client";
+import { create_list_navigation } from "../lib/list_nav";
+import AnimatedShow from "./AnimatedShow";
+
+// SVG icon components for modifier/special keys (lucide paths, 24x24 viewBox)
+// rendered at 1em via CSS so they scale with the pill font-size
+const svg_attrs = { xmlns: "http://www.w3.org/2000/svg", width: "1em", height: "1em", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", "stroke-width": "2", "stroke-linecap": "round", "stroke-linejoin": "round" } as const;
+
+const KEY_ICONS: Record<string, () => JSX.Element> = {
+  "\u2303": () => <svg {...svg_attrs}><path d="m18 15-6-6-6 6"/></svg>, // ctrl
+  "\u2318": () => <svg {...svg_attrs}><path d="M15 6v12a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3V6a3 3 0 1 0-3 3h12a3 3 0 1 0-3-3"/></svg>, // cmd
+  "\u21E7": () => <svg {...svg_attrs}><path d="M9 13a1 1 0 0 0-1-1H5.061a1 1 0 0 1-.75-1.811l6.836-6.835a1.207 1.207 0 0 1 1.707 0l6.835 6.835a1 1 0 0 1-.75 1.811H16a1 1 0 0 0-1 1v6a1 1 0 0 1-1 1h-4a1 1 0 0 1-1-1z"/></svg>, // shift
+  "\u2325": () => <svg {...svg_attrs}><path d="M3 3h6l6 18h6"/><path d="M14 3h7"/></svg>, // option/alt
+  "\u23CE": () => <svg {...svg_attrs}><path d="M20 4v7a4 4 0 0 1-4 4H4"/><path d="m9 10-5 5 5 5"/></svg>, // enter/return
+  "\u232B": () => <svg {...svg_attrs}><path d="M10 5a2 2 0 0 0-1.344.519l-6.328 5.74a1 1 0 0 0 0 1.481l6.328 5.741A2 2 0 0 0 10 19h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2z"/><path d="m12 9 6 6"/><path d="m18 9-6 6"/></svg>, // backspace
+};
+
+// key token map: internal name -> display string per platform
+const MAC_KEYS: Record<string, string> = {
+  Cmd: "\u2318", Shift: "\u21E7", Alt: "\u2325", Ctrl: "\u2303",
+  Enter: "\u23CE", Backspace: "\u232B", Escape: "\u238B",
+  ArrowUp: "\u2191", ArrowDown: "\u2193", ArrowLeft: "\u2190", ArrowRight: "\u2192",
+};
+const PC_KEYS: Record<string, string> = {
+  Cmd: "Ctrl", Shift: "Shift", Alt: "Alt", Enter: "Enter", Backspace: "Backspace", Escape: "Esc",
+};
+
+// split "Cmd+Shift+E" into individual display tokens
+function keybinding_tokens(kb: string): string[] {
+  return kb.split("+").map((part) => {
+    const table = IS_MAC ? MAC_KEYS : PC_KEYS;
+    return table[part] ?? part;
+  });
+}
 
 // file picker mode: palette_filter starts with "> "
 // goto line mode: palette_filter starts with ": "
 
 const CommandPalette: Component<{ store: any }> = (props) => {
   let input_ref: HTMLInputElement | undefined;
-  const [selected, set_selected] = createSignal(0);
+  let list_ref: HTMLDivElement | undefined;
 
   const is_file_mode = () => palette_filter().startsWith("> ");
   const is_goto_mode = () => palette_filter().startsWith(": ");
@@ -32,7 +65,6 @@ const CommandPalette: Component<{ store: any }> = (props) => {
 
     const scored: { cmd: Command; score: number }[] = [];
     for (const cmd of visible) {
-      // skip the palette.open command itself from results
       if (cmd.id === "palette.open") continue;
       const score = fuzzy_match(query, cmd);
       if (score !== null) scored.push({ cmd, score });
@@ -57,8 +89,9 @@ const CommandPalette: Component<{ store: any }> = (props) => {
     return groups;
   });
 
-  // flat list for keyboard navigation
-  const flat_items = createMemo((): { type: "command"; cmd: Command }[] | { type: "file"; name: string }[] => {
+  // flat list for navigation
+  type FlatItem = { type: "command"; cmd: Command } | { type: "file"; name: string };
+  const flat_items = createMemo((): FlatItem[] => {
     if (is_file_mode()) {
       return file_list().map((name: string) => ({ type: "file" as const, name }));
     }
@@ -68,12 +101,12 @@ const CommandPalette: Component<{ store: any }> = (props) => {
       .map((cmd) => ({ type: "command" as const, cmd }));
   });
 
-  const total_items = () => flat_items().length;
+  const nav = create_list_navigation(() => flat_items().length);
 
-  // reset selection when filter changes
+  // reset navigation when filter changes
   createEffect(() => {
     void palette_filter();
-    set_selected(0);
+    nav.reset();
   });
 
   // auto-focus input when palette opens
@@ -83,22 +116,28 @@ const CommandPalette: Component<{ store: any }> = (props) => {
     }
   });
 
+  // scroll selected item into view
+  createEffect(() => {
+    const idx = nav.index();
+    if (!list_ref) return;
+    const el = list_ref.querySelector(`[data-index="${idx}"]`) as HTMLElement;
+    if (el) el.scrollIntoView({ block: "nearest" });
+  });
+
   function close() {
     set_palette_open(false);
     set_palette_filter("");
   }
 
   function handle_select(index: number) {
-    const items = flat_items();
-    const item = items[index];
+    const item = flat_items()[index];
     if (!item) return;
-
     if (item.type === "file") {
-      props.store.set_current_file((item as any).name);
+      props.store.set_current_file(item.name);
       close();
-    } else if (item.type === "command") {
+    } else {
       close();
-      execute_command((item as any).cmd.id);
+      execute_command(item.cmd.id);
     }
   }
 
@@ -119,17 +158,24 @@ const CommandPalette: Component<{ store: any }> = (props) => {
       return;
     }
 
-    if (e.key === "ArrowDown") {
+    // Cmd+K (Mac) or Ctrl+Shift+K (non-Mac) toggles palette closed when already open
+    if (e.key === "k" && (IS_MAC ? e.metaKey && !e.ctrlKey : e.ctrlKey && e.shiftKey && !e.metaKey)) {
       e.preventDefault();
-      const total = total_items();
-      if (total > 0) set_selected((s) => (s + 1) % total);
+      close();
       return;
     }
 
-    if (e.key === "ArrowUp") {
+    // navigation: ArrowDown / Ctrl+J
+    if (e.key === "ArrowDown" || (e.key === "j" && e.ctrlKey && !e.metaKey)) {
       e.preventDefault();
-      const total = total_items();
-      if (total > 0) set_selected((s) => (s - 1 + total) % total);
+      nav.move_down();
+      return;
+    }
+
+    // navigation: ArrowUp / Ctrl+K
+    if (e.key === "ArrowUp" || (e.key === "k" && e.ctrlKey && !e.metaKey)) {
+      e.preventDefault();
+      nav.move_up();
       return;
     }
 
@@ -138,39 +184,31 @@ const CommandPalette: Component<{ store: any }> = (props) => {
       if (is_goto_mode()) {
         handle_goto_submit();
       } else {
-        handle_select(selected());
+        handle_select(nav.index());
       }
       return;
     }
   }
 
-  // format keybinding for display: Cmd -> platform symbol
-  function format_keybinding(kb: string): string {
-    const is_mac = navigator.platform.includes("Mac");
-    if (is_mac) {
-      return kb
-        .replace(/Cmd\+/g, "\u2318")
-        .replace(/Shift\+/g, "\u21E7")
-        .replace(/Alt\+/g, "\u2325")
-        .replace(/Ctrl\+/g, "\u2303")
-        .replace("Enter", "\u23CE");
-    }
-    return kb
-      .replace(/Cmd\+/g, "Ctrl+")
-      .replace("Enter", "Enter");
+  // render keybinding as individual <kbd> pill tokens
+  // SVG icons for modifiers (Mac), plain text for letters/numbers/PC keys
+  function render_keybinding(kb: string): JSX.Element {
+    const tokens = keybinding_tokens(kb);
+    return (
+      <span class="palette-kbd-group">
+        <For each={tokens}>
+          {(token) => {
+            const icon = KEY_ICONS[token];
+            if (icon) return <kbd class="palette-kbd">{icon()}</kbd>;
+            return <kbd class="palette-kbd">{token}</kbd>;
+          }}
+        </For>
+      </span>
+    );
   }
 
-  // scroll selected item into view
-  let list_ref: HTMLDivElement | undefined;
-  createEffect(() => {
-    const idx = selected();
-    if (!list_ref) return;
-    const el = list_ref.querySelector(`[data-index="${idx}"]`) as HTMLElement;
-    if (el) el.scrollIntoView({ block: "nearest" });
-  });
-
   return (
-    <Show when={palette_open()}>
+    <AnimatedShow when={palette_open()}>
       <div class="palette-backdrop" onClick={close}>
         <div class="palette" onClick={(e) => e.stopPropagation()} onKeyDown={handle_keydown}>
           <input
@@ -191,10 +229,10 @@ const CommandPalette: Component<{ store: any }> = (props) => {
                     const idx = i();
                     return (
                       <button
-                        class={`palette-item ${selected() === idx ? "selected" : ""}`}
+                        class={`palette-item ${nav.index() === idx ? "selected" : ""}`}
                         data-index={idx}
                         onClick={() => handle_select(idx)}
-                        onMouseEnter={() => set_selected(idx)}
+                        onMouseEnter={() => nav.set_index(idx)}
                       >
                         <span class="palette-item-label">{name}</span>
                       </button>
@@ -203,43 +241,39 @@ const CommandPalette: Component<{ store: any }> = (props) => {
                 </For>
               </Show>
               <Show when={!is_file_mode()}>
-                {(() => {
-                  let global_idx = 0;
-                  return (
-                    <For each={grouped_commands()}>
-                      {(group) => (
-                        <div class="palette-group">
-                          <div class="palette-group-label">{group.category}</div>
-                          <For each={group.commands}>
-                            {(cmd) => {
-                              const idx = global_idx++;
-                              return (
-                                <button
-                                  class={`palette-item ${selected() === idx ? "selected" : ""}`}
-                                  data-index={idx}
-                                  onClick={() => { close(); execute_command(cmd.id); }}
-                                  onMouseEnter={() => set_selected(idx)}
-                                >
-                                  <div class="palette-item-left">
-                                    <span class="palette-item-label">{cmd.label}</span>
-                                    <Show when={cmd.description}>
-                                      <span class="palette-item-desc">{cmd.description}</span>
-                                    </Show>
-                                  </div>
-                                  <Show when={cmd.keybinding}>
-                                    <kbd class="palette-kbd">{format_keybinding(cmd.keybinding!)}</kbd>
-                                  </Show>
-                                </button>
-                              );
-                            }}
-                          </For>
-                        </div>
-                      )}
-                    </For>
-                  );
-                })()}
+                <For each={grouped_commands()}>
+                  {(group) => (
+                    <div class="palette-group">
+                      <div class="palette-group-label">{group.category}</div>
+                      <For each={group.commands}>
+                        {(cmd) => {
+                          // reactive index: recomputes when flat_items changes
+                          const idx = () => flat_items().findIndex((fi) => fi.type === "command" && fi.cmd === cmd);
+                          return (
+                            <button
+                              class={`palette-item ${nav.index() === idx() ? "selected" : ""}`}
+                              data-index={idx()}
+                              onClick={() => { close(); execute_command(cmd.id); }}
+                              onMouseEnter={() => nav.set_index(idx())}
+                            >
+                              <div class="palette-item-left">
+                                <span class="palette-item-label">{cmd.label}</span>
+                                <Show when={cmd.description}>
+                                  <span class="palette-item-desc">{cmd.description}</span>
+                                </Show>
+                              </div>
+                              <Show when={cmd.keybinding}>
+                                {render_keybinding(cmd.keybinding!)}
+                              </Show>
+                            </button>
+                          );
+                        }}
+                      </For>
+                    </div>
+                  )}
+                </For>
               </Show>
-              <Show when={total_items() === 0 && palette_filter().length > 0}>
+              <Show when={flat_items().length === 0 && palette_filter().length > 0}>
                 <div class="palette-empty">No matching commands</div>
               </Show>
             </div>
@@ -249,7 +283,7 @@ const CommandPalette: Component<{ store: any }> = (props) => {
           </Show>
         </div>
       </div>
-    </Show>
+    </AnimatedShow>
   );
 };
 

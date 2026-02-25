@@ -3,6 +3,9 @@
 
 import { createSignal } from "solid-js";
 
+// platform detection -- shared across keybinding system
+export const IS_MAC = typeof navigator !== "undefined" && /mac/i.test(navigator.platform);
+
 export type Command = {
   id: string;
   label: string;

@@ -28,17 +28,14 @@ THIS FILE IS PURELY FOR THE USER TO TRACK AND ANALYZE
 
 ## app
 
-- [ ] synctex refinments
-- [ ] offline pwa
-- [ ] precache important packages
 - [ ] cleanup logs
-- [ ] keyboard navigation and shortcuts
 - [ ] share projects
 - [ ] collaboration
 - [ ] pdf color inversion / repaint
-- [ ] webp image auto optimization
+- [ ] webp image auto optimization, and basic image manipulation and transformation features in image preview
 - [ ] git integration
-- [ ] vim navigation
+- [ ] synctex refinments
+- [ ] precache important packages
 
 ## thoughts
 

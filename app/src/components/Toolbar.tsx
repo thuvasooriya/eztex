@@ -1,4 +1,5 @@
 import { type Component, Show, For, onCleanup, onMount, createSignal, createEffect, untrack, type Setter } from "solid-js";
+import AnimatedShow from "./AnimatedShow";
 import { worker_client, type LogEntry } from "../lib/worker_client";
 import ProgressBar from "./ProgressBar";
 import { read_zip, write_zip } from "../lib/zip_utils";
@@ -389,7 +390,7 @@ const Toolbar: Component<Props> = (props) => {
         <button class="logo-btn" title="About eztex" onClick={() => set_show_info_modal(true)}>
           <Logo />
         </button>
-        <Show when={show_info_modal()}>
+        <AnimatedShow when={show_info_modal()}>
           <div class="info-modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) set_show_info_modal(false); }}>
             <div class="info-modal">
               <button class="info-modal-close" onClick={() => set_show_info_modal(false)} title="Close">
@@ -452,7 +453,7 @@ const Toolbar: Component<Props> = (props) => {
               </div>
             </div>
           </div>
-        </Show>
+        </AnimatedShow>
         <div class="toolbar-divider" />
         <Show when={props.on_toggle_files}>
           <button
@@ -475,7 +476,7 @@ const Toolbar: Component<Props> = (props) => {
                   <line x1="12" y1="3" x2="12" y2="15"/>
                 </svg>
               </button>
-              <Show when={show_upload_menu()}>
+              <AnimatedShow when={show_upload_menu()}>
                 <div class="upload-dropdown">
                   <button class="upload-dropdown-item" onClick={() => { file_input_ref?.click(); set_show_upload_menu(false); }}>
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -504,7 +505,7 @@ const Toolbar: Component<Props> = (props) => {
                     </button>
                   </Show>
                 </div>
-              </Show>
+              </AnimatedShow>
             </div>
             <div class="upload-menu-wrapper" ref={download_btn_ref}>
               <button class="toolbar-toggle" title="Download" onClick={() => set_show_download_menu(v => !v)}>
@@ -514,7 +515,7 @@ const Toolbar: Component<Props> = (props) => {
                   <line x1="12" y1="15" x2="12" y2="3"/>
                 </svg>
               </button>
-              <Show when={show_download_menu()}>
+              <AnimatedShow when={show_download_menu()}>
                 <div class="upload-dropdown">
                   <Show when={worker_client.pdf_url()}>
                     <button class="upload-dropdown-item" onClick={() => { handle_download_pdf(); set_show_download_menu(false); }}>
@@ -532,7 +533,7 @@ const Toolbar: Component<Props> = (props) => {
                     Export Zip
                   </button>
                 </div>
-              </Show>
+              </AnimatedShow>
             </div>
           </div>
         <input ref={zip_input_ref} type="file" accept=".zip" style={{ display: "none" }} onChange={handle_zip_upload} />
@@ -562,7 +563,7 @@ const Toolbar: Component<Props> = (props) => {
 
       <div class="toolbar-right">
         <div class="compile-group" ref={compile_group_ref}>
-          <Show when={show_logs()}>
+          <AnimatedShow when={show_logs()}>
             <div class="click-interceptor" onMouseDown={dismiss_logs} />
             <div class="compile-logs-popover">
               <div class="popover-action-bar">
@@ -589,7 +590,7 @@ const Toolbar: Component<Props> = (props) => {
                 </Show>
               </div>
             </div>
-          </Show>
+          </AnimatedShow>
           <button
             ref={status_btn_ref}
             class={`compile-group-status ${show_logs() ? "expanded" : ""}`}

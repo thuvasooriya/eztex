@@ -1,11 +1,12 @@
 import { type Component, onMount, onCleanup, createSignal, createEffect, Show } from "solid-js";
+import AnimatedShow from "./components/AnimatedShow";
 import { worker_client } from "./lib/worker_client";
 import { parse_synctex } from "./lib/synctex";
 import { create_project_store } from "./lib/project_store";
 import { save_project, load_project, load_pdf, load_synctex } from "./lib/project_persist";
 import { create_local_folder_sync, type ConflictInfo } from "./lib/local_folder_sync";
 import { create_watch_controller } from "./lib/watch_controller";
-import { palette_open, get_all_commands } from "./lib/commands";
+import { palette_open, get_all_commands, IS_MAC } from "./lib/commands";
 import { init_commands } from "./lib/register_commands";
 import Toolbar from "./components/Toolbar";
 import CommandPalette from "./components/CommandPalette";
@@ -265,14 +266,12 @@ const App: Component = () => {
 
   // unified keybinding dispatch: match KeyboardEvent against registered command keybindings
   function handle_keydown(e: KeyboardEvent) {
-    // palette is open -- let the palette component handle keys
-    if (palette_open()) return;
+    // platform-aware modifier: on Mac, "Cmd" means metaKey; on non-Mac, "Cmd" means ctrlKey
+    const mod = IS_MAC ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey;
 
-    // ignore keys when focused in an input/textarea (except our palette)
+    // ignore non-modified keys when focused in an input/textarea
     const tag = (e.target as HTMLElement)?.tagName;
-    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
-
-    const mod = e.metaKey || e.ctrlKey;
+    if (!mod && (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT")) return;
     const shift = e.shiftKey;
     const key = e.key;
 
@@ -460,11 +459,11 @@ const App: Component = () => {
       </div>
 
       {/* file panel overlay for narrow screens */}
-      <Show when={files_overlay()}>
+      <AnimatedShow when={files_overlay()}>
         <div class="file-panel-wrapper overlay-mode panel-wrapper panel-box">
           <FilePanel store={store} folder_sync={folder_sync} />
         </div>
-      </Show>
+      </AnimatedShow>
 
       <Show when={is_too_narrow()}>
         <div class="too-narrow-overlay">
@@ -480,7 +479,7 @@ const App: Component = () => {
       </Show>
 
       {/* conflict resolution dialog */}
-      <Show when={show_conflicts()}>
+      <AnimatedShow when={show_conflicts()}>
         <ConflictDialog
           conflicts={conflicts()}
           on_resolve={(path, resolution) => {
@@ -507,7 +506,7 @@ const App: Component = () => {
           }}
           on_close={() => set_conflicts([])}
         />
-      </Show>
+      </AnimatedShow>
 
       <DiagnosticPill store={store} />
 
