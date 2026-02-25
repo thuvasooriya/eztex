@@ -1136,6 +1136,8 @@ body {
 }
 
 .diag-pill-header {
+  display: flex;
+  align-items: center;
   font-family: var(--font-sans);
   font-size: 10px;
   font-weight: 600;
@@ -1384,7 +1386,41 @@ body {
   .compile-group-elapsed {
     display: none;
   }
-  .compile-logs-popover {
+/* click interceptor overlay behind popovers -- catches iframe clicks */
+.click-interceptor {
+  position: fixed;
+  inset: 0;
+  z-index: 199;
+  background: transparent;
+  cursor: default;
+}
+
+.diag-pill-container > .click-interceptor {
+  z-index: 99;
+}
+
+/* popover action bar */
+.popover-action-bar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.popover-action-bar.inline {
+  display: inline-flex;
+  padding: 0;
+  border-bottom: none;
+  margin-left: auto;
+}
+
+.popover-pin.active {
+  color: var(--accent);
+  background: rgba(122, 162, 247, 0.12);
+}
+
+.compile-logs-popover {
     width: 320px;
   }
 }

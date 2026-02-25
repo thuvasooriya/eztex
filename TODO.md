@@ -29,11 +29,8 @@ THIS FILE IS PURELY FOR THE USER TO TRACK AND ANALYZE
 ## app
 
 - [ ] synctex integration
-- [ ] update logo
 - [ ] cleanup logs
 - [ ] keyboard navigation and shortcuts
-- [ ] first launch guide/carrousal
-- [ ] read more about and why notifications
 - [ ] share projects
 - [ ] collaboration
 - [ ] pdf color inversion / repaint

@@ -43,6 +43,8 @@ const Toolbar: Component<Props> = (props) => {
   const [show_download_menu, set_show_download_menu] = createSignal(false);
   const [show_info_modal, set_show_info_modal] = createSignal(false);
   const [show_logs, set_show_logs] = createSignal(false);
+  const [logs_pinned, set_logs_pinned] = createSignal(false);
+  const [logs_auto_opened, set_logs_auto_opened] = createSignal(false);
   let compile_group_ref: HTMLDivElement | undefined;
   let log_ref: HTMLDivElement | undefined;
 
@@ -136,17 +138,21 @@ const Toolbar: Component<Props> = (props) => {
     onCleanup(() => document.removeEventListener("keydown", handler));
   });
 
-  // close logs popover on click outside
-  createEffect(() => {
-    if (!show_logs()) return;
-    const handler = (e: MouseEvent) => {
-      if (compile_group_ref && !compile_group_ref.contains(e.target as Node)) {
-        set_show_logs(false);
-      }
-    };
-    document.addEventListener("mousedown", handler);
-    onCleanup(() => document.removeEventListener("mousedown", handler));
-  });
+  // close logs popover on click outside (interceptor overlay handles iframe clicks)
+  function dismiss_logs() {
+    if (logs_pinned()) return;
+    set_show_logs(false);
+    set_logs_auto_opened(false);
+  }
+
+  function handle_copy_logs() {
+    const text = worker_client.logs().map(e => e.msg).join("\n");
+    navigator.clipboard.writeText(text).catch(() => {});
+  }
+
+  function handle_clear_logs() {
+    worker_client.clear_logs();
+  }
 
   // auto-scroll logs when new entries arrive and popover is open
   createEffect(() => {
@@ -156,9 +162,20 @@ const Toolbar: Component<Props> = (props) => {
     }
   });
 
-  // auto-open logs on compile error
+  // auto-open logs on compile error, auto-close on resolution
   createEffect(() => {
-    if (worker_client.status() === "error") set_show_logs(true);
+    const s = worker_client.status();
+    if (s === "error") {
+      if (!show_logs()) {
+        set_logs_auto_opened(true);
+        set_show_logs(true);
+      }
+    } else if (s === "success" || s === "idle") {
+      if (logs_auto_opened() && !logs_pinned()) {
+        set_show_logs(false);
+        set_logs_auto_opened(false);
+      }
+    }
   });
 
   // compile success flash
@@ -538,7 +555,23 @@ const Toolbar: Component<Props> = (props) => {
       <div class="toolbar-right">
         <div class="compile-group" ref={compile_group_ref}>
           <Show when={show_logs()}>
+            <div class="click-interceptor" onMouseDown={dismiss_logs} />
             <div class="compile-logs-popover">
+              <div class="popover-action-bar">
+                <button
+                  class={`icon-btn popover-pin ${logs_pinned() ? "active" : ""}`}
+                  title={logs_pinned() ? "Unpin" : "Pin open"}
+                  onClick={() => set_logs_pinned(v => !v)}
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill={logs_pinned() ? "currentColor" : "none"} stroke="currentColor" stroke-width="2"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 1 1 0 0 0 1-1V4a2 2 0 0 0-2-2H9a2 2 0 0 0-2 2v1a1 1 0 0 0 1 1 1 1 0 0 1 1 1z"/></svg>
+                </button>
+                <button class="icon-btn" title="Copy all" onClick={handle_copy_logs}>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                </button>
+                <button class="icon-btn" title="Clear log" onClick={handle_clear_logs}>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                </button>
+              </div>
               <div class="compile-logs-scroll" ref={log_ref}>
                 <For each={worker_client.logs()}>
                   {(entry) => <div class={log_class(entry)}>{entry.msg}</div>}
@@ -552,7 +585,7 @@ const Toolbar: Component<Props> = (props) => {
           <button
             ref={status_btn_ref}
             class={`compile-group-status ${show_logs() ? "expanded" : ""}`}
-            onClick={() => set_show_logs(v => !v)}
+            onClick={() => { set_show_logs(v => !v); set_logs_auto_opened(false); }}
             title="Show compilation logs"
             style={{ color: status_color() }}
           >
