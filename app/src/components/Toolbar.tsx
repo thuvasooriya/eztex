@@ -6,7 +6,7 @@ import { read_zip, write_zip } from "../lib/zip_utils";
 import type { ProjectStore } from "../lib/project_store";
 import { is_binary, is_text_ext } from "../lib/project_store";
 import type { ProjectFiles } from "../lib/project_store";
-import { save_pdf, save_synctex, clear_bundle_cache, reset_all_persistence } from "../lib/project_persist";
+import { save_pdf, clear_bundle_cache, reset_all_persistence } from "../lib/project_persist";
 import type { LocalFolderSync, ConflictInfo } from "../lib/local_folder_sync";
 import logo_svg from "/logo.svg?raw";
 
@@ -233,9 +233,7 @@ const Toolbar: Component<Props> = (props) => {
         })
         .catch(() => {});
     }
-    // persist synctex text to OPFS so forward/reverse sync works on reload
-    const stex = worker_client.synctex_text();
-    if (stex) save_synctex(stex).catch(() => {});
+    // persist synctex is now handled by worker_client on parse completion
   });
 
   onCleanup(() => watch.cleanup());

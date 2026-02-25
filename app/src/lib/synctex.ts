@@ -419,6 +419,12 @@ export function sync_to_code(data: PdfSyncObject, page: number, x: number, y: nu
 
   if (candidates.length === 0) return null;
 
+  // log all candidates for debugging
+  console.debug("[synctex:reverse] candidates", candidates.map(c => ({
+    line: c.line, rect: { left: c.rect.left.toFixed(1), top: c.rect.top.toFixed(1), right: c.rect.right.toFixed(1), bottom: c.rect.bottom.toFixed(1) },
+    contains: c.rect.contains(x0, y0), dist: c.rect.distance_to_point(x0, y0).toFixed(2),
+  })));
+
   // pass 1: find smallest containing rect (innermost block that contains the click)
   let best: Candidate | null = null;
   for (const c of candidates) {
@@ -426,11 +432,18 @@ export function sync_to_code(data: PdfSyncObject, page: number, x: number, y: nu
     if (!best || c.rect.area() < best.rect.area()) best = c;
   }
 
-  // pass 2 fallback: nearest block by edge distance
+  // pass 2 fallback: vertical-priority distance metric.
+  // synctex y-coordinates (baselines) are highly reliable, but x-coordinates
+  // often don't cover the full rendered text width (especially for section headings,
+  // where individual character boxes are recorded). weight vertical distance 3x
+  // to strongly prefer blocks on the same visual line over horizontally-closer
+  // blocks on different lines. this matches LaTeX-Workshop's behavior.
   if (!best) {
     let best_dist = Infinity;
     for (const c of candidates) {
-      const dist = c.rect.distance_to_point(x0, y0);
+      const dx = Math.max(c.rect.left - x0, 0, x0 - c.rect.right);
+      const dy = Math.max(c.rect.top - y0, 0, y0 - c.rect.bottom);
+      const dist = dx + 3 * dy;
       if (dist < best_dist) {
         best_dist = dist;
         best = c;

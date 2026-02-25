@@ -139,8 +139,16 @@ const App: Component = () => {
       pdf_restored = true;
     }
     if (synctex_text) {
+      console.log("[synctex:restore] loaded synctex text from OPFS, length:", synctex_text.length);
       const parsed = parse_synctex(synctex_text);
-      if (parsed) worker_client.restore_synctex(parsed);
+      if (parsed) {
+        console.log("[synctex:restore] parsed synctex, pages:", parsed.numberPages, "files:", Object.keys(parsed.files).length);
+        worker_client.restore_synctex(parsed);
+      } else {
+        console.log("[synctex:restore] parse_synctex returned undefined");
+      }
+    } else {
+      console.log("[synctex:restore] no synctex text in OPFS");
     }
 
     // auto-compile when engine becomes ready (if no PDF was restored)

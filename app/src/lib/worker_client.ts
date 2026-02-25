@@ -6,6 +6,7 @@ import type { ProjectFiles } from "./project_store";
 import type { Diagnostic } from "../worker/protocol";
 import { decompress_gzip, parse_synctex, sync_to_pdf, sync_to_code } from "./synctex";
 import type { PdfSyncObject, SyncToPdfResult } from "./synctex";
+import { save_synctex as persist_synctex } from "./project_persist";
 
 export type LogEntry = {
   msg: string;
@@ -119,6 +120,9 @@ function handle_message(e: MessageEvent) {
             if (parsed) {
               set_synctex_text(text);
               set_synctex_data(parsed);
+              // persist immediately -- on_compile_done fires before this .then() resolves,
+              // so saving from there would read stale/null synctex_text()
+              persist_synctex(text).catch(() => {});
             }
           })
           .catch(() => {});
@@ -191,6 +195,7 @@ function restore_pdf_bytes(bytes: Uint8Array) {
 }
 
 function restore_synctex(parsed: PdfSyncObject) {
+  console.log("[synctex:restore] restore_synctex called, setting synctex_data signal");
   set_synctex_data(parsed);
 }
 
