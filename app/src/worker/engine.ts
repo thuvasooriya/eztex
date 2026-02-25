@@ -156,7 +156,11 @@ function make_fetch_env(): {
           }
         }
         if (last_err || !data) {
-          log("fetch", "error", `sync XHR failed for ${name}: ${last_err}`);
+          const offline = typeof navigator !== "undefined" && !navigator.onLine;
+          const hint = offline
+            ? ` -- you appear to be offline and this package was not previously cached`
+            : "";
+          log("fetch", "error", `failed to fetch '${name}'${hint} (${last_err})`);
           return -1;
         }
 
@@ -465,7 +469,7 @@ export async function init(): Promise<void> {
     phase_loaded++;
     const clamped = Math.min(phase_loaded, phase_total);
     send_progress(Math.round((clamped / phase_total) * 100));
-    send_status(`Seeding init cache ${clamped}/${phase_total}`, "loading");
+    send_status(`Seeding init ${clamped}/${phase_total}`, "loading");
   }
 
   // step 5: load init files from OPFS cache or network
@@ -500,10 +504,10 @@ export async function init(): Promise<void> {
         phase_loaded++;
         const clamped = Math.min(phase_loaded, phase_total);
         send_progress(Math.round((clamped / phase_total) * 100));
-        send_status(`Seeding format cache ${clamped}/${phase_total}`, "loading");
+        send_status(`Seeding format ${clamped}/${phase_total}`, "loading");
       }
       dbg("seed", `seeding ${fmt_needed.length}/${fmt_keys.length} format dependencies`);
-      send_status(`Seeding format cache 0/${fmt_needed.length}`, "loading");
+      send_status(`Seeding format 0/${fmt_needed.length}`, "loading");
       const t0 = performance.now();
       await bundle.batch_fetch(fmt_needed, cached_files, 6, fmt_tick);
       const elapsed = ((performance.now() - t0) / 1000).toFixed(2);

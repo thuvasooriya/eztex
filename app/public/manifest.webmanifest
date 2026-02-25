@@ -1,0 +1,22 @@
+{
+  "name": "eztex",
+  "short_name": "eztex",
+  "description": "Browser-based LaTeX editor with offline support",
+  "display": "standalone",
+  "start_url": "/",
+  "scope": "/",
+  "theme_color": "#1a1b26",
+  "background_color": "#1a1b26",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "type": "image/svg+xml",
+      "sizes": "any"
+    },
+    {
+      "src": "/apple-touch-icon.png",
+      "type": "image/png",
+      "sizes": "180x180"
+    }
+  ]
+}

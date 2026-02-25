@@ -52,8 +52,19 @@ export async function fetch_itar_index(): Promise<Uint8Array | null> {
   dbg("index", "fetching ITAR index from network...");
   const index_url = get_index_url();
   dbg("index", `fetching: ${index_url}`);
-  const resp = await fetch(index_url, { signal: AbortSignal.timeout(30000) });
-  if (!resp.ok) throw new Error(`index fetch failed: ${resp.status}`);
+  let resp: Response;
+  try {
+    resp = await fetch(index_url, { signal: AbortSignal.timeout(30000) });
+  } catch (err) {
+    const offline = typeof navigator !== "undefined" && !navigator.onLine;
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      offline
+        ? `cannot fetch package index -- you appear to be offline and the index was not previously cached`
+        : `index fetch failed: ${msg}`,
+    );
+  }
+  if (!resp.ok) throw new Error(`index fetch failed: HTTP ${resp.status}`);
   const compressed = new Uint8Array(await resp.arrayBuffer());
   dbg("index", `downloaded ${format_size(compressed.byteLength)} compressed`);
 
@@ -210,8 +221,10 @@ export async function batch_fetch(
     }
     failed = individual_plan.length;
     if (failed > 0) {
+      const offline = typeof navigator !== "undefined" && !navigator.onLine;
       const names_str = individual_plan.map((e) => e.name).join(", ");
-      dbg("batch", `permanent failures: ${names_str}`);
+      const hint = offline ? " (you appear to be offline)" : "";
+      dbg("batch", `permanent failures${hint}: ${names_str}`);
     }
   }
 

@@ -14,49 +14,49 @@ const tour_steps: TourStep[] = [
   {
     target_selector: ".compile-group",
     title: "Compile toolbar",
-    description: "This is your compile toolbar. The play button compiles your LaTeX document manually.",
+    description: "This is your compile toolbar. The play button compiles your LaTeX document manually",
     position_hint: "bottom",
   },
   {
     target_selector: ".compile-group-watch",
     title: "Watch mode",
-    description: "Watch mode auto-compiles on every save. The icon turns green when active.",
+    description: "Watch mode auto-compiles if it detects a change. The icon turns green when active and turns yellow when it detects the code to be dirty and schedules a compilation",
     position_hint: "bottom",
   },
   {
     target_selector: ".compile-group-status",
     title: "Status & logs",
-    description: "This shows compile status and elapsed time. Click it to open the log. Note: the first compile downloads the LaTeX engine (~30MB) -- this only happens once.",
+    description: "This shows compile status and elapsed time. Click it to open the log. The first compile downloads and generates the required files (~30MB) and will take a few minutes based on your system -- this only happens once unless you reset or clear the cache",
     position_hint: "bottom",
   },
   {
     target_selector: ".toolbar-file-actions",
     title: "Upload & download",
-    description: "Upload files or open a local folder. Download your PDF or export the whole project as a zip.",
+    description: "Upload files or open a local folder. Download your PDF or export the whole project as a zip",
     position_hint: "bottom",
   },
   {
     target_selector: ".file-panel-wrapper:not(.overlay-mode)",
     title: "File panel",
-    description: "Your project files live here. Click to open, right-click for rename, delete, or to create new files and folders.",
+    description: "Your project files live here. Click to open, right-click for rename, delete, or to create new files and folders",
     position_hint: "right",
   },
   {
     target_selector: ".set-main-btn",
     title: "Entry file",
-    description: "Click the dot next to a file to set it as the entry point for compilation.",
+    description: "Click the dot next to a file to set it as the entry point for compilation",
     position_hint: "right",
   },
   {
     target_selector: ".diag-pill-container",
     title: "Diagnostics",
-    description: "Errors and warnings from your LaTeX document appear here. Click to jump to the problem.",
+    description: "Errors and warnings from your LaTeX document appear here. Click to jump to the problem",
     position_hint: "top",
   },
   {
     target_selector: ".logo-btn",
     title: "Settings & info",
-    description: "Click the eztex logo anytime to access settings, clear cache, or restart this tutorial.",
+    description: "Click the eztex logo anytime to access settings, clear cache, or restart this tutorial",
     position_hint: "bottom",
   },
 ];
@@ -282,7 +282,7 @@ const Onboarding: Component<Props> = (props) => {
           <div class="onboard-welcome">
             <div class="onboard-welcome-logo" innerHTML={logo_svg} />
             <div class="onboard-welcome-name">eztex</div>
-            <p class="onboard-welcome-tagline">LaTeX in your browser. No server, no signup.</p>
+            <p class="onboard-welcome-tagline">Eazy LaTeX in browser. </p>
             <div class="onboard-welcome-buttons">
               <button class="onboard-btn primary" onClick={start_tour}>Start tutorial</button>
               <button class="onboard-btn" onClick={skip_to_last}>Skip</button>
