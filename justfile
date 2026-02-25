@@ -24,6 +24,10 @@ app-dev: build-wasm
 app-build: build-wasm
     cd app && bun run build
 
+# regenerate favicons from logo.svg (run after changing app/public/logo.svg)
+gen-icons:
+    bun run app/scripts/gen_icons.ts
+
 git-push desc:
     jj desc -m "{{ desc }}"
     jj bookmark move main --to @

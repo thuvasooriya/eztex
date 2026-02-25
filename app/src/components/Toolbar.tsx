@@ -8,6 +8,7 @@ import { is_binary, is_text_ext } from "../lib/project_store";
 import type { ProjectFiles } from "../lib/project_store";
 import { save_pdf, clear_project, clear_bundle_cache } from "../lib/project_persist";
 import type { LocalFolderSync, ConflictInfo } from "../lib/local_folder_sync";
+import logo_svg from "/logo.svg?raw";
 
 type Props = {
   store: ProjectStore;
@@ -26,13 +27,7 @@ type Props = {
 };
 
 const Logo: Component = () => (
-  <span class="logo" aria-label="eztex">
-    <svg class="logo-mark" viewBox="231 276 618 528" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-      <path fill="#fefefe" d=" M 393.41 276.54 C 406.57 275.40 419.80 276.08 433.00 275.99 C 563.01 276.03 693.02 275.96 823.03 276.01 C 830.00 275.83 838.05 276.39 843.08 281.92 C 849.44 287.84 849.73 297.46 847.51 305.36 C 818.67 401.58 789.97 497.85 761.22 594.10 C 759.43 600.93 756.35 608.21 749.96 611.95 C 743.79 616.10 735.97 614.56 729.01 615.09 C 679.00 614.94 628.99 614.97 578.99 615.08 C 571.62 614.64 563.67 615.80 556.94 612.07 C 550.10 609.08 546.61 601.41 546.38 594.28 C 546.00 586.32 551.43 579.95 556.70 574.71 C 590.34 541.34 623.64 507.64 657.34 474.32 C 661.91 469.83 665.74 463.78 664.95 457.09 C 664.20 446.61 654.59 437.54 643.99 438.17 C 550.66 437.74 457.31 438.13 363.97 438.02 C 354.08 439.09 343.85 432.03 341.64 422.34 C 340.13 417.16 341.85 412.03 343.12 407.06 C 354.58 368.90 366.23 330.80 377.53 292.60 C 380.02 285.20 385.07 277.71 393.41 276.54 Z"/>
-      <path fill="#fefefe" d=" M 337.43 465.61 C 348.92 464.51 360.48 464.99 372.00 464.96 C 415.34 465.04 458.67 465.02 502.01 464.92 C 510.52 465.29 520.76 463.78 527.31 470.68 C 535.87 477.84 536.35 492.50 528.21 500.19 C 497.85 530.83 467.21 561.20 436.74 591.74 C 430.02 598.69 422.30 604.84 417.12 613.13 C 411.72 623.83 418.68 637.83 429.86 641.16 C 435.15 642.17 440.61 641.88 445.99 642.09 C 537.67 641.96 629.35 641.92 721.03 642.07 C 733.95 642.73 743.25 657.57 738.56 669.58 C 729.17 702.75 719.39 735.82 710.01 769.00 C 707.04 778.45 705.64 788.64 700.04 797.03 C 695.02 803.04 686.43 804.45 679.03 804.01 C 537.34 803.97 395.65 804.04 253.97 803.98 C 248.28 804.31 242.28 802.91 237.96 799.05 C 231.84 794.00 229.86 785.20 231.64 777.66 C 261.09 679.78 290.60 581.89 319.99 483.99 C 321.81 475.29 328.01 466.49 337.43 465.61 Z"/>
-    </svg>
-    <span class="logo-tex">tex</span>
-  </span>
+  <span class="logo" aria-label="eztex" innerHTML={logo_svg} />
 );
 
 const Toolbar: Component<Props> = (props) => {
@@ -41,11 +36,10 @@ const Toolbar: Component<Props> = (props) => {
   let file_input_ref: HTMLInputElement | undefined;
   let upload_btn_ref: HTMLDivElement | undefined;
   let download_btn_ref: HTMLDivElement | undefined;
-  let logo_btn_ref: HTMLDivElement | undefined;
 
   const [show_upload_menu, set_show_upload_menu] = createSignal(false);
   const [show_download_menu, set_show_download_menu] = createSignal(false);
-  const [show_logo_menu, set_show_logo_menu] = createSignal(false);
+  const [show_info_modal, set_show_info_modal] = createSignal(false);
   const [show_logs, set_show_logs] = createSignal(false);
   let compile_group_ref: HTMLDivElement | undefined;
   let log_ref: HTMLDivElement | undefined;
@@ -130,16 +124,14 @@ const Toolbar: Component<Props> = (props) => {
     onCleanup(() => document.removeEventListener("click", handler));
   });
 
-  // close logo menu on click outside
+  // close info modal on Escape
   createEffect(() => {
-    if (!show_logo_menu()) return;
-    const handler = (e: MouseEvent) => {
-      if (logo_btn_ref && !logo_btn_ref.contains(e.target as Node)) {
-        set_show_logo_menu(false);
-      }
+    if (!show_info_modal()) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") set_show_info_modal(false);
     };
-    document.addEventListener("click", handler);
-    onCleanup(() => document.removeEventListener("click", handler));
+    document.addEventListener("keydown", handler);
+    onCleanup(() => document.removeEventListener("keydown", handler));
   });
 
   // close logs popover on click outside
@@ -348,7 +340,7 @@ const Toolbar: Component<Props> = (props) => {
 
   async function handle_reset() {
     if (!confirm("Reset everything? This deletes all project files and cached bundles.")) return;
-    set_show_logo_menu(false);
+    set_show_info_modal(false);
     await clear_project();
     await clear_bundle_cache();
     window.location.reload();
@@ -366,46 +358,68 @@ const Toolbar: Component<Props> = (props) => {
   return (
     <header class="toolbar">
       <div class="toolbar-left">
-        <div class="logo-menu-wrapper" ref={logo_btn_ref}>
-          <button class="logo-btn" title="eztex menu" onClick={() => set_show_logo_menu(v => !v)}>
-            <Logo />
-          </button>
-          <Show when={show_logo_menu()}>
-            <div class="upload-dropdown logo-dropdown">
-              <Show when={cache_bytes() > 0}>
-                <button
-                  class={`upload-dropdown-item ${clearing_cache() ? "clearing" : ""}`}
-                  onClick={handle_clear_cache}
-                  disabled={clearing_cache()}
-                >
-                  <Show
-                    when={!clearing_cache()}
-                    fallback={
-                      <svg class="spin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M21 12a9 9 0 11-6.2-8.6" />
-                      </svg>
-                    }
-                  >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                      <polyline points="3 6 5 6 21 6" />
-                      <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
-                    </svg>
-                  </Show>
-                  Clear cache ({format_cache_size(cache_bytes())})
-                </button>
-              </Show>
-              <button class="upload-dropdown-item danger-item" onClick={handle_reset}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                  <polyline points="3 6 5 6 21 6" />
-                  <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" />
-                  <path d="M10 11v6M14 11v6" />
-                  <path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2" />
+        <button class="logo-btn" title="About eztex" onClick={() => set_show_info_modal(true)}>
+          <Logo />
+        </button>
+        <Show when={show_info_modal()}>
+          <div class="info-modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) set_show_info_modal(false); }}>
+            <div class="info-modal">
+              <button class="info-modal-close" onClick={() => set_show_info_modal(false)} title="Close">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
                 </svg>
-                Reset everything
               </button>
+              <div class="info-modal-logo" innerHTML={logo_svg} />
+              <div class="info-modal-name">eztex</div>
+              <p class="info-modal-desc">A fast, local-first LaTeX editor that runs entirely in your browser. No server, no signup -- just open and write.</p>
+              <div class="info-modal-links">
+                <a class="info-modal-link" href="https://github.com/nicebuild/eztex" target="_blank" rel="noopener">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+                  GitHub
+                </a>
+                <a class="info-modal-link donate" href="https://github.com/sponsors/nicebuild" target="_blank" rel="noopener">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg>
+                  Donate
+                </a>
+              </div>
+              <div class="info-modal-divider" />
+              <div class="info-modal-actions">
+                <Show when={cache_bytes() > 0}>
+                  <button
+                    class={`info-modal-action ${clearing_cache() ? "clearing" : ""}`}
+                    onClick={handle_clear_cache}
+                    disabled={clearing_cache()}
+                  >
+                    <Show
+                      when={!clearing_cache()}
+                      fallback={
+                        <svg class="spin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                          <path d="M21 12a9 9 0 11-6.2-8.6" />
+                        </svg>
+                      }
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <polyline points="3 6 5 6 21 6" />
+                        <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
+                      </svg>
+                    </Show>
+                    Clear cache ({format_cache_size(cache_bytes())})
+                  </button>
+                </Show>
+                <button class="info-modal-action danger" onClick={handle_reset}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <polyline points="3 6 5 6 21 6" />
+                    <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" />
+                    <path d="M10 11v6M14 11v6" />
+                    <path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2" />
+                  </svg>
+                  Reset everything
+                </button>
+              </div>
             </div>
-          </Show>
-        </div>
+          </div>
+        </Show>
         <div class="toolbar-divider" />
         <Show when={props.on_toggle_files}>
           <button
