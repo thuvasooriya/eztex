@@ -1,12 +1,24 @@
-import { type Component, Show } from "solid-js";
+import { type Component, Show, createMemo } from "solid-js";
 import { worker_client } from "../lib/worker_client";
 
+function pdf_viewer_url(url: string): string {
+  if (url.startsWith("blob:") || url.startsWith("data:")) {
+    return url + "#toolbar=0&navpanes=0&scrollbar=1&view=FitH";
+  }
+  return url;
+}
+
 const Preview: Component = () => {
+  const iframe_src = createMemo(() => {
+    const url = worker_client.pdf_url();
+    return url ? pdf_viewer_url(url) : null;
+  });
+
   return (
     <div class="preview-pane">
       <div class="preview-content">
         <Show
-          when={worker_client.pdf_url()}
+          when={iframe_src()}
           fallback={
             <div class="preview-empty">
               <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--fg-dark)" stroke-width="1">
@@ -19,7 +31,7 @@ const Preview: Component = () => {
         >
           <div class="pdf-container">
             <iframe
-              src={worker_client.pdf_url()!}
+              src={iframe_src()!}
               class="pdf-frame"
               title="PDF Preview"
             />
