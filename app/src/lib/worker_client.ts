@@ -4,6 +4,8 @@
 import { createSignal, batch } from "solid-js";
 import type { ProjectFiles } from "./project_store";
 import type { Diagnostic } from "../worker/protocol";
+import { decompress_gzip, parse_synctex, sync_to_pdf, sync_to_code } from "./synctex";
+import type { PdfSyncObject, SyncToPdfResult } from "./synctex";
 
 export type LogEntry = {
   msg: string;
@@ -23,12 +25,17 @@ const [status_text, set_status_text] = createSignal("Initializing...");
 const [progress, set_progress] = createSignal(0);
 const [logs, set_logs] = createSignal<LogEntry[]>([]);
 const [pdf_url, set_pdf_url] = createSignal<string | null>(null);
+const [pdf_bytes, set_pdf_bytes] = createSignal<Uint8Array | null>(null);
 const [ready, set_ready] = createSignal(false);
 const [compiling, set_compiling] = createSignal(false);
 const [last_elapsed, set_last_elapsed] = createSignal<string | null>(null);
 const [diagnostics, set_diagnostics] = createSignal<Diagnostic[]>([]);
 
-// goto request: set by diagnostic clicks, consumed by Editor to jump to file:line
+// synctex state
+const [synctex_data, set_synctex_data] = createSignal<PdfSyncObject | null>(null);
+const [sync_target, set_sync_target] = createSignal<SyncToPdfResult | null>(null);
+
+// goto request: set by diagnostic clicks or reverse sync, consumed by Editor to jump to file:line
 export type GotoRequest = { file: string; line: number } | null;
 const [goto_request, set_goto_request] = createSignal<GotoRequest>(null);
 
@@ -93,13 +100,24 @@ function handle_message(e: MessageEvent) {
       _on_ready_cb?.();
       break;
     case "complete": {
-      const pdf_data = data.pdf;
+      const pdf_data = data.pdf as Uint8Array | null;
+      const synctex_raw = data.synctex as Uint8Array | null;
       if (pdf_data) {
+        set_pdf_bytes(new Uint8Array(pdf_data));
         if (prev_pdf_url) URL.revokeObjectURL(prev_pdf_url);
-        const blob = new Blob([pdf_data], { type: "application/pdf" });
+        const blob = new Blob([pdf_data as BlobPart], { type: "application/pdf" });
         const url = URL.createObjectURL(blob);
         prev_pdf_url = url;
         set_pdf_url(url);
+      }
+      // parse synctex asynchronously
+      if (synctex_raw) {
+        decompress_gzip(synctex_raw)
+          .then((text) => {
+            const parsed = parse_synctex(text);
+            if (parsed) set_synctex_data(parsed);
+          })
+          .catch(() => {}); // graceful degradation
       }
       batch(() => {
         set_compiling(false);
@@ -164,6 +182,26 @@ function restore_pdf_url(url: string) {
   set_pdf_url(url);
 }
 
+function restore_pdf_bytes(bytes: Uint8Array) {
+  set_pdf_bytes(bytes);
+}
+
+// forward sync: editor cursor -> PDF highlight
+function sync_forward(file: string, line: number): void {
+  const data = synctex_data();
+  if (!data) return;
+  const result = sync_to_pdf(data, file, line);
+  set_sync_target(result);
+}
+
+// reverse sync: PDF click -> editor jump
+function do_sync_to_code(page: number, x: number, y: number): void {
+  const data = synctex_data();
+  if (!data) return;
+  const result = sync_to_code(data, page, x, y);
+  if (result) request_goto(result.file, result.line);
+}
+
 export const worker_client = {
   init: init_worker,
   compile,
@@ -173,16 +211,22 @@ export const worker_client = {
   on_compile_done,
   on_ready,
   restore_pdf_url,
+  restore_pdf_bytes,
   request_goto,
+  sync_forward,
+  sync_to_code: do_sync_to_code,
   // signals (read-only)
   status,
   status_text,
   progress,
   logs,
   pdf_url,
+  pdf_bytes,
   ready,
   compiling,
   last_elapsed,
   diagnostics,
   goto_request,
+  synctex_data,
+  sync_target,
 };

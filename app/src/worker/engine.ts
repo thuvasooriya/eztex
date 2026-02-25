@@ -555,7 +555,7 @@ export async function compile(user_files: ProjectFiles, main?: string): Promise<
   const t0 = performance.now();
 
   try {
-    const { exit_code, root_map, tmp_map, fetch_stats } = run_wasm(["eztex", "compile", main_file], user_files, true);
+    const { exit_code, root_map, tmp_map, fetch_stats } = run_wasm(["eztex", "compile", "--synctex", main_file], user_files, true);
 
     // persist xelatex.fmt if generated during this run
     const fmt_inode = tmp_map.get("xelatex.fmt") as WasiFile | undefined;
@@ -574,29 +574,36 @@ export async function compile(user_files: ProjectFiles, main?: string): Promise<
 
     if (exit_code === 0) {
       const pdf_name = main_file.replace(/\.tex$/, ".pdf");
+      const synctex_name = main_file.replace(/\.tex$/, ".synctex.gz");
       log("eztex", "info", `compiled ${main_file} in ${elapsed}s`);
       send_status(`Done (${elapsed}s)`, "success");
 
       const pdf_inode = root_map.get(pdf_name) as WasiFile | undefined;
+      const synctex_inode = root_map.get(synctex_name) as WasiFile | undefined;
+      const synctex_data = synctex_inode?.data ? new Uint8Array(synctex_inode.data) : null;
+      if (synctex_data) {
+        dbg("eztex", `synctex: ${synctex_name} (${format_size(synctex_data.byteLength)})`);
+      }
+
       if (pdf_inode && pdf_inode.data) {
         dbg("eztex", `output: ${pdf_name} (${format_size(pdf_inode.data.length)})`);
-        send_complete(pdf_inode.data, elapsed);
+        send_complete(pdf_inode.data, synctex_data, elapsed);
       } else {
         log("eztex", "warn", `no PDF output found (expected ${pdf_name})`);
         send_status("No PDF output", "error");
-        send_complete(null, elapsed);
+        send_complete(null, null, elapsed);
       }
     } else {
       log("eztex", "error", `compilation failed (exit code ${exit_code}) in ${elapsed}s`);
       send_status(`Failed (${elapsed}s)`, "error");
-      send_complete(null, elapsed);
+      send_complete(null, null, elapsed);
     }
   } catch (e) {
     const err = e as Error;
     log("eztex", "error", err.message);
     if (err.stack) send_log(err.stack, "log-error");
     send_status("Error", "error");
-    send_complete(null, "0");
+    send_complete(null, null, "0");
   }
 }
 

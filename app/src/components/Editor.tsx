@@ -190,6 +190,9 @@ const Editor: Component<Props> = (props) => {
     if (url) URL.revokeObjectURL(url);
   });
 
+  // debounced forward sync: cursor position -> PDF highlight
+  let sync_timer: ReturnType<typeof setTimeout> | undefined;
+
   onMount(() => {
     if (!container_ref) return;
 
@@ -214,6 +217,14 @@ const Editor: Component<Props> = (props) => {
               props.store.current_file(),
               update.state.doc.toString(),
             );
+          }
+          // forward sync on cursor movement (selection change or doc change)
+          if (update.selectionSet || update.docChanged) {
+            if (sync_timer !== undefined) clearTimeout(sync_timer);
+            sync_timer = setTimeout(() => {
+              const line = update.state.doc.lineAt(update.state.selection.main.head).number;
+              worker_client.sync_forward(props.store.current_file(), line);
+            }, 300);
           }
         }),
         EditorView.lineWrapping,
@@ -278,6 +289,7 @@ const Editor: Component<Props> = (props) => {
   });
 
   onCleanup(() => {
+    if (sync_timer !== undefined) clearTimeout(sync_timer);
     view?.destroy();
   });
 

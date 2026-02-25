@@ -111,6 +111,7 @@ const App: Component = () => {
     if (pdf_bytes && pdf_bytes.length > 0) {
       const url = URL.createObjectURL(new Blob([pdf_bytes.buffer as ArrayBuffer], { type: "application/pdf" }));
       worker_client.restore_pdf_url(url);
+      worker_client.restore_pdf_bytes(new Uint8Array(pdf_bytes));
       pdf_restored = true;
     }
 

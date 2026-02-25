@@ -16,7 +16,7 @@ export type WorkerOutMsg =
   | { type: "diagnostic"; diag: Diagnostic }
   | { type: "cache_status"; status: string; detail: string }
   | { type: "ready" }
-  | { type: "complete"; pdf: Uint8Array | null; elapsed: string };
+  | { type: "complete"; pdf: Uint8Array | null; synctex: Uint8Array | null; elapsed: string };
 
 export type FileContent = string | Uint8Array;
 export type ProjectFiles = Record<string, FileContent>;
@@ -73,8 +73,12 @@ export function send_cache_status(status: string, detail: string = ""): void {
   send("cache_status", { status, detail });
 }
 
-export function send_complete(pdf: Uint8Array | null, elapsed: string): void {
-  send("complete", { pdf, elapsed });
+export function send_complete(pdf: Uint8Array | null, synctex: Uint8Array | null, elapsed: string): void {
+  const msg = { type: "complete", pdf, synctex, elapsed };
+  const transfer: ArrayBuffer[] = [];
+  if (pdf) transfer.push(pdf.buffer as ArrayBuffer);
+  if (synctex) transfer.push(synctex.buffer as ArrayBuffer);
+  self.postMessage(msg, { transfer });
 }
 
 export function send_ready(): void {
