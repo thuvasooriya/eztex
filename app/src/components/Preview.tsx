@@ -25,7 +25,7 @@ const Preview: Component = () => {
   createEffect(() => {
     const target = worker_client.sync_target();
     if (target && viewer) {
-      console.debug("[synctex:forward] Preview sync_target effect firing", target);
+      if (import.meta.env.DEV) console.debug("[synctex:forward] Preview sync_target effect firing", target);
       viewer.scroll_to_and_highlight(target);
     }
   });
@@ -34,12 +34,12 @@ const Preview: Component = () => {
   function handle_click(e: MouseEvent) {
     if (!(e.ctrlKey || e.metaKey)) return;
     if (!viewer) return;
-    console.debug("[synctex:reverse] Preview handle_click");
+    if (import.meta.env.DEV) console.debug("[synctex:reverse] Preview handle_click");
     const pos = viewer.click_to_synctex(e);
     if (!pos) return;
     e.preventDefault();
     e.stopPropagation();
-    console.debug("[synctex:reverse] Preview dispatching sync_to_code", pos);
+    if (import.meta.env.DEV) console.debug("[synctex:reverse] Preview dispatching sync_to_code", pos);
     worker_client.sync_to_code(pos.page, pos.x, pos.y);
   }
 

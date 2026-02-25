@@ -327,7 +327,7 @@ function get_blocks_for_line(line_page_blocks: { [line: number]: { [page: number
 export function sync_to_pdf(data: PdfSyncObject, file: string, line: number): SyncToPdfResult | null {
   const input_path = find_input_path(data, file);
   if (!input_path) {
-    console.debug("[synctex:forward] no input path found for file", file);
+    if (import.meta.env.DEV) console.debug("[synctex:forward] no input path found for file", file);
     return null;
   }
 
@@ -371,7 +371,7 @@ export function sync_to_pdf(data: PdfSyncObject, file: string, line: number): Sy
   // reject degenerate bounding boxes (preamble lines, unmatched content)
   // that span most of the page -- no meaningful typeset region to highlight
   if (raw_height > 200) {
-    console.debug("[synctex:forward] sync_to_pdf rejected (degenerate height)", { file, line, raw_height });
+    if (import.meta.env.DEV) console.debug("[synctex:forward] sync_to_pdf rejected (degenerate height)", { file, line, raw_height });
     return null;
   }
 
@@ -387,7 +387,7 @@ export function sync_to_pdf(data: PdfSyncObject, file: string, line: number): Sy
     width,
     height,
   };
-  console.debug("[synctex:forward] sync_to_pdf", { file, line, input_path, rect: { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right }, offset: data.offset, result });
+  if (import.meta.env.DEV) console.debug("[synctex:forward] sync_to_pdf", { file, line, input_path, rect: { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right }, offset: data.offset, result });
   return result;
 }
 
@@ -396,7 +396,7 @@ export function sync_to_pdf(data: PdfSyncObject, file: string, line: number): Sy
 export function sync_to_code(data: PdfSyncObject, page: number, x: number, y: number): SyncToCodeResult | null {
   const x0 = x - data.offset.x;
   const y0 = y - data.offset.y;
-  console.debug("[synctex:reverse] sync_to_code input", { page, x, y, offset: data.offset, adjusted: { x0, y0 } });
+  if (import.meta.env.DEV) console.debug("[synctex:reverse] sync_to_code input", { page, x, y, offset: data.offset, adjusted: { x0, y0 } });
 
   // collect all candidate blocks on this page
   type Candidate = { file: string; line: number; rect: Rect };
@@ -419,8 +419,7 @@ export function sync_to_code(data: PdfSyncObject, page: number, x: number, y: nu
 
   if (candidates.length === 0) return null;
 
-  // log all candidates for debugging
-  console.debug("[synctex:reverse] candidates", candidates.map(c => ({
+  if (import.meta.env.DEV) console.debug("[synctex:reverse] candidates", candidates.map(c => ({
     line: c.line, rect: { left: c.rect.left.toFixed(1), top: c.rect.top.toFixed(1), right: c.rect.right.toFixed(1), bottom: c.rect.bottom.toFixed(1) },
     contains: c.rect.contains(x0, y0), dist: c.rect.distance_to_point(x0, y0).toFixed(2),
   })));
@@ -452,6 +451,6 @@ export function sync_to_code(data: PdfSyncObject, page: number, x: number, y: nu
   }
 
   if (!best) return null;
-  console.debug("[synctex:reverse] sync_to_code result", { file: normalize_path(best.file), line: best.line, dist: best.rect.distance_to_point(x0, y0) });
+  if (import.meta.env.DEV) console.debug("[synctex:reverse] sync_to_code result", { file: normalize_path(best.file), line: best.line, dist: best.rect.distance_to_point(x0, y0) });
   return { file: normalize_path(best.file), line: best.line };
 }

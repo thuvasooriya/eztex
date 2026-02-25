@@ -28,7 +28,9 @@ THIS FILE IS PURELY FOR THE USER TO TRACK AND ANALYZE
 
 ## app
 
-- [ ] synctex integration
+- [ ] synctex refinments
+- [ ] offline pwa
+- [ ] precache important packages
 - [ ] cleanup logs
 - [ ] keyboard navigation and shortcuts
 - [ ] share projects

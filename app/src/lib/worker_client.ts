@@ -195,7 +195,7 @@ function restore_pdf_bytes(bytes: Uint8Array) {
 }
 
 function restore_synctex(parsed: PdfSyncObject) {
-  console.log("[synctex:restore] restore_synctex called, setting synctex_data signal");
+  if (import.meta.env.DEV) console.log("[synctex:restore] restore_synctex called, setting synctex_data signal");
   set_synctex_data(parsed);
 }
 
@@ -203,12 +203,12 @@ function restore_synctex(parsed: PdfSyncObject) {
 function sync_forward(file: string, line: number): void {
   const data = synctex_data();
   if (!data) {
-    console.debug("[synctex:data] sync_forward: synctex_data is null, skipping");
+    if (import.meta.env.DEV) console.debug("[synctex:data] sync_forward: synctex_data is null, skipping");
     return;
   }
-  console.debug("[synctex:forward] sync_forward called", { file, line });
+  if (import.meta.env.DEV) console.debug("[synctex:forward] sync_forward called", { file, line });
   const result = sync_to_pdf(data, file, line);
-  console.debug("[synctex:forward] sync_forward result", result);
+  if (import.meta.env.DEV) console.debug("[synctex:forward] sync_forward result", result);
   set_sync_target(result);
 }
 
@@ -216,12 +216,12 @@ function sync_forward(file: string, line: number): void {
 function do_sync_to_code(page: number, x: number, y: number): void {
   const data = synctex_data();
   if (!data) {
-    console.debug("[synctex:data] do_sync_to_code: synctex_data is null, skipping");
+    if (import.meta.env.DEV) console.debug("[synctex:data] do_sync_to_code: synctex_data is null, skipping");
     return;
   }
-  console.debug("[synctex:reverse] do_sync_to_code called", { page, x, y });
+  if (import.meta.env.DEV) console.debug("[synctex:reverse] do_sync_to_code called", { page, x, y });
   const result = sync_to_code(data, page, x, y);
-  console.debug("[synctex:reverse] do_sync_to_code result", result);
+  if (import.meta.env.DEV) console.debug("[synctex:reverse] do_sync_to_code result", result);
   if (result) request_goto(result.file, result.line);
 }
 

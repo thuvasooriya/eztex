@@ -225,11 +225,11 @@ const Editor: Component<Props> = (props) => {
             if (sync_timer !== undefined) clearTimeout(sync_timer);
             sync_timer = setTimeout(() => {
               if (suppress_forward_sync) {
-                console.debug("[synctex:forward] suppressed (triggered by reverse sync goto)");
+                if (import.meta.env.DEV) console.debug("[synctex:forward] suppressed (triggered by reverse sync goto)");
                 return;
               }
               const line = update.state.doc.lineAt(update.state.selection.main.head).number;
-              console.debug("[synctex:forward] cursor debounce fired", { file: props.store.current_file(), line });
+              if (import.meta.env.DEV) console.debug("[synctex:forward] cursor debounce fired", { file: props.store.current_file(), line });
               worker_client.sync_forward(props.store.current_file(), line);
             }, 300);
           }
@@ -287,7 +287,7 @@ const Editor: Component<Props> = (props) => {
     if (!req || !view) return;
     const file_matches = req.file === props.store.current_file();
     if (!file_matches) return;
-    console.debug("[synctex:reverse] goto_request effect", { file: req.file, line: req.line });
+    if (import.meta.env.DEV) console.debug("[synctex:reverse] goto_request effect", { file: req.file, line: req.line });
     const line_num = Math.min(req.line, view.state.doc.lines);
     const line_obj = view.state.doc.line(line_num);
     // suppress forward sync so dispatching the cursor change doesn't trigger

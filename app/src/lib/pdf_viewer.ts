@@ -1,6 +1,6 @@
 // imperative PDF.js wrapper -- not reactive, controlled from SolidJS effects
 import * as PDFJS from "pdfjs-dist";
-import { PDFViewer, EventBus, PDFLinkService } from "pdfjs-dist/web/pdf_viewer.mjs";
+import { PDFViewer, EventBus, PDFLinkService, LinkTarget } from "pdfjs-dist/web/pdf_viewer.mjs";
 import "pdfjs-dist/web/pdf_viewer.css";
 import type { SyncToPdfResult } from "./synctex";
 
@@ -24,7 +24,11 @@ export class PdfViewerWrapper {
     this.container = container;
 
     this.event_bus = new EventBus();
-    this.link_service = new PDFLinkService({ eventBus: this.event_bus });
+    this.link_service = new PDFLinkService({
+      eventBus: this.event_bus,
+      externalLinkTarget: LinkTarget.BLANK,
+      externalLinkRel: "noopener noreferrer",
+    });
 
     const viewer_div = container.querySelector(".pdfViewer") as HTMLDivElement;
     this.viewer = new PDFViewer({
@@ -33,8 +37,8 @@ export class PdfViewerWrapper {
       eventBus: this.event_bus,
       linkService: this.link_service,
       removePageBorders: true,
-      textLayerMode: 0, // disable text layer
-      annotationMode: 0, // disable annotations
+      textLayerMode: 0, // disable text layer (not needed for LaTeX output)
+      annotationMode: 1, // ENABLE: render link annotations for clickable hyperlinks
     });
     this.link_service.setViewer(this.viewer);
 
@@ -136,27 +140,29 @@ export class PdfViewerWrapper {
     const css_top = (target.y - target.height) * scale;
     const css_width = target.width * scale;
     const css_height = target.height * scale;
-    console.debug("[synctex:coords] forward highlight", {
-      target, scale, css: { left: css_left, top: css_top, width: css_width, height: css_height },
-    });
+    if (import.meta.env.DEV) {
+      console.debug("[synctex:coords] forward highlight", {
+        target, scale, css: { left: css_left, top: css_top, width: css_width, height: css_height },
+      });
 
-    // position highlight overlay on the page div
-    const page_div = page_view.div as HTMLDivElement;
-    this.clear_highlight();
+      // position highlight overlay on the page div (dev only)
+      const page_div = page_view.div as HTMLDivElement;
+      this.clear_highlight();
 
-    const hl = document.createElement("div");
-    hl.className = "synctex-highlight";
-    hl.style.position = "absolute";
-    hl.style.left = `${css_left}px`;
-    hl.style.top = `${css_top}px`;
-    hl.style.width = `${css_width}px`;
-    hl.style.height = `${css_height}px`;
-    page_div.style.position = "relative";
-    page_div.appendChild(hl);
-    this.highlight_el = hl;
+      const hl = document.createElement("div");
+      hl.className = "synctex-highlight";
+      hl.style.position = "absolute";
+      hl.style.left = `${css_left}px`;
+      hl.style.top = `${css_top}px`;
+      hl.style.width = `${css_width}px`;
+      hl.style.height = `${css_height}px`;
+      page_div.style.position = "relative";
+      page_div.appendChild(hl);
+      this.highlight_el = hl;
 
-    // remove after animation
-    hl.addEventListener("animationend", () => this.clear_highlight(), { once: true });
+      // remove after animation
+      hl.addEventListener("animationend", () => this.clear_highlight(), { once: true });
+    }
   }
 
   private clear_highlight(): void {
@@ -190,7 +196,7 @@ export class PdfViewerWrapper {
     const scale = page_view.viewport.scale;
     const synctex_x = dx / scale;
     const synctex_y = dy / scale;
-    console.debug("[synctex:coords] reverse click", {
+    if (import.meta.env.DEV) console.debug("[synctex:coords] reverse click", {
       page_num, dx, dy, scale, synctex_x, synctex_y,
     });
     return { page: page_num, x: synctex_x, y: synctex_y };
