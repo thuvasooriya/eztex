@@ -43,6 +43,7 @@ const App: Component = () => {
   const [split_dir, set_split_dir] = createSignal<"horizontal" | "vertical">(
     (localStorage.getItem(SPLIT_DIR_KEY) as "horizontal" | "vertical") || "horizontal"
   );
+  const [is_resizing, set_is_resizing] = createSignal(false);
 
   // conflict dialog state
   const [conflicts, set_conflicts] = createSignal<ConflictInfo[]>([]);
@@ -213,6 +214,7 @@ const App: Component = () => {
     let cls = "workspace";
     if (is_narrow()) cls += " narrow-mode";
     if (use_swap_mode() && show_preview_in_narrow()) cls += " show-preview";
+    if (is_resizing()) cls += " is-resizing";
     cls += ` split-${split_dir()}`;
     return cls;
   };
@@ -245,17 +247,19 @@ const App: Component = () => {
       />
 
       <div class={workspace_class()}>
-        {/* file panel: inline in wide mode */}
-        <Show when={files_visible() && !is_narrow()}>
+        {/* file panel: inline in wide mode, always rendered for transitions */}
+        <Show when={!is_narrow()}>
           <div
-            class="file-panel-wrapper panel-wrapper panel-box"
-            style={{ width: `${file_panel_width()}px`, "flex-shrink": 0 }}
+            class={`file-panel-wrapper panel-wrapper panel-box ${!files_visible() ? "panel-collapsed" : ""}`}
+            style={{ width: files_visible() ? `${file_panel_width()}px` : "0px", "flex-shrink": 0 }}
           >
             <FilePanel store={store} folder_sync={folder_sync} />
           </div>
           <ResizeHandle
             direction="horizontal"
             on_resize={handle_file_resize}
+            on_drag_start={() => set_is_resizing(true)}
+            on_drag_end={() => set_is_resizing(false)}
           />
         </Show>
 
@@ -265,16 +269,18 @@ const App: Component = () => {
           </div>
 
           {/* Wide mode OR narrow+vertical stacked: show preview with resize handle */}
-          <Show when={!use_swap_mode() && preview_visible()}>
+          <Show when={!use_swap_mode()}>
             <ResizeHandle
               direction={split_dir() === "vertical" ? "vertical" : "horizontal"}
               on_resize={handle_preview_resize}
+              on_drag_start={() => set_is_resizing(true)}
+              on_drag_end={() => set_is_resizing(false)}
             />
             <div
-              class="preview-wrapper panel-wrapper panel-box"
+              class={`preview-wrapper panel-wrapper panel-box ${!preview_visible() ? "panel-collapsed" : ""}`}
               style={split_dir() === "vertical"
-                ? { height: `${preview_height()}px`, "flex-shrink": 0 }
-                : { width: `${preview_width()}px`, "flex-shrink": 0 }
+                ? { height: preview_visible() ? `${preview_height()}px` : "0px", "flex-shrink": 0 }
+                : { width: preview_visible() ? `${preview_width()}px` : "0px", "flex-shrink": 0 }
               }
             >
               <Preview />

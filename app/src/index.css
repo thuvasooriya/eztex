@@ -425,6 +425,11 @@ body {
   display: flex;
   flex: 1;
   overflow: hidden;
+  transition: flex-direction var(--duration-normal) var(--ease-out);
+}
+
+.workspace.is-resizing .split-container {
+  transition: none;
 }
 
 .split-container.split-horizontal {
@@ -446,6 +451,18 @@ body {
   display: flex;
   flex-shrink: 0;
   overflow: hidden;
+  transition: width var(--duration-normal) var(--ease-out),
+              height var(--duration-normal) var(--ease-out);
+}
+
+.panel-wrapper.panel-collapsed {
+  border-color: transparent;
+  pointer-events: none;
+}
+
+/* suppress transitions during drag resize */
+.workspace.is-resizing .panel-wrapper {
+  transition: none;
 }
 
 .editor-wrapper {
