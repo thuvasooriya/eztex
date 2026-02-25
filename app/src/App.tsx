@@ -11,6 +11,7 @@ import Editor from "./components/Editor";
 import Preview from "./components/Preview";
 import DiagnosticPill from "./components/DiagnosticPill";
 import ResizeHandle from "./components/ResizeHandle";
+import Onboarding, { is_onboarded } from "./components/Onboarding";
 
 const NARROW_BREAKPOINT = 900;
 const TOO_NARROW_BREAKPOINT = 600;
@@ -44,6 +45,9 @@ const App: Component = () => {
     (localStorage.getItem(SPLIT_DIR_KEY) as "horizontal" | "vertical") || "horizontal"
   );
   const [is_resizing, set_is_resizing] = createSignal(false);
+
+  // onboarding state
+  const [show_onboarding, set_show_onboarding] = createSignal(!is_onboarded());
 
   // conflict dialog state
   const [conflicts, set_conflicts] = createSignal<ConflictInfo[]>([]);
@@ -246,6 +250,7 @@ const App: Component = () => {
         reconnect_folder={show_reconnect() ? reconnect_folder_name() : null}
         on_reconnect={handle_reconnect}
         on_dismiss_reconnect={dismiss_reconnect}
+        on_start_tour={() => set_show_onboarding(true)}
       />
 
       <div class={workspace_class()}>
@@ -349,6 +354,11 @@ const App: Component = () => {
       </Show>
 
       <DiagnosticPill store={store} />
+
+      <Onboarding
+        visible={show_onboarding()}
+        on_close={() => set_show_onboarding(false)}
+      />
     </div>
   );
 };

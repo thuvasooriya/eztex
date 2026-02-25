@@ -8,6 +8,7 @@ import { is_binary, is_text_ext } from "../lib/project_store";
 import type { ProjectFiles } from "../lib/project_store";
 import { save_pdf, clear_project, clear_bundle_cache } from "../lib/project_persist";
 import type { LocalFolderSync, ConflictInfo } from "../lib/local_folder_sync";
+import { clear_onboarded } from "./Onboarding";
 import logo_svg from "/logo.svg?raw";
 
 type Props = {
@@ -24,6 +25,7 @@ type Props = {
   reconnect_folder?: string | null;
   on_reconnect?: () => void;
   on_dismiss_reconnect?: () => void;
+  on_start_tour?: () => void;
 };
 
 const Logo: Component = () => (
@@ -341,6 +343,7 @@ const Toolbar: Component<Props> = (props) => {
   async function handle_reset() {
     if (!confirm("Reset everything? This deletes all project files and cached bundles.")) return;
     set_show_info_modal(false);
+    clear_onboarded();
     await clear_project();
     await clear_bundle_cache();
     window.location.reload();
@@ -385,6 +388,14 @@ const Toolbar: Component<Props> = (props) => {
               </div>
               <div class="info-modal-divider" />
               <div class="info-modal-actions">
+                <button class="info-modal-action" onClick={() => { set_show_info_modal(false); props.on_start_tour?.(); }}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <circle cx="12" cy="12" r="10" />
+                    <path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3" />
+                    <line x1="12" y1="17" x2="12.01" y2="17" />
+                  </svg>
+                  Start tutorial
+                </button>
                 <Show when={cache_bytes() > 0}>
                   <button
                     class={`info-modal-action ${clearing_cache() ? "clearing" : ""}`}
