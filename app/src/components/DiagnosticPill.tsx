@@ -1,4 +1,4 @@
-import { type Component, Show, For, createSignal, createEffect } from "solid-js";
+import { type Component, Show, For, createSignal, createEffect, untrack } from "solid-js";
 import { worker_client } from "../lib/worker_client";
 import type { ProjectStore } from "../lib/project_store";
 import type { Diagnostic } from "../worker/protocol";
@@ -39,15 +39,19 @@ const DiagnosticPill: Component<Props> = (props) => {
   const warn_count = () => diags().filter(d => d.severity === "warning").length;
 
   // auto-expand on error diagnostics, auto-collapse when errors resolve
+  // edge-triggered: only opens when error_count transitions from 0 to >0
+  let prev_error_count = 0;
   createEffect(() => {
     const errs = error_count();
-    if (errs > 0) {
-      if (!expanded()) {
+    const was = prev_error_count;
+    prev_error_count = errs;
+    if (errs > 0 && was === 0) {
+      if (!untrack(expanded) && !untrack(pinned)) {
         set_auto_opened(true);
         set_expanded(true);
       }
-    } else {
-      if (auto_opened() && !pinned()) {
+    } else if (errs === 0 && was > 0) {
+      if (untrack(auto_opened) && !untrack(pinned)) {
         set_expanded(false);
         set_auto_opened(false);
       }

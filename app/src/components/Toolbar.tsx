@@ -1,4 +1,4 @@
-import { type Component, Show, For, onCleanup, onMount, createSignal, createEffect } from "solid-js";
+import { type Component, Show, For, onCleanup, onMount, createSignal, createEffect, untrack } from "solid-js";
 import { worker_client, type LogEntry } from "../lib/worker_client";
 import ProgressBar from "./ProgressBar";
 import { create_watch_controller } from "../lib/watch_controller";
@@ -162,15 +162,19 @@ const Toolbar: Component<Props> = (props) => {
   });
 
   // auto-open logs on compile error, auto-close on resolution
+  // edge-triggered: only opens on transition TO error, not while error persists
+  let prev_log_status: string | undefined;
   createEffect(() => {
     const s = worker_client.status();
-    if (s === "error") {
-      if (!show_logs()) {
+    const was = prev_log_status;
+    prev_log_status = s;
+    if (s === "error" && was !== "error") {
+      if (!untrack(show_logs) && !untrack(logs_pinned)) {
         set_logs_auto_opened(true);
         set_show_logs(true);
       }
-    } else if (s === "success" || s === "idle") {
-      if (logs_auto_opened() && !logs_pinned()) {
+    } else if ((s === "success" || s === "idle") && was === "error") {
+      if (untrack(logs_auto_opened) && !untrack(logs_pinned)) {
         set_show_logs(false);
         set_logs_auto_opened(false);
       }
