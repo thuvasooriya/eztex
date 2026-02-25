@@ -6,9 +6,8 @@ import { read_zip, write_zip } from "../lib/zip_utils";
 import type { ProjectStore } from "../lib/project_store";
 import { is_binary, is_text_ext } from "../lib/project_store";
 import type { ProjectFiles } from "../lib/project_store";
-import { save_pdf, clear_project, clear_bundle_cache } from "../lib/project_persist";
+import { save_pdf, clear_bundle_cache, reset_all_persistence } from "../lib/project_persist";
 import type { LocalFolderSync, ConflictInfo } from "../lib/local_folder_sync";
-import { clear_onboarded } from "./Onboarding";
 import logo_svg from "/logo.svg?raw";
 
 type Props = {
@@ -360,9 +359,8 @@ const Toolbar: Component<Props> = (props) => {
   async function handle_reset() {
     if (!confirm("Reset everything? This deletes all project files and cached bundles.")) return;
     set_show_info_modal(false);
-    clear_onboarded();
-    await clear_project();
-    await clear_bundle_cache();
+    worker_client.clear_cache();
+    await reset_all_persistence();
     window.location.reload();
   }
 

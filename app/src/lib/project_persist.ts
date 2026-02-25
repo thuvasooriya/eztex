@@ -158,3 +158,19 @@ export async function load_pdf(): Promise<Uint8Array | null> {
     return null;
   }
 }
+
+// nuke all persistence: localStorage, OPFS (project + cache), IndexedDB (folder sync handles)
+export async function reset_all_persistence(): Promise<void> {
+  localStorage.clear();
+  await clear_project();
+  await clear_bundle_cache();
+  // clear folder sync IndexedDB
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const req = indexedDB.deleteDatabase("eztex-folder-sync");
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+      req.onblocked = () => resolve();
+    });
+  } catch { /* graceful degradation */ }
+}
