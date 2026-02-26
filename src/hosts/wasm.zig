@@ -9,14 +9,18 @@ const std = @import("std");
 const fs = std.fs;
 const Host = @import("../Host.zig");
 const Engine = @import("../Engine.zig");
-const Config = @import("../Config.zig");
 const BundleStore = @import("../BundleStore.zig");
 const Log = @import("../Log.zig");
 
-const allocator = std.heap.c_allocator;
-const dbg = Log.dbg;
+// WASM allocator: use wasm_allocator for JS buffer management (no libc dependency).
+// The alloc parameter passed to functions is used for returned data.
+const wasm_allocator = std.heap.wasm_allocator;
 
 // -- JS host callbacks (extern imports) --
+//
+// Ownership contract: JS must return buffers allocated through the module's
+// exported allocator path (eztex_alloc). This ensures freeing with wasm_allocator
+// on the Zig side is valid. JS receives the allocator via the import table.
 
 extern "env" fn js_request_range(
     name_ptr: [*]const u8,
@@ -30,6 +34,7 @@ extern "env" fn js_request_range(
 
 // JS provides decompressed ITAR index text (cached from async fetch during init).
 // returns 0 on success, -1 if index not available.
+// The returned buffer must be allocated via the module's exported allocator.
 extern "env" fn js_request_index(
     buf_ptr: *[*]u8,
     buf_len: *usize,
@@ -40,22 +45,26 @@ extern "env" fn js_request_index(
 pub fn init(_: ?[]const u8, _: []const u8, _: []const u8, _: []const u8) void {}
 
 // -- setup --
-// WASM platform setup: init BundleStore with c_allocator.
+// WASM platform setup: init BundleStore with wasm_allocator.
 // files are fetched on demand from JS host via js_request_range.
 // returns null (WASM has no persistent cache directory).
-pub fn setup(world: *Engine.World, _: bool, _: ?[]const u8) ?[]const u8 {
-    dbg("wasm", "setup: initializing BundleStore with c_allocator", .{});
-    const bs = BundleStore.init(allocator, Config.default_bundle_url, &Config.default_bundle_digest);
+pub fn setup(world: *Engine.World, _: bool, _: ?[]const u8, data_url: []const u8, _: []const u8, digest: *const [64]u8) ?[]const u8 {
+    var threaded: std.Io.Threaded = .init_single_threaded;
+    const io = threaded.io();
+    Log.dbg(io, "wasm", "setup: initializing BundleStore with wasm_allocator", .{});
+    const bs = BundleStore.init(wasm_allocator, data_url, digest);
     Engine.set_bundle_store(bs);
     world.bundle_store = Engine.get_bundle_store();
-    dbg("wasm", "setup: complete, bundle_store set", .{});
+    Log.dbg(io, "wasm", "setup: complete, bundle_store set", .{});
     return null;
 }
 
 // -- fetch --
 
 pub fn fetch_range(name: []const u8, entry: Host.IndexEntry, alloc: std.mem.Allocator) ![]u8 {
-    dbg("wasm", "fetch_range: \"{s}\" offset={d} len={d}", .{ name, entry.offset, entry.length });
+    var threaded: std.Io.Threaded = .init_single_threaded;
+    const io = threaded.io();
+    Log.dbg(io, "wasm", "fetch_range: \"{s}\" offset={d} len={d}", .{ name, entry.offset, entry.length });
     var buf_ptr: [*]u8 = undefined;
     var buf_len: usize = 0;
 
@@ -72,18 +81,20 @@ pub fn fetch_range(name: []const u8, entry: Host.IndexEntry, alloc: std.mem.Allo
         &buf_len,
     );
     if (result != 0) {
-        dbg("wasm", "fetch_range: JS returned error ({d})", .{result});
+        Log.dbg(io, "wasm", "fetch_range: JS returned error ({d})", .{result});
         return error.FileNotFound;
     }
     if (buf_len == 0) {
-        dbg("wasm", "fetch_range: JS returned 0 bytes", .{});
+        Log.dbg(io, "wasm", "fetch_range: JS returned 0 bytes", .{});
         return error.FileNotFound;
     }
 
-    dbg("wasm", "fetch_range: got {d} bytes from JS", .{buf_len});
+    Log.dbg(io, "wasm", "fetch_range: got {d} bytes from JS", .{buf_len});
     const js_slice = buf_ptr[0..buf_len];
+    // copy out of JS-allocated buffer, then free via wasm_allocator (valid
+    // because JS allocated through the module's exported allocator path).
     const owned = try alloc.dupe(u8, js_slice);
-    allocator.free(js_slice);
+    wasm_allocator.free(js_slice);
     return owned;
 }
 
@@ -94,7 +105,7 @@ pub fn cache_check(_: []const u8) Host.CacheStatus {
     return .unsupported;
 }
 
-pub fn cache_open(_: []const u8) ?fs.File {
+pub fn cache_open(_: []const u8) ?std.Io.File {
     return null;
 }
 
@@ -124,8 +135,10 @@ pub fn fetch_index(alloc: std.mem.Allocator) ![]u8 {
     if (buf_len == 0) return error.IndexNotLoaded;
 
     const js_slice = buf_ptr[0..buf_len];
+    // copy out of JS-allocated buffer, then free via wasm_allocator (valid
+    // because JS allocated through the module's exported allocator path).
     const owned = try alloc.dupe(u8, js_slice);
-    allocator.free(js_slice);
+    wasm_allocator.free(js_slice);
     return owned;
 }
 

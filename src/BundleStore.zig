@@ -5,6 +5,7 @@
 
 const std = @import("std");
 const fs = std.fs;
+const Io = std.Io;
 const Host = @import("Host.zig");
 
 const Log = @import("Log.zig");
@@ -12,7 +13,6 @@ const Log = @import("Log.zig");
 const BundleStore = @This();
 
 const is_wasm = Host.is_wasm;
-const dbg = Log.dbg;
 
 pub const IndexEntry = Host.IndexEntry;
 
@@ -20,16 +20,17 @@ allocator: std.mem.Allocator,
 bundle_index: std.StringHashMap(IndexEntry),
 bundle_index_loaded: bool,
 url: []const u8,
-digest: []const u8,
+digest: [64]u8,
 
-pub fn init(allocator: std.mem.Allocator, url: []const u8, digest: []const u8) BundleStore {
-    return .{
+pub fn init(allocator: std.mem.Allocator, url: []const u8, digest: *const [64]u8) BundleStore {
+    const bs: BundleStore = .{
         .allocator = allocator,
         .bundle_index = std.StringHashMap(IndexEntry).init(allocator),
         .bundle_index_loaded = false,
         .url = url,
-        .digest = digest,
+        .digest = digest.*,
     };
+    return bs;
 }
 
 pub fn deinit(self: *BundleStore) void {
@@ -43,61 +44,63 @@ pub fn deinit(self: *BundleStore) void {
 }
 
 // resolve a file: cache -> index lookup -> fetch -> write -> return
-pub fn open_file(self: *BundleStore, name: []const u8) !fs.File {
-    dbg("bs", "open_file: \"{s}\"", .{name});
+pub fn open_file(self: *BundleStore, io: Io, name: []const u8) !Io.File {
+    Log.dbg(io, "bundle", "open_file: \"{s}\"", .{name});
     // 1. check persistent cache (Host abstracts disk vs OPFS)
     if (Host.cache_open(name)) |file| {
-        dbg("bs", "open_file: cache hit for \"{s}\"", .{name});
+        Log.dbg(io, "bundle", "open_file: cache hit for \"{s}\"", .{name});
         return file;
     }
 
     // 2. bundle_index lookup
-    try self.ensure_index();
+    try self.ensure_index(io);
     const entry = self.resolve_index_entry(name) orelse {
-        dbg("bs", "open_file: not in index \"{s}\"", .{name});
+        Log.dbg(io, "bundle", "open_file: not in index \"{s}\"", .{name});
         return error.FileNotFound;
     };
-    dbg("bs", "open_file: index entry \"{s}\" offset={d} len={d}", .{ name, entry.offset, entry.length });
+    Log.dbg(io, "bundle", "open_file: index entry \"{s}\" offset={d} len={d}", .{ name, entry.offset, entry.length });
 
     // 3. fetch via Host (abstracts HTTP Range vs sync XHR)
-    Log.dbg("bundle", "fetching: {s}", .{name});
+    Log.dbg(io, "bundle", "fetching: {s}", .{name});
     const content = try Host.fetch_range(name, entry, self.allocator);
     defer self.allocator.free(content);
 
     // 4. persist to cache (Host abstracts disk vs OPFS, no-op on WASM)
     Host.cache_write(name, content);
 
-    // 5. write to temp file and return handle
-    const file = fs.cwd().createFile(name, .{ .read = true }) catch return error.CacheWriteFailed;
-    file.writeAll(content) catch {
-        file.close();
-        return error.CacheWriteFailed;
-    };
-    file.seekTo(0) catch {
-        file.close();
-        return error.CacheWriteFailed;
-    };
-
-    // on native, re-open from cache for content-addressed dedup benefit
-    if (!is_wasm) {
-        file.close();
-        return Host.cache_open(name) orelse error.CacheWriteFailed;
+    // 5. Try opening from cache (cache_write just stored it)
+    if (Host.cache_open(name)) |cached_file| {
+        Log.dbg(io, "bundle", "open_file: reopened from cache \"{s}\"", .{name});
+        return cached_file;
     }
 
-    return file;
+    // Fallback: write to tmp/ directory (not cwd)
+    Io.Dir.cwd().createDir(io, "tmp", Io.Dir.Permissions.default_dir) catch {};
+    var tmp_buf: [1024]u8 = undefined;
+    const tmp_name = std.fmt.bufPrint(&tmp_buf, "tmp/{s}", .{name}) catch return error.CacheWriteFailed;
+    const file = Io.Dir.cwd().createFile(io, tmp_name, .{}) catch return error.CacheWriteFailed;
+    var write_buf: [4096]u8 = undefined;
+    var writer = file.writerStreaming(io, &write_buf);
+    writer.interface.writeAll(content) catch {
+        file.close(io);
+        return error.CacheWriteFailed;
+    };
+    _ = writer.interface.flush() catch {};
+    file.close(io);
+    return Io.Dir.cwd().openFile(io, tmp_name, .{}) catch error.CacheWriteFailed;
 }
 
 // check if a file exists in cache or index (case-insensitive for index)
-pub fn has(self: *BundleStore, name: []const u8) !bool {
+pub fn has(self: *BundleStore, io: Io, name: []const u8) !bool {
     if (Host.cache_check(name) == .hit) return true;
-    try self.ensure_index();
+    try self.ensure_index(io);
     var buf: [1024]u8 = undefined;
     const lower = lower_into(&buf, name) orelse return false;
     return self.bundle_index.contains(lower);
 }
 
-pub fn count(self: *BundleStore) !usize {
-    try self.ensure_index();
+pub fn count(self: *BundleStore, io: Io) !usize {
+    try self.ensure_index(io);
     return self.bundle_index.count();
 }
 
@@ -124,19 +127,19 @@ fn lower_into(buf: []u8, s: []const u8) ?[]u8 {
 
 // -- index management --
 
-pub fn ensure_index(self: *BundleStore) !void {
+pub fn ensure_index(self: *BundleStore, io: Io) !void {
     if (self.bundle_index_loaded) return;
-    dbg("bs", "ensure_index: loading...", .{});
+    Log.dbg(io, "bundle", "ensure_index: loading...", .{});
 
     // try loading cached index first (native: disk cache, wasm: always null)
-    if (Host.load_cached_index(self.digest, self.allocator)) |content| {
+    if (Host.load_cached_index(&self.digest, self.allocator)) |content| {
         defer self.allocator.free(content);
         self.parse_index(content) catch {
             // cache corrupted, fall through to network fetch
         };
         if (self.bundle_index.count() > 0) {
             self.bundle_index_loaded = true;
-            Log.dbg("bundle", "bundle_index loaded from cache ({d} entries)", .{self.bundle_index.count()});
+            Log.dbg(io, "bundle", "bundle_index loaded from cache ({d} entries)", .{self.bundle_index.count()});
             return;
         }
     }
@@ -145,14 +148,14 @@ pub fn ensure_index(self: *BundleStore) !void {
     const content = try Host.fetch_index(self.allocator);
     defer self.allocator.free(content);
 
-    Log.dbg("bundle", "bundle index downloaded ({d} bytes decompressed)", .{content.len});
+    Log.dbg(io, "bundle", "bundle index downloaded ({d} bytes decompressed)", .{content.len});
 
     try self.parse_index(content);
     self.bundle_index_loaded = true;
-    Log.dbg("bundle", "bundle_index fetched from network ({d} entries)", .{self.bundle_index.count()});
+    Log.dbg(io, "bundle", "bundle_index fetched from network ({d} entries)", .{self.bundle_index.count()});
 
     // cache for future runs
-    Host.cache_index(self.digest, content);
+    Host.cache_index(&self.digest, content);
 }
 
 // load index from raw ITAR text content. clears any previously loaded index.
@@ -182,7 +185,7 @@ pub fn parse_index_into(
 ) !void {
     var line_iter = std.mem.splitScalar(u8, content, '\n');
     while (line_iter.next()) |line| {
-        const trimmed = std.mem.trimRight(u8, line, " \t\r");
+        const trimmed = std.mem.trim(u8, line, " \t\r");
         if (trimmed.len == 0) continue;
 
         var parts = std.mem.splitScalar(u8, trimmed, ' ');
@@ -197,6 +200,11 @@ pub fn parse_index_into(
 
         const owned_name = try allocator.dupe(u8, name);
         ascii_lower(owned_name);
+        // Check for duplicate key first to avoid leaking owned_name
+        if (index.contains(owned_name)) {
+            allocator.free(owned_name);
+            continue;
+        }
         index.put(owned_name, .{ .offset = offset, .length = length }) catch {
             allocator.free(owned_name);
             continue;
@@ -221,11 +229,11 @@ pub const SeedResult = struct {
     failed: usize,
 };
 
-pub fn seed_cache(self: *BundleStore, names: []const []const u8, concurrency: usize) SeedResult {
+pub fn seed_cache(self: *BundleStore, io: Io, names: []const []const u8, concurrency: usize) SeedResult {
     if (names.len == 0) return .{ .fetched = 0, .skipped_cached = 0, .skipped_unknown = 0, .failed = 0 };
 
-    self.ensure_index() catch |err| {
-        Log.dbg("bundle", "seed: failed to load bundle index: {}", .{err});
+    self.ensure_index(io) catch |err| {
+        Log.dbg(io, "bundle", "seed: failed to load bundle index: {}", .{err});
         return .{ .fetched = 0, .skipped_cached = 0, .skipped_unknown = names.len, .failed = 0 };
     };
 
@@ -257,7 +265,7 @@ pub fn seed_cache(self: *BundleStore, names: []const []const u8, concurrency: us
         };
     }
 
-    Log.dbg("bundle", "seed: {d} files to fetch ({d} cached, {d} unknown)", .{
+    Log.dbg(io, "bundle", "seed: {d} files to fetch ({d} cached, {d} unknown)", .{
         work_items.items.len, skipped_cached, skipped_unknown,
     });
 

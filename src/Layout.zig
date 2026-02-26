@@ -56,6 +56,29 @@ comptime {
     }
 }
 
+// ========================================
+// Module state (consolidated globals)
+// ========================================
+
+const State = struct {
+    bbox_cache: ?std.AutoHashMap(u32, GlyphBBox) = null,
+    left_prot: ?std.AutoHashMap(u64, i32) = null,
+    right_prot: ?std.AutoHashMap(u64, i32) = null,
+    loaded_font_design_size: i32 = 655360,
+    gr_cache: ?std.AutoHashMap(usize, GrCacheEntry) = null,
+    req_engine: u8 = 0,
+    ft_lib: ?*anyopaque = null,
+    ft_face_count: c_int = 0,
+    ft_lib_shutdown_pending: c_int = 0,
+    custom_font_funcs: ?*hb_font_funcs_t = null,
+    ft_face_user_data_key: u8 = 0,
+    fonts_registered: bool = false,
+    mac_name_buf: [512]u8 = undefined,
+    mac_desc_buf: [1024]u8 = undefined,
+};
+
+var state: State = .{};
+
 // -- Extern struct layouts matching C definitions in xetex_layout.c --
 
 const XeTeXFont_rec = extern struct {
@@ -184,12 +207,10 @@ fn font_points_to_units(f: *const XeTeXFont_rec, points: f64) f64 {
 // BBox cache -- proper hashmap, no collision overwrites
 // ========================================
 
-var bbox_cache: ?std.AutoHashMap(u32, GlyphBBox) = null; // single-threaded: no synchronization needed
-
 fn get_bbox_cache() *std.AutoHashMap(u32, GlyphBBox) {
-    if (bbox_cache) |*c| return c;
-    bbox_cache = std.AutoHashMap(u32, GlyphBBox).init(std.heap.c_allocator);
-    return &bbox_cache.?;
+    if (state.bbox_cache) |*c| return c;
+    state.bbox_cache = std.AutoHashMap(u32, GlyphBBox).init(std.heap.c_allocator);
+    return &state.bbox_cache.?;
 }
 
 export fn getCachedGlyphBBox(font_id: u16, glyph_id: u16, bbox: *GlyphBBox) i32 {
@@ -212,11 +233,8 @@ export fn cacheGlyphBBox(font_id: u16, glyph_id: u16, bbox: *const GlyphBBox) vo
 // Character protrusion codes -- proper hashmap, no collision overwrites
 // ========================================
 
-var left_prot: ?std.AutoHashMap(u64, i32) = null; // single-threaded: no synchronization needed
-var right_prot: ?std.AutoHashMap(u64, i32) = null; // single-threaded: no synchronization needed
-
 fn get_cp_table(side: i32) *std.AutoHashMap(u64, i32) {
-    const ptr = if (side == 0) &left_prot else &right_prot;
+    const ptr = if (side == 0) &state.left_prot else &state.right_prot;
     if (ptr.*) |*c| return c;
     ptr.* = std.AutoHashMap(u64, i32).init(std.heap.c_allocator);
     return &ptr.*.?;
@@ -326,14 +344,12 @@ export fn getRgbValue(engine: ?*XeTeXLayoutEngine_rec) u32 {
 // loaded_font_design_size
 // ========================================
 
-var loaded_font_design_size: i32 = 655360; // 10pt in 16.16 fixed-point; single-threaded
-
 export fn get_loaded_font_design_size() i32 {
-    return loaded_font_design_size;
+    return state.loaded_font_design_size;
 }
 
 export fn set_loaded_font_design_size(val: i32) void {
-    loaded_font_design_size = val;
+    state.loaded_font_design_size = val;
 }
 
 // ========================================
@@ -402,12 +418,10 @@ const GrCacheEntry = struct {
     gr_font: *anyopaque,
 };
 
-var gr_cache: ?std.AutoHashMap(usize, GrCacheEntry) = null; // single-threaded: no synchronization needed
-
 fn get_gr_cache() *std.AutoHashMap(usize, GrCacheEntry) {
-    if (gr_cache) |*c| return c;
-    gr_cache = std.AutoHashMap(usize, GrCacheEntry).init(std.heap.c_allocator);
-    return &gr_cache.?;
+    if (state.gr_cache) |*c| return c;
+    state.gr_cache = std.AutoHashMap(usize, GrCacheEntry).init(std.heap.c_allocator);
+    return &state.gr_cache.?;
 }
 
 fn get_or_create_gr_face(engine: *XeTeXLayoutEngine_rec) ?*anyopaque {
@@ -570,38 +584,66 @@ export fn findNextGraphiteBreak(_: ?*XeTeXLayoutEngine_rec) c_int {
 // Phase 1b: req_engine global
 // ========================================
 
-var req_engine: u8 = 0; // single-threaded: no synchronization needed
-
 export fn getReqEngine() c_char {
-    return @bitCast(req_engine);
+    return @bitCast(state.req_engine);
 }
 
 export fn setReqEngine(engine: c_char) void {
-    req_engine = @bitCast(engine);
+    state.req_engine = @bitCast(engine);
 }
 
 // ========================================
 // Phase 1b: Shaper queries
 // ========================================
 
-export fn usingGraphite(engine: ?*XeTeXLayoutEngine_rec) bool {
-    const e = engine orelse return false;
-    if (e.used_shaper) |shaper| {
-        return std.mem.orderZ(u8, shaper, "graphite2") == .eq;
-    }
+// Check if "graphite2" is in the requested shaper list
+fn shaper_list_contains_graphite(e: *XeTeXLayoutEngine_rec) bool {
     if (e.shaper_list) |list_raw| {
         const list: [*]const ?[*:0]const u8 = @ptrCast(@alignCast(list_raw));
-        if (list[0]) |first| {
-            return std.mem.orderZ(u8, first, "graphite2") == .eq;
+        var i: usize = 0;
+        while (i < @as(usize, @intCast(e.n_shapers))) : (i += 1) {
+            if (list[i]) |shaper| {
+                if (std.mem.orderZ(u8, shaper, "graphite2") == .eq) return true;
+            }
         }
+    }
+    return false;
+}
+
+// Check if "ot" is in the requested shaper list
+fn shaper_list_contains_ot(e: *XeTeXLayoutEngine_rec) bool {
+    if (e.shaper_list) |list_raw| {
+        const list: [*]const ?[*:0]const u8 = @ptrCast(@alignCast(list_raw));
+        var i: usize = 0;
+        while (i < @as(usize, @intCast(e.n_shapers))) : (i += 1) {
+            if (list[i]) |shaper| {
+                if (std.mem.orderZ(u8, shaper, "ot") == .eq) return true;
+            }
+        }
+    }
+    return false;
+}
+
+export fn usingGraphite(engine: ?*XeTeXLayoutEngine_rec) bool {
+    const e = engine orelse return false;
+    // First check the explicit shaper list (authoritative for /GR fonts)
+    if (shaper_list_contains_graphite(e)) return true;
+    // Fall back to checking what shaper was actually used (after layoutChars)
+    if (e.used_shaper) |shaper| {
+        return std.mem.orderZ(u8, shaper, "graphite2") == .eq;
     }
     return false;
 }
 
 export fn usingOpenType(engine: ?*XeTeXLayoutEngine_rec) bool {
     const e = engine orelse return false;
-    const shaper = e.used_shaper orelse return false;
-    return std.mem.orderZ(u8, shaper, "ot") == .eq;
+    // First check the explicit shaper list
+    if (shaper_list_contains_ot(e)) return true;
+    // Fall back to checking what shaper was actually used
+    if (e.used_shaper) |shaper| {
+        return std.mem.orderZ(u8, shaper, "ot") == .eq;
+    }
+    return false;
 }
 
 // ========================================
@@ -1460,13 +1502,13 @@ fn initialize_ft_internal(font: *XeTeXFont_rec, pathname: [*:0]const u8, index: 
         return -1;
     }
     font.ft_face = ft_face_out;
-    ft_face_count += 1;
+    state.ft_face_count += 1;
 
     // check scalability
     const face: *const FT_FacePartial = @ptrCast(@alignCast(ft_face_out.?));
     if ((face.face_flags & FT_FACE_FLAG_SCALABLE) == 0) {
         _ = FT_Done_Face(ft_face_out.?);
-        ft_face_count -= 1;
+        state.ft_face_count -= 1;
         font.ft_face = null;
         free(data_raw);
         font.font_data = null;
@@ -1548,7 +1590,7 @@ export fn deleteFont(font_opt: ?*XeTeXFont_rec) void {
     if (font.ft_face) |face| {
         _ = FT_Done_Face(face);
         font.ft_face = null;
-        ft_face_count -= 1;
+        state.ft_face_count -= 1;
     }
     if (font.hb_font) |hf| {
         hb_font_destroy(hf);
@@ -1781,33 +1823,27 @@ extern fn hb_blob_get_empty() ?*hb_blob_t;
 const HB_MEMORY_MODE_WRITABLE: c_uint = 2;
 
 // -- FreeType library singleton state (single-threaded: no synchronization needed) --
-var ft_lib: ?*anyopaque = null;
-var ft_face_count: c_int = 0;
-var ft_lib_shutdown_pending: c_int = 0;
 
 fn get_ft_library() ?*anyopaque {
-    if (ft_lib) |lib| return lib;
+    if (state.ft_lib) |lib| return lib;
     var lib_out: ?*anyopaque = null;
     const err = FT_Init_FreeType(&lib_out);
     if (err != 0) return null;
-    ft_lib = lib_out;
+    state.ft_lib = lib_out;
     return lib_out;
 }
 
 fn maybe_shutdown_ft() void {
-    if (ft_lib_shutdown_pending != 0 and ft_face_count == 0) {
-        if (ft_lib) |lib| {
+    if (state.ft_lib_shutdown_pending != 0 and state.ft_face_count == 0) {
+        if (state.ft_lib) |lib| {
             _ = FT_Done_FreeType(lib);
-            ft_lib = null;
-            ft_lib_shutdown_pending = 0;
+            state.ft_lib = null;
+            state.ft_lib_shutdown_pending = 0;
         }
     }
 }
 
 // -- Custom HarfBuzz font callbacks (ported from layout.c) --
-
-var custom_font_funcs: ?*hb_font_funcs_t = null; // single-threaded: no synchronization needed
-var ft_face_user_data_key: u8 = 0; // single-threaded: no synchronization needed
 
 fn hb_nominal_glyph_func(_: ?*anyopaque, font_data: ?*anyopaque, unicode: u32, glyph: *u32, _: ?*anyopaque) callconv(.c) c_int {
     const face: *anyopaque = font_data orelse return 0;
@@ -1897,7 +1933,7 @@ fn hb_glyph_name_func(_: ?*anyopaque, font_data: ?*anyopaque, glyph: u32, name: 
 }
 
 fn get_font_funcs() *hb_font_funcs_t {
-    if (custom_font_funcs) |funcs| return funcs;
+    if (state.custom_font_funcs) |funcs| return funcs;
     const funcs = hb_font_funcs_create() orelse unreachable;
     hb_font_funcs_set_nominal_glyph_func(funcs, @ptrCast(&hb_nominal_glyph_func), null, null);
     hb_font_funcs_set_variation_glyph_func(funcs, @ptrCast(&hb_variation_glyph_func), null, null);
@@ -1910,7 +1946,7 @@ fn get_font_funcs() *hb_font_funcs_t {
     hb_font_funcs_set_glyph_contour_point_func(funcs, @ptrCast(&hb_contour_point_func), null, null);
     hb_font_funcs_set_glyph_name_func(funcs, @ptrCast(&hb_glyph_name_func), null, null);
     hb_font_funcs_make_immutable(funcs);
-    custom_font_funcs = funcs;
+    state.custom_font_funcs = funcs;
     return funcs;
 }
 
@@ -1955,7 +1991,7 @@ fn initialize_hb_font(font: *XeTeXFont_rec) c_int {
     hb_face_destroy(hb_face);
 
     hb_font_set_funcs(hb_font_ptr, get_font_funcs(), font.ft_face, null);
-    _ = hb_font_set_user_data(hb_font_ptr, @ptrCast(&ft_face_user_data_key), font.ft_face, null, 0);
+    _ = hb_font_set_user_data(hb_font_ptr, @ptrCast(&state.ft_face_user_data_key), font.ft_face, null, 0);
     hb_font_set_scale(hb_font_ptr, @intCast(font.units_per_em), @intCast(font.units_per_em));
     hb_font_set_ppem(hb_font_ptr, 0, 0);
     return 0;
@@ -1967,35 +2003,35 @@ fn initialize_hb_font(font: *XeTeXFont_rec) c_int {
 
 export fn destroy_font_manager() void {
     // destroy graphite cache entries (gr_face + gr_font objects)
-    if (gr_cache) |*cache| {
+    if (state.gr_cache) |*cache| {
         var it = cache.valueIterator();
         while (it.next()) |entry| {
             gr_font_destroy(entry.gr_font);
             gr_face_destroy(entry.gr_face);
         }
         cache.deinit();
-        gr_cache = null;
+        state.gr_cache = null;
     }
 
     // destroy bbox and protrusion caches
-    if (bbox_cache) |*c| {
+    if (state.bbox_cache) |*c| {
         c.deinit();
-        bbox_cache = null;
+        state.bbox_cache = null;
     }
-    if (left_prot) |*c| {
+    if (state.left_prot) |*c| {
         c.deinit();
-        left_prot = null;
+        state.left_prot = null;
     }
-    if (right_prot) |*c| {
+    if (state.right_prot) |*c| {
         c.deinit();
-        right_prot = null;
+        state.right_prot = null;
     }
 
-    ft_lib_shutdown_pending = 1;
+    state.ft_lib_shutdown_pending = 1;
     maybe_shutdown_ft();
-    if (custom_font_funcs) |funcs| {
+    if (state.custom_font_funcs) |funcs| {
         hb_font_funcs_destroy(funcs);
-        custom_font_funcs = null;
+        state.custom_font_funcs = null;
     }
 }
 
@@ -2096,16 +2132,14 @@ fn parse_engine_variant(variant: ?[*]u8) void {
 // macOS CoreText implementations (Phase 2m)
 // ----------------------------------------
 
-var fonts_registered: bool = false; // single-threaded: no synchronization needed
-
 fn register_bundle_fonts() void {
-    if (fonts_registered) return;
-    fonts_registered = true;
+    if (state.fonts_registered) return;
+    state.fonts_registered = true;
 
-    const home = std.posix.getenv("HOME") orelse return;
+    const home = std.c.getenv("HOME") orelse return;
 
     var cache_path: [1024]u8 = undefined;
-    const cache_path_z = std.fmt.bufPrintZ(&cache_path, "{s}/Library/Caches/Tectonic/files", .{home}) catch return;
+    const cache_path_z = std.fmt.bufPrintZ(&cache_path, "{s}/Library/Caches/eztex/v1/files", .{home}) catch return;
 
     // register the top-level cache directory
     const path_str = CFStringCreateWithCString(null, cache_path_z.ptr, kCFStringEncodingUTF8) orelse return;
@@ -2299,12 +2333,11 @@ fn get_full_name_mac(font_ref: ?*anyopaque) callconv(.c) [*:0]const u8 {
     const name_cf: ?CFStringRef = CTFontCopyFullName(ct_font);
     CFRelease(ct_font);
     const name = name_cf orelse return "";
-    const ok = CFStringGetCString(name, &mac_name_buf, mac_name_buf.len, kCFStringEncodingUTF8);
+    const ok = CFStringGetCString(name, &state.mac_name_buf, state.mac_name_buf.len, kCFStringEncodingUTF8);
     CFRelease(name);
-    if (ok == 0) mac_name_buf[0] = 0;
-    return @ptrCast(&mac_name_buf);
+    if (ok == 0) state.mac_name_buf[0] = 0;
+    return @ptrCast(&state.mac_name_buf);
 }
-var mac_name_buf: [512]u8 = undefined; // single-threaded: no synchronization needed
 
 // Mac ttxl_platfont_get_desc: gets URL from descriptor, returns file path.
 fn ttxl_platfont_get_desc_mac(font_ref: ?*anyopaque) callconv(.c) [*:0]const u8 {
@@ -2313,22 +2346,24 @@ fn ttxl_platfont_get_desc_mac(font_ref: ?*anyopaque) callconv(.c) [*:0]const u8 
     const url_raw = CTFontCopyAttribute(ct_font, @ptrCast(@constCast(&kCTFontURLAttribute)));
     CFRelease(ct_font);
     const url: CFURLRef = @ptrCast(url_raw orelse return "[unknown]");
-    const ok = CFURLGetFileSystemRepresentation(url, 1, &mac_desc_buf, mac_desc_buf.len);
+    const ok = CFURLGetFileSystemRepresentation(url, 1, &state.mac_desc_buf, state.mac_desc_buf.len);
     CFRelease(url);
     if (ok == 0) {
-        @memcpy(mac_desc_buf[0..10], "[unknown]\x00");
-        return @ptrCast(&mac_desc_buf);
+        @memcpy(state.mac_desc_buf[0..10], "[unknown]\x00");
+        return @ptrCast(&state.mac_desc_buf);
     }
-    return @ptrCast(&mac_desc_buf);
+    return @ptrCast(&state.mac_desc_buf);
 }
-var mac_desc_buf: [1024]u8 = undefined; // single-threaded: no synchronization needed
 
 // ----------------------------------------
 // non-Mac (WASM) implementations
 // ----------------------------------------
 
 fn file_exists_check(path: [*:0]const u8) bool {
-    std.fs.cwd().accessZ(path, .{}) catch return false;
+    var threaded: std.Io.Threaded = .init_single_threaded;
+    const io = threaded.io();
+    const file = std.Io.Dir.cwd().openFile(io, std.mem.span(path), .{}) catch return false;
+    file.close(io);
     return true;
 }
 
@@ -2346,6 +2381,9 @@ fn find_font_by_name_nonmac(name: ?[*:0]const u8, variant: ?[*]u8, size: f64) ca
     _ = size;
     parse_engine_variant(variant);
 
+    var threaded: std.Io.Threaded = .init_single_threaded;
+    const io = threaded.io();
+
     const n = name orelse return null;
     const name_slice = std.mem.span(n);
 
@@ -2358,7 +2396,7 @@ fn find_font_by_name_nonmac(name: ?[*:0]const u8, variant: ?[*]u8, size: f64) ca
         // try name as-is (might already have extension)
         if (std.fmt.bufPrintZ(&path_buf, "{s}/{s}", .{ dir, name_slice })) |path_z| {
             if (try_font_path_internal(path_z.ptr)) |result| {
-                Log.log("layout", .info, "found font '{s}' at '{s}'", .{ name_slice, path_z });
+                Log.log(io, "layout", .info, "found font '{s}' at '{s}'", .{ name_slice, path_z });
                 return result;
             }
         } else |_| {}
@@ -2367,14 +2405,14 @@ fn find_font_by_name_nonmac(name: ?[*:0]const u8, variant: ?[*]u8, size: f64) ca
         for (exts) |ext| {
             if (std.fmt.bufPrintZ(&path_buf, "{s}/{s}{s}", .{ dir, name_slice, ext })) |path_z| {
                 if (try_font_path_internal(path_z.ptr)) |result| {
-                    Log.log("layout", .info, "found font '{s}' at '{s}'", .{ name_slice, path_z });
+                    Log.log(io, "layout", .info, "found font '{s}' at '{s}'", .{ name_slice, path_z });
                     return result;
                 }
             } else |_| {}
         }
     }
 
-    Log.log("layout", .warn, "cannot find font '{s}'", .{name_slice});
+    Log.log(io, "layout", .warn, "cannot find font '{s}'", .{name_slice});
     return null;
 }
 
@@ -2389,9 +2427,11 @@ fn ttxl_platfont_get_desc_nonmac(font: ?*FcPattern) callconv(.c) [*:0]const u8 {
 }
 
 fn create_font_nonmac(font_ref: ?*FcPattern, point_size: i32) callconv(.c) ?*XeTeXFont_rec {
+    var threaded: std.Io.Threaded = .init_single_threaded;
+    const io = threaded.io();
     const ref = font_ref orelse return null;
     const file = ref.file orelse {
-        Log.log("layout", .warn, "createFont called with NULL font ref", .{});
+        Log.log(io, "layout", .warn, "createFont called with NULL font ref", .{});
         return null;
     };
 

@@ -2138,10 +2138,18 @@ print_glyph_name(int32_t font, int32_t gid)
     } else {
         _tt_abort("bad native font flag in `print_glyph_name`");
     }
-    while (len-- > 0)
-        print_char(*s++);
-    if (s)
-    	freeGlyphName(s);
+    for (int i = 0; i < len; i++) {
+        print_char(s[i]);
+    }
+    // Only free for OTGR path: GetGlyphNameFromCTFont returns a static buffer,
+    // while getGlyphName allocates via malloc.
+#ifdef XETEX_MAC
+    if (font_area[font] != AAT_FONT_FLAG)
+#endif
+    {
+        if (s)
+            freeGlyphName(s);
+    }
 }
 
 int32_t real_get_native_word_cp(void* pNode, int side)

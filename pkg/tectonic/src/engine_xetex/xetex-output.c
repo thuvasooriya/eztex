@@ -53,19 +53,14 @@ diagnostic_begin_capture_warning_here(void)
     return warning;
 }
 
-// This replaces the "print file+line number" block at the start of errors
+// This replaces the "print file+line number" block at the start of errors.
+// Output goes solely through the Zig diagnostic handler (no direct stdout).
 ttbc_diagnostic_t *
 error_here_with_diagnostic(const char* message)
 {
     ttbc_diagnostic_t *error = ttbc_diag_begin_error();
     diagnostic_print_file_line(error);
     ttstub_diag_printf(error, "%s", message);
-
-    if (file_line_error_style_p)
-        print_file_line();
-    else
-        print_nl_cstr("! ");
-    print_cstr(message);
 
     capture_to_diagnostic(error);
 
@@ -84,10 +79,15 @@ warn_char(int c)
 void
 print_ln(void)
 {
+    /* When a diagnostic is being captured, skip stdout writes to avoid duplication
+     * (the Zig diagnostic handler will emit the message to stderr). */
+    int suppress_stdout = (current_diagnostic != 0);
+
     switch (selector) {
     case SELECTOR_TERM_AND_LOG:
         warn_char('\n');
-        ttbc_output_putc(rust_stdout, '\n');
+        if (!suppress_stdout)
+            ttbc_output_putc(rust_stdout, '\n');
         ttbc_output_putc(log_file, '\n');
         term_offset = 0;
         file_offset = 0;
@@ -99,7 +99,8 @@ print_ln(void)
         break;
     case SELECTOR_TERM_ONLY:
         warn_char('\n');
-        ttbc_output_putc(rust_stdout, '\n');
+        if (!suppress_stdout)
+            ttbc_output_putc(rust_stdout, '\n');
         term_offset = 0;
         break;
     case SELECTOR_NO_PRINT:
@@ -116,17 +117,23 @@ print_ln(void)
 void
 print_raw_char(UTF16_code s, bool incr_offset)
 {
+    /* When a diagnostic is being captured, skip stdout writes to avoid duplication
+     * (the Zig diagnostic handler will emit the message to stderr). */
+    int suppress_stdout = (current_diagnostic != 0);
+
     switch (selector) {
     case SELECTOR_TERM_AND_LOG:
         warn_char(s);
-        ttbc_output_putc(rust_stdout, s);
+        if (!suppress_stdout)
+            ttbc_output_putc(rust_stdout, s);
         ttbc_output_putc(log_file, s);
         if (incr_offset) {
             term_offset++;
             file_offset++;
         }
         if (term_offset == max_print_line) {
-            ttbc_output_putc(rust_stdout, '\n');
+            if (!suppress_stdout)
+                ttbc_output_putc(rust_stdout, '\n');
             term_offset = 0;
         }
         if (file_offset == max_print_line) {
@@ -146,11 +153,13 @@ print_raw_char(UTF16_code s, bool incr_offset)
         break;
     case SELECTOR_TERM_ONLY:
         warn_char(s);
-        ttbc_output_putc(rust_stdout, s);
+        if (!suppress_stdout)
+            ttbc_output_putc(rust_stdout, s);
         if (incr_offset)
             term_offset++;
         if (term_offset == max_print_line) {
-            ttbc_output_putc(rust_stdout, '\n');
+            if (!suppress_stdout)
+                ttbc_output_putc(rust_stdout, '\n');
             term_offset = 0;
         }
         break;

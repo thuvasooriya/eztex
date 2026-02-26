@@ -10,6 +10,8 @@ export const supported: boolean =
   "getDirectory" in (navigator.storage ?? {});
 
 let cache_dir: FileSystemDirectoryHandle | null = null;
+const PROJECTS_DIR = "projects";
+const INTERMEDIATES_DIR = "intermediates";
 
 export async function get_dir(): Promise<FileSystemDirectoryHandle> {
   if (cache_dir) return cache_dir;
@@ -37,6 +39,20 @@ async function resolve_path(
     }
   }
   return [dir, filename];
+}
+
+async function get_project_intermediates_dir(
+  project_id: string,
+  create: boolean,
+): Promise<FileSystemDirectoryHandle | null> {
+  try {
+    const dir = await get_dir();
+    const projects = await dir.getDirectoryHandle(PROJECTS_DIR, { create });
+    const project = await projects.getDirectoryHandle(project_id, { create });
+    return await project.getDirectoryHandle(INTERMEDIATES_DIR, { create });
+  } catch {
+    return null;
+  }
 }
 
 export async function read(dir: FileSystemDirectoryHandle, filename: string): Promise<Uint8Array | null> {
@@ -154,7 +170,7 @@ export async function load_init(
     if (all_ok) {
       // scan for extra cached files (on_demand from previous sessions)
       try {
-        await scan_dir_recursive(dir, "", cached_files);
+        await scan_dir_recursive(dir, "", cached_files, true);
       } catch {
         // non-critical
       }
@@ -180,12 +196,14 @@ async function scan_dir_recursive(
   dir: FileSystemDirectoryHandle,
   prefix: string,
   out: Map<string, Uint8Array>,
+  skip_project_store: boolean = false,
 ): Promise<void> {
   for await (const [name, handle] of (dir as any).entries()) {
     if (name.startsWith("_")) continue;
+    if (skip_project_store && !prefix && name === PROJECTS_DIR) continue;
     const path = prefix ? `${prefix}/${name}` : name;
     if (handle.kind === "directory") {
-      await scan_dir_recursive(handle as FileSystemDirectoryHandle, path, out);
+      await scan_dir_recursive(handle as FileSystemDirectoryHandle, path, out, skip_project_store);
     } else if (handle.kind === "file") {
       if (out.has(path)) continue;
       try {
@@ -236,5 +254,69 @@ export async function load_format(cached_files: Map<string, Uint8Array>): Promis
     }
   } catch {
     // non-critical
+  }
+}
+
+export async function load_project_intermediates(project_id: string): Promise<Map<string, Uint8Array>> {
+  const files = new Map<string, Uint8Array>();
+  if (!supported) return files;
+
+  try {
+    const dir = await get_project_intermediates_dir(project_id, false);
+    if (!dir) return files;
+    await scan_dir_recursive(dir, "", files);
+    if (files.size > 0) {
+      dbg("cache", `loaded ${files.size} project intermediates for ${project_id}`);
+    }
+  } catch (e) {
+    dbg("cache", `intermediate restore failed for ${project_id}: ${(e as Error).message}`);
+  }
+
+  return files;
+}
+
+export async function save_project_intermediates(
+  project_id: string,
+  files: Map<string, Uint8Array>,
+  replace: boolean,
+): Promise<void> {
+  if (!supported) return;
+
+  try {
+    const dir = await get_dir();
+    const projects = await dir.getDirectoryHandle(PROJECTS_DIR, { create: true });
+
+    if (replace) {
+      await projects.removeEntry(project_id, { recursive: true }).catch(() => {});
+      if (files.size === 0) {
+        dbg("cache", `cleared empty project intermediates for ${project_id}`);
+        return;
+      }
+    } else if (files.size === 0) {
+      return;
+    }
+
+    const intermediates_dir = await get_project_intermediates_dir(project_id, true);
+    if (!intermediates_dir) return;
+
+    let total_bytes = 0;
+    for (const [key, data] of files) {
+      await write_nested(intermediates_dir, key, data);
+      total_bytes += data.byteLength;
+    }
+
+    await write_meta(intermediates_dir, {
+      kind: "project-intermediates",
+      file_count: files.size,
+      total_bytes,
+      cached_at: new Date().toISOString(),
+    });
+
+    dbg(
+      "cache",
+      `${replace ? "snapshotted" : "updated"} ${files.size} project intermediates for ${project_id} (${format_size(total_bytes)})`,
+    );
+  } catch (e) {
+    dbg("cache", `intermediate save failed for ${project_id}: ${(e as Error).message}`);
   }
 }

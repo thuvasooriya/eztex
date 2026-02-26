@@ -1,8 +1,23 @@
 **/zig-out/
 **/.zig-cache/
+**/zig-pkg/
 ref/
 tmp/
 /worker/
 **/node_modules/
-tests/tmp/
+
+# Generated wasm/binaries
 **/eztex.wasm
+/test
+/test*.wasm
+/a.out
+
+# Generated TeX/web2c outputs
+**/*-final.ch
+
+# Local machine/editor noise
+**/.DS_Store
+**/*.log
+
+# Test temp dirs
+tests/tmp/

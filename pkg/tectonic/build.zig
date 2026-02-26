@@ -5,6 +5,7 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     const is_wasm = target.result.cpu.arch == .wasm32;
+    const is_mac = target.result.os.tag == .macos;
 
     // -- external dependencies (declared in build.zig.zon) --
     const harfbuzz_dep = b.dependency("harfbuzz", .{
@@ -12,6 +13,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .@"enable-freetype" = true,
         .@"enable-coretext" = false,
+        .@"enable-graphite2" = false,
     });
     const freetype_dep = b.dependency("freetype", .{
         .target = target,
@@ -116,13 +118,13 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
     });
     for (internal_include_paths) |p| bridge_core_mod.addIncludePath(b.path(p));
-    addPlatformMacro(bridge_core_mod, is_wasm);
+    addPlatformMacro(bridge_core_mod, is_wasm, is_mac);
 
     const bridge_core = b.addLibrary(.{
         .name = "tectonic_bridge_core",
         .root_module = bridge_core_mod,
     });
-    bridge_core.addCSourceFile(.{
+    bridge_core.root_module.addCSourceFile(.{
         .file = b.path(bridge_core_dir ++ "/support.c"),
         .flags = c_flags,
     });
@@ -140,8 +142,8 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = true,
     });
-    addEngineIncludes(engine_c_mod, b, internal_include_paths, harfbuzz_lib, freetype_lib, icuuc_lib, graphite2_lib, hb_headers, is_wasm);
-    addPlatformMacro(engine_c_mod, is_wasm);
+    addEngineIncludes(engine_c_mod, b, internal_include_paths, harfbuzz_lib, freetype_lib, icuuc_lib, graphite2_lib, hb_headers, is_mac);
+    addPlatformMacro(engine_c_mod, is_wasm, is_mac);
     engine_c_mod.addCMacro("GRAPHITE2_STATIC", "1");
 
     const engine_xetex_c = b.addLibrary(.{
@@ -168,13 +170,13 @@ pub fn build(b: *std.Build) void {
         "xetex-xetex0.c",
     };
 
-    engine_xetex_c.addCSourceFiles(.{
+    engine_xetex_c.root_module.addCSourceFiles(.{
         .root = b.path(xetex_dir),
         .files = engine_c_files_common,
         .flags = c_flags,
     });
-    if (!is_wasm) {
-        engine_xetex_c.addCSourceFiles(.{
+    if (is_mac) {
+        engine_xetex_c.root_module.addCSourceFiles(.{
             .root = b.path(xetex_dir),
             .files = &.{"xetex-macos.c"},
             .flags = c_flags,
@@ -195,15 +197,15 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
         .link_libcpp = !is_wasm,
     });
-    addEngineIncludes(engine_cxx_mod, b, internal_include_paths, harfbuzz_lib, freetype_lib, icuuc_lib, graphite2_lib, hb_headers, is_wasm);
-    addPlatformMacro(engine_cxx_mod, is_wasm);
+    addEngineIncludes(engine_cxx_mod, b, internal_include_paths, harfbuzz_lib, freetype_lib, icuuc_lib, graphite2_lib, hb_headers, is_mac);
+    addPlatformMacro(engine_cxx_mod, is_wasm, is_mac);
     engine_cxx_mod.addCMacro("GRAPHITE2_STATIC", "1");
 
     const engine_xetex_cxx = b.addLibrary(.{
         .name = "tectonic_engine_xetex_cxx",
         .root_module = engine_cxx_mod,
     });
-    engine_xetex_cxx.addCSourceFiles(.{
+    engine_xetex_cxx.root_module.addCSourceFiles(.{
         .root = b.path(xetex_dir),
         .files = &.{
             "teckit-Engine.cpp",
@@ -224,7 +226,7 @@ pub fn build(b: *std.Build) void {
     pdf_io_mod.addIncludePath(b.path(pdf_io_dir));
     pdf_io_mod.addIncludePath(b.path(bridge_flate_dir));
     pdf_io_mod.addIncludePath(b.path(bridge_core_dir));
-    addPlatformMacro(pdf_io_mod, is_wasm);
+    addPlatformMacro(pdf_io_mod, is_wasm, is_mac);
     pdf_io_mod.linkLibrary(libpng_lib);
     pdf_io_mod.linkLibrary(zlib_lib);
 
@@ -232,7 +234,7 @@ pub fn build(b: *std.Build) void {
         .name = "tectonic_pdf_io",
         .root_module = pdf_io_mod,
     });
-    pdf_io.addCSourceFiles(.{
+    pdf_io.root_module.addCSourceFiles(.{
         .root = b.path(pdf_io_dir),
         .files = &.{
             "dpx-agl.c",
@@ -330,7 +332,7 @@ pub fn build(b: *std.Build) void {
         .name = "tectonic_engine_xdvipdfmx",
         .root_module = xdvipdfmx_mod,
     });
-    engine_xdvipdfmx.addCSourceFile(.{
+    engine_xdvipdfmx.root_module.addCSourceFile(.{
         .file = b.path(xdvipdfmx_dir ++ "/dvipdfmx.c"),
         .flags = c_flags,
     });
@@ -360,13 +362,13 @@ pub fn build(b: *std.Build) void {
     });
     bibtex_mod.addIncludePath(b.path(bibtex_dir));
     bibtex_mod.addIncludePath(b.path(bridge_core_dir));
-    addPlatformMacro(bibtex_mod, is_wasm);
+    addPlatformMacro(bibtex_mod, is_wasm, is_mac);
 
     const engine_bibtex = b.addLibrary(.{
         .name = "tectonic_engine_bibtex",
         .root_module = bibtex_mod,
     });
-    engine_bibtex.addCSourceFile(.{
+    engine_bibtex.root_module.addCSourceFile(.{
         .file = b.path(bibtex_dir ++ "/bibtex.c"),
         .flags = c_flags,
     });
@@ -378,10 +380,10 @@ pub fn build(b: *std.Build) void {
 
 // -- helper functions --
 
-fn addPlatformMacro(mod: *std.Build.Module, is_wasm: bool) void {
+fn addPlatformMacro(mod: *std.Build.Module, is_wasm: bool, is_mac: bool) void {
     if (is_wasm) {
         mod.addCMacro("XETEX_WASM", "1");
-    } else {
+    } else if (is_mac) {
         mod.addCMacro("XETEX_MAC", "1");
     }
 }
@@ -405,7 +407,7 @@ fn addEngineIncludes(
     icuuc_lib: *std.Build.Step.Compile,
     graphite2_lib: *std.Build.Step.Compile,
     hb_headers: *std.Build.Step.WriteFile,
-    is_wasm: bool,
+    is_mac: bool,
 ) void {
     for (internal_paths) |p| mod.addIncludePath(b.path(p));
     mod.addIncludePath(hb_headers.getDirectory());
@@ -413,6 +415,6 @@ fn addEngineIncludes(
     mod.linkLibrary(freetype_lib);
     mod.linkLibrary(icuuc_lib);
     mod.linkLibrary(graphite2_lib);
-    // wasm: add fontconfig stub headers
-    if (is_wasm) mod.addIncludePath(b.path("src/wasm_stubs"));
+    // non-macOS: add fontconfig stub headers (provides FcPattern type)
+    if (!is_mac) mod.addIncludePath(b.path("src/wasm_stubs"));
 }

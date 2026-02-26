@@ -2,7 +2,7 @@
     .name = .eztex,
     .version = "0.0.1",
     .fingerprint = 0x86dee9b8df515cc0, // Changing this has security and trust implications.
-    .minimum_zig_version = "0.15.2",
+    .minimum_zig_version = "0.17.0-dev.269+ebff43698",
     .dependencies = .{
         .tectonic = .{
             .path = "pkg/tectonic",
@@ -31,7 +31,7 @@
         "build.zig",
         "build.zig.zon",
         "src",
-        "stubs",
+        "csrc",
         "pkg",
     },
 }

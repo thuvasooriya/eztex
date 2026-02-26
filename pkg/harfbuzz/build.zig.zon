@@ -2,7 +2,7 @@
     .name = .harfbuzz,
     .version = "0.0.0",
     .fingerprint = 0xbd60917c55a3ed44,
-    .minimum_zig_version = "0.15.2",
+    .minimum_zig_version = "0.17.0-dev.269+ebff43698",
     .dependencies = .{
         .harfbuzz = .{
             .url = "https://github.com/harfbuzz/harfbuzz/archive/refs/tags/12.2.0.tar.gz",

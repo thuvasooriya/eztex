@@ -246,7 +246,7 @@ const Toolbar: Component<Props> = (props) => {
 
   function handle_compile() {
     const files = { ...props.store.files };
-    worker_client.compile({ files, main: props.store.main_file() });
+    worker_client.compile({ files, main: props.store.main_file(), mode: "full" });
   }
 
   // compare content for equality (handles both string and Uint8Array)
@@ -375,7 +375,14 @@ const Toolbar: Component<Props> = (props) => {
     window.location.reload();
   }
 
-  function handle_download_pdf() {
+  async function handle_download_pdf() {
+    const ok = await worker_client.compile_and_wait({
+      files: { ...props.store.files },
+      main: props.store.main_file(),
+      mode: "full",
+    });
+    if (!ok) return;
+
     const url = worker_client.pdf_url();
     if (!url) return;
     const a = document.createElement("a");
@@ -518,7 +525,7 @@ const Toolbar: Component<Props> = (props) => {
               <AnimatedShow when={show_download_menu()}>
                 <div class="upload-dropdown">
                   <Show when={worker_client.pdf_url()}>
-                    <button class="upload-dropdown-item" onClick={() => { handle_download_pdf(); set_show_download_menu(false); }}>
+                    <button class="upload-dropdown-item" onClick={() => { void handle_download_pdf(); set_show_download_menu(false); }}>
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
                         <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
                         <polyline points="14 2 14 8 20 8" />

@@ -18,8 +18,8 @@ self.onmessage = async (e: MessageEvent) => {
         await engine.init();
         break;
       case "compile":
-        dbg("worker", `compile: main=${msg.main}, files=${Object.keys(msg.files ?? {}).join(",")}`);
-        await engine.compile(msg.files ?? {}, msg.main);
+        dbg("worker", `compile: mode=${msg.mode ?? "full"}, main=${msg.main}, files=${Object.keys(msg.files ?? {}).join(",")}`);
+        await engine.compile(msg.files ?? {}, msg.main, msg.mode ?? "full");
         break;
       case "clear_cache":
         await engine.clear_cache();

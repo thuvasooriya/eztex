@@ -1,7 +1,7 @@
 import { type Component, For, Show, createSignal, createEffect, onCleanup, type JSX } from "solid-js";
 import type { ProjectStore } from "../lib/project_store";
 import { is_binary } from "../lib/project_store";
-import { build_tree, collect_folder_paths, auto_suffix, type TreeNode } from "../lib/file_tree";
+import { build_tree, auto_suffix, type TreeNode } from "../lib/file_tree";
 import type { LocalFolderSync } from "../lib/local_folder_sync";
 import { worker_client } from "../lib/worker_client";
 import FolderSyncStatus from "./FolderSyncStatus";
@@ -29,7 +29,15 @@ const FilePanel: Component<Props> = (props) => {
   const [rename_value, set_rename_value] = createSignal("");
   const [ctx_menu, set_ctx_menu] = createSignal<{ file: string; x: number; y: number } | null>(null);
   const [os_drag_over, set_os_drag_over] = createSignal(false);
-  const [open_folders, set_open_folders] = createSignal<Set<string>>(new Set());
+  const STORAGE_KEY = "eztex_tree_open";
+  const initial_open = (() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) return new Set(JSON.parse(raw) as string[]);
+    } catch { /* ignore parse errors */ }
+    return new Set<string>();
+  })();
+  const [open_folders, set_open_folders] = createSignal<Set<string>>(initial_open);
   const [dragging, set_dragging] = createSignal<string | null>(null);
   const [drop_target, set_drop_target] = createSignal<string | null>(null);
 
@@ -39,16 +47,39 @@ const FilePanel: Component<Props> = (props) => {
   function set_entry_and_compile(name: string) {
     props.store.set_main_file(name);
     if (worker_client.ready() && !worker_client.compiling()) {
-      worker_client.compile({ files: { ...props.store.files }, main: name });
+      worker_client.compile({ files: { ...props.store.files }, main: name, mode: "preview" });
     }
   }
 
   const tree = () => build_tree(props.store.file_names());
 
-  // auto-open all folders when tree changes
+  // when tree changes: preserve existing open states, auto-open folders
+  // that contain the current file or main file
   createEffect(() => {
-    const paths = collect_folder_paths(tree());
-    set_open_folders(new Set(paths));
+    tree(); // track dependency
+    const current = props.store.current_file();
+    const main = props.store.main_file();
+    set_open_folders(prev => {
+      const next = new Set(prev);
+      // auto-open path to current file
+      if (current) {
+        const parts = current.split("/");
+        for (let i = 1; i < parts.length; i++) {
+          next.add(parts.slice(0, i).join("/") + "/");
+        }
+      }
+      // auto-open path to main file
+      if (main && main !== current) {
+        const parts = main.split("/");
+        for (let i = 1; i < parts.length; i++) {
+          next.add(parts.slice(0, i).join("/") + "/");
+        }
+      }
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(Array.from(next)));
+      } catch { /* ignore quota errors */ }
+      return next;
+    });
   });
 
   // dismiss context menu
@@ -74,6 +105,20 @@ const FilePanel: Component<Props> = (props) => {
     }
   }
 
+  function rewrite_folder_prefix(prev: Set<string>, old_prefix: string, new_prefix: string): Set<string> {
+    const next = new Set<string>();
+    for (const p of prev) {
+      if (p === old_prefix) {
+        next.add(new_prefix);
+      } else if (p.startsWith(old_prefix)) {
+        next.add(new_prefix + p.slice(old_prefix.length));
+      } else {
+        next.add(p);
+      }
+    }
+    return next;
+  }
+
   function finish_rename() {
     const old_name = renaming();
     const new_val = rename_value().trim();
@@ -92,11 +137,12 @@ const FilePanel: Component<Props> = (props) => {
       for (const old_path of files) {
         props.store.rename_file(old_path, new_prefix + old_path.slice(old_name.length));
       }
-      // keep folder open under new path
+      // rewrite open folder states for this folder and all descendants
       set_open_folders(prev => {
-        const next = new Set(prev);
-        next.delete(old_name);
-        next.add(new_prefix);
+        const next = rewrite_folder_prefix(prev, old_name, new_prefix);
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(Array.from(next)));
+        } catch { /* ignore quota errors */ }
         return next;
       });
     } else {
@@ -109,6 +155,9 @@ const FilePanel: Component<Props> = (props) => {
       const next = new Set(prev);
       if (next.has(path)) next.delete(path);
       else next.add(path);
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(Array.from(next)));
+      } catch { /* ignore quota errors */ }
       return next;
     });
   }
@@ -175,6 +224,14 @@ const FilePanel: Component<Props> = (props) => {
         const new_path = new_prefix + old_path.slice(old_prefix.length);
         props.store.rename_file(old_path, new_path);
       }
+      // rewrite open folder states for this folder and all descendants
+      set_open_folders(prev => {
+        const next = rewrite_folder_prefix(prev, old_prefix, new_prefix);
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(Array.from(next)));
+        } catch { /* ignore quota errors */ }
+        return next;
+      });
       return;
     }
 

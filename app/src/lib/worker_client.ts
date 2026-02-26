@@ -8,6 +8,8 @@ import { decompress_gzip, parse_synctex, sync_to_pdf, sync_to_code } from "./syn
 import type { PdfSyncObject, SyncToPdfResult } from "./synctex";
 import { save_synctex as persist_synctex } from "./project_persist";
 
+export type CompileMode = "preview" | "full";
+
 export type LogEntry = {
   msg: string;
   cls: string;
@@ -19,6 +21,7 @@ export type WorkerStatus = "idle" | "loading" | "compiling" | "success" | "error
 export type CompileRequest = {
   files: ProjectFiles;
   main?: string;
+  mode?: CompileMode;
 };
 
 const [status, set_status] = createSignal<WorkerStatus>("idle");
@@ -160,16 +163,30 @@ function init_worker() {
 
 function compile(req: CompileRequest) {
   if (!worker || !ready()) return;
+  const mode = req.mode ?? "full";
   set_compiling(true);
   set_status("compiling");
-  set_status_text("Compiling...");
+  set_status_text(mode === "preview" ? "Previewing..." : "Compiling...");
   set_progress(0);
   set_diagnostics([]);
   worker.postMessage({
     type: "compile",
     files: req.files,
     main: req.main,
+    mode,
     debug: _debug,
+  });
+}
+
+function compile_and_wait(req: CompileRequest): Promise<boolean> {
+  if (!worker || !ready() || compiling()) return Promise.resolve(false);
+
+  return new Promise((resolve) => {
+    const off = on_compile_done(() => {
+      off();
+      resolve(status() === "success" && pdf_url() !== null);
+    });
+    compile(req);
   });
 }
 
@@ -228,6 +245,7 @@ function do_sync_to_code(page: number, x: number, y: number): void {
 export const worker_client = {
   init: init_worker,
   compile,
+  compile_and_wait,
   cancel_and_recompile,
   clear_cache,
   clear_logs,

@@ -52,7 +52,7 @@ export function init_commands(d: CommandDeps): void {
     when: () => Object.keys(deps!.store.files).length > 0,
     action: () => {
       const files = { ...deps!.store.files };
-      worker_client.compile({ files, main: deps!.store.main_file() });
+      worker_client.compile({ files, main: deps!.store.main_file(), mode: "full" });
     },
   });
 
@@ -313,7 +313,14 @@ export function init_commands(d: CommandDeps): void {
     category: "Project",
     keybinding: "Cmd+Shift+D",
     when: () => worker_client.pdf_url() !== null,
-    action: () => {
+    action: async () => {
+      const ok = await worker_client.compile_and_wait({
+        files: { ...deps!.store.files },
+        main: deps!.store.main_file(),
+        mode: "full",
+      });
+      if (!ok) return;
+
       const url = worker_client.pdf_url();
       if (!url) return;
       const a = document.createElement("a");

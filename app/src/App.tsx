@@ -217,7 +217,7 @@ const App: Component = () => {
     worker_client.on_ready(() => {
       if (!pdf_restored) {
         const files = { ...store.files };
-        worker_client.compile({ files, main: store.main_file() });
+        worker_client.compile({ files, main: store.main_file(), mode: "preview" });
       }
     });
 

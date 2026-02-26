@@ -1,21 +1,31 @@
 const std = @import("std");
 
+const EngineSet = enum { all, tectonic };
+
 pub fn build(b: *std.Build) void {
     const raw_target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
     const is_wasm = raw_target.result.cpu.arch == .wasm32;
 
-    // for WASM targets, ensure exception_handling CPU feature is enabled
+    const engines: EngineSet = b.option(EngineSet, "engines", "Engine set to link (all or tectonic)") orelse .all;
+
+    // build_options module so Zig source can query backend at comptime
+    const options = b.addOptions();
+    options.addOption([]const u8, "engines", @tagName(engines));
+    const options_mod = options.createModule();
+
+    // for WASM targets, ensure exception_handling CPU features is enabled
     // (required for setjmp/longjmp via wasm exception handling proposal).
     // this avoids requiring -Dcpu=baseline+exception_handling on the CLI.
+    // fixed in Zig 0.17.0-dev.269+ (PR #31438) -- wasi libc SJLJ compilation
     const target = if (is_wasm) blk: {
         var query = raw_target.query;
         query.cpu_features_add.addFeature(@intFromEnum(std.Target.wasm.Feature.exception_handling));
         break :blk b.resolveTargetQuery(query);
     } else raw_target;
 
-    const exe = buildEztex(b, target, optimize);
+    const exe = buildEztex(b, target, optimize, engines, options_mod);
     b.installArtifact(exe);
 
     // run step (native only)
@@ -27,22 +37,29 @@ pub fn build(b: *std.Build) void {
         run_step.dependOn(&run_cmd.step);
     }
 
-    // -- wasm step: build wasm32-wasi ReleaseSmall + copy to app/public/ --
+    // -- wasm step: build full engine for wasm32-wasi and copy to app/public/ --
+    // This builds the complete eztex engine (tectonic + all deps) for the browser
+    // JS worker. The web app fetches /eztex.wasm and creates both api_instance
+    // (index queries) and compile_instance (wasi.start() to run TeX) from it.
     {
-        var wasm_query: std.Target.Query = .{
+        const wasm_query: std.Target.Query = .{
             .os_tag = .wasi,
             .cpu_arch = .wasm32,
         };
-        wasm_query.cpu_features_add.addFeature(@intFromEnum(std.Target.wasm.Feature.exception_handling));
         const wasm_target = b.resolveTargetQuery(wasm_query);
+        // enable exception_handling for setjmp/longjmp
+        var query = wasm_target.query;
+        query.cpu_features_add.addFeature(@intFromEnum(std.Target.wasm.Feature.exception_handling));
+        const wasm_target_eh = b.resolveTargetQuery(query);
 
-        const wasm_exe = buildEztex(b, wasm_target, .ReleaseSmall);
+        const wasm_exe = buildEztex(b, wasm_target_eh, .ReleaseSmall, engines, options_mod);
+
         const copy = b.addInstallFileWithDir(
             wasm_exe.getEmittedBin(),
             .{ .custom = "../app/public" },
             "eztex.wasm",
         );
-        const wasm_step = b.step("wasm", "Build WASM binary and copy to app/public/");
+        const wasm_step = b.step("wasm", "Build full WASM engine and copy to app/public/");
         wasm_step.dependOn(&copy.step);
     }
 
@@ -57,6 +74,7 @@ pub fn build(b: *std.Build) void {
             "src/MainDetect.zig",
             "src/Watcher.zig",
             "src/World.zig",
+            "src/compile/aux.zig",
         };
         for (pure_test_srcs) |src| {
             const mod = b.createModule(.{
@@ -118,15 +136,28 @@ pub fn build(b: *std.Build) void {
 
 // builds the eztex executable for the given target and optimization level.
 // factored out so both native (default install) and wasm step can reuse.
-fn buildEztex(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) *std.Build.Step.Compile {
+fn buildEztex(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    engines: EngineSet,
+    options_mod: *std.Build.Module,
+) *std.Build.Step.Compile {
     const is_wasm = target.result.cpu.arch == .wasm32;
 
-    // -- external dependencies --
+    // -- external dependencies (shared across backends) --
+    const zlib_dep = b.dependency("zlib", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const zlib_lib = zlib_dep.artifact("z");
+
     const harfbuzz_dep = b.dependency("harfbuzz", .{
         .target = target,
         .optimize = optimize,
         .@"enable-freetype" = true,
         .@"enable-coretext" = false,
+        .@"enable-graphite2" = false,
     });
     const freetype_dep = b.dependency("freetype", .{
         .target = target,
@@ -134,10 +165,6 @@ fn buildEztex(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bui
         .@"enable-libpng" = true,
     });
     const libpng_dep = b.dependency("libpng", .{
-        .target = target,
-        .optimize = optimize,
-    });
-    const zlib_dep = b.dependency("zlib", .{
         .target = target,
         .optimize = optimize,
     });
@@ -153,21 +180,8 @@ fn buildEztex(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bui
     const harfbuzz_lib = harfbuzz_dep.artifact("harfbuzz");
     const freetype_lib = freetype_dep.artifact("freetype");
     const libpng_lib = libpng_dep.artifact("png");
-    const zlib_lib = zlib_dep.artifact("z");
     const icuuc_lib = icu_dep.artifact("icuuc");
     const graphite2_lib = graphite2_dep.artifact("graphite2");
-
-    // -- engine package: 5 C/C++ engine libraries --
-    const tectonic_dep = b.dependency("tectonic", .{
-        .target = target,
-        .optimize = optimize,
-    });
-    const bridge_core = tectonic_dep.artifact("tectonic_bridge_core");
-    const engine_xetex_c = tectonic_dep.artifact("tectonic_engine_xetex_c");
-    const engine_xetex_cxx = tectonic_dep.artifact("tectonic_engine_xetex_cxx");
-    const pdf_io = tectonic_dep.artifact("tectonic_pdf_io");
-    const engine_xdvipdfmx = tectonic_dep.artifact("tectonic_engine_xdvipdfmx");
-    const engine_bibtex = tectonic_dep.artifact("tectonic_engine_bibtex");
 
     // -- compiler flags for local stubs --
     const wasm_sjlj_flags: []const []const u8 = if (is_wasm) &.{
@@ -202,7 +216,7 @@ fn buildEztex(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bui
             .name = "wasm_posix_stubs",
             .root_module = stubs_mod,
         });
-        lib.addCSourceFile(.{
+        lib.root_module.addCSourceFile(.{
             .file = b.path("csrc/wasm/posix.c"),
             .flags = c_flags,
         });
@@ -220,10 +234,11 @@ fn buildEztex(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bui
             .name = "wasm_sjlj_rt",
             .root_module = sjlj_mod,
         });
-        lib.addCSourceFile(.{
+        lib.root_module.addCSourceFile(.{
             .file = b.path("csrc/wasm/sjlj_rt.c"),
             .flags = c_flags,
         });
+        lib.root_module.addAssemblyFile(b.path("csrc/wasm/eh_tags.s"));
         break :blk lib;
     } else null;
 
@@ -236,21 +251,33 @@ fn buildEztex(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bui
         .link_libcpp = !is_wasm,
     });
 
-    // engine libraries (from package)
-    exe_mod.linkLibrary(engine_xetex_c);
-    exe_mod.linkLibrary(engine_xetex_cxx);
-    exe_mod.linkLibrary(engine_xdvipdfmx);
-    exe_mod.linkLibrary(pdf_io);
-    exe_mod.linkLibrary(bridge_core);
-    exe_mod.linkLibrary(engine_bibtex);
+    // inject build_options so Compiler.zig can read backend at comptime
+    exe_mod.addImport("build_options", options_mod);
 
-    // external dependencies
-    exe_mod.linkLibrary(graphite2_lib);
-    exe_mod.linkLibrary(harfbuzz_lib);
-    exe_mod.linkLibrary(freetype_lib);
-    exe_mod.linkLibrary(libpng_lib);
+    // -- shared deps (needed by Layout.zig, Flate.zig, etc.) --
     exe_mod.linkLibrary(zlib_lib);
+    exe_mod.linkLibrary(freetype_lib);
+    exe_mod.linkLibrary(harfbuzz_lib);
+    exe_mod.linkLibrary(libpng_lib);
     exe_mod.linkLibrary(icuuc_lib);
+    exe_mod.linkLibrary(graphite2_lib);
+
+    // ensure static linking for vendored libraries (avoids dllimport on Windows)
+    exe_mod.addCMacro("GRAPHITE2_STATIC", "1");
+
+    // -- engine libraries --
+    if (engines == .all or engines == .tectonic) {
+        const tectonic_dep = b.dependency("tectonic", .{
+            .target = target,
+            .optimize = optimize,
+        });
+        exe_mod.linkLibrary(tectonic_dep.artifact("tectonic_bridge_core"));
+        exe_mod.linkLibrary(tectonic_dep.artifact("tectonic_engine_xetex_c"));
+        exe_mod.linkLibrary(tectonic_dep.artifact("tectonic_engine_xetex_cxx"));
+        exe_mod.linkLibrary(tectonic_dep.artifact("tectonic_pdf_io"));
+        exe_mod.linkLibrary(tectonic_dep.artifact("tectonic_engine_xdvipdfmx"));
+        exe_mod.linkLibrary(tectonic_dep.artifact("tectonic_engine_bibtex"));
+    }
 
     // wasm: link sjlj runtime, posix stubs, and wasi emulation libraries
     if (wasm_sjlj_rt) |rt| exe_mod.linkLibrary(rt);
@@ -259,8 +286,8 @@ fn buildEztex(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bui
         exe_mod.linkSystemLibrary("wasi-emulated-signal", .{});
     }
 
-    // macOS frameworks (native only)
-    if (!is_wasm) {
+    // macOS frameworks (macOS native only)
+    if (!is_wasm and target.result.os.tag == .macos) {
         exe_mod.linkFramework("CoreFoundation", .{});
         exe_mod.linkFramework("CoreText", .{});
         exe_mod.linkFramework("CoreGraphics", .{});
@@ -280,11 +307,6 @@ fn buildEztex(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bui
     }
 
     return exe;
-}
-
-fn buildFlags(b: *std.Build, base: []const []const u8, extra: []const []const u8) []const []const u8 {
-    if (extra.len == 0) return base;
-    return std.mem.concat(b.allocator, []const u8, &.{ base, extra }) catch @panic("OOM");
 }
 
 fn buildFlags3(b: *std.Build, base: []const []const u8, a: []const []const u8, c: []const []const u8) []const []const u8 {

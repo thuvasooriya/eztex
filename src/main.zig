@@ -1,13 +1,20 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const fs = std.fs;
+const Io = std.Io;
 const fs_path = std.fs.path;
-const Log = @import("Log.zig");
-const Host = @import("Host.zig");
-const Config = @import("Config.zig");
-const Compiler = @import("Compiler.zig");
-const Watcher = @import("Watcher.zig");
+const eztex = @import("lib.zig");
 
-const Format = Compiler.Format;
+const Log = eztex.Log;
+const Host = eztex.Host;
+const Config = eztex.Config;
+const Compiler = eztex.Compiler;
+const Watcher = eztex.Watcher;
+const Engine = eztex.Engine;
+const Runtime = @import("Runtime.zig");
+
+const Format = eztex.Format;
+const CompileMode = Compiler.CompileMode;
 
 // -- CLI types --
 
@@ -24,6 +31,7 @@ const Options = struct {
     command: Command = .help,
     input_file: ?[]const u8 = null,
     output_file: ?[]const u8 = null,
+    mode: CompileMode = .full,
     format: Format = .latex,
     keep_intermediates: bool = false,
     verbose: bool = false,
@@ -65,6 +73,7 @@ const Options = struct {
         return .{
             .input_file = self.input_file,
             .output_file = self.output_file,
+            .mode = self.mode,
             .format = self.format,
             .keep_intermediates = self.keep_intermediates,
             .verbose = self.verbose,
@@ -77,10 +86,17 @@ const Options = struct {
 
 // -- argument parsing --
 
-fn parse_args() Options {
+fn parse_args(init: std.process.Init) Options {
+    const io = init.io;
     const is_wasm = Host.is_wasm;
     var opts = Options{};
-    var args = if (is_wasm) (std.process.argsWithAllocator(std.heap.c_allocator) catch return opts) else std.process.args();
+    
+    // Create args iterator from init.minimal.args
+    var args = if (is_wasm or builtin.os.tag == .windows)
+        (std.process.Args.Iterator.initAllocator(init.minimal.args, std.heap.c_allocator) catch return opts)
+    else 
+        std.process.Args.Iterator.init(init.minimal.args);
+    defer args.deinit();
     _ = args.next(); // skip argv[0]
 
     const cmd_str = args.next() orelse return opts;
@@ -101,7 +117,7 @@ fn parse_args() Options {
         opts.command = .version;
         return opts;
     } else if (cmd_str.len > 0 and cmd_str[0] == '-') {
-        Log.log("eztex", .err, "unknown option '{s}'", .{cmd_str});
+        Log.log(io, "eztex", .err, "unknown option '{s}'", .{cmd_str});
         return opts;
     } else {
         opts.command = .compile;
@@ -113,13 +129,15 @@ fn parse_args() Options {
             opts.output_file = args.next();
             opts.cli_set.output_file = true;
             if (opts.output_file == null) {
-                Log.log("eztex", .err, "{s} requires a value", .{arg});
+                Log.log(io, "eztex", .err, "{s} requires a value", .{arg});
                 opts.command = .help;
                 return opts;
             }
         } else if (std.mem.eql(u8, arg, "--keep-intermediates")) {
             opts.keep_intermediates = true;
             opts.cli_set.keep_intermediates = true;
+        } else if (std.mem.eql(u8, arg, "--preview")) {
+            opts.mode = .preview;
         } else if (std.mem.eql(u8, arg, "--format")) {
             if (args.next()) |val| {
                 if (std.mem.eql(u8, val, "latex") or std.mem.eql(u8, val, "xelatex")) {
@@ -127,13 +145,13 @@ fn parse_args() Options {
                 } else if (std.mem.eql(u8, val, "plain")) {
                     opts.format = .plain;
                 } else {
-                    Log.log("eztex", .err, "--format must be 'latex' or 'plain', got '{s}'", .{val});
+                    Log.log(io, "eztex", .err, "--format must be 'latex' or 'plain', got '{s}'", .{val});
                     opts.command = .help;
                     return opts;
                 }
                 opts.cli_set.format = true;
             } else {
-                Log.log("eztex", .err, "--format requires a value (latex or plain)", .{});
+                Log.log(io, "eztex", .err, "--format requires a value (latex or plain)", .{});
                 opts.command = .help;
                 return opts;
             }
@@ -143,7 +161,7 @@ fn parse_args() Options {
             if (args.next()) |val| {
                 opts.cache_dir = val;
             } else {
-                Log.log("eztex", .err, "--cache-dir requires a path", .{});
+                Log.log(io, "eztex", .err, "--cache-dir requires a path", .{});
                 opts.command = .help;
                 return opts;
             }
@@ -157,14 +175,14 @@ fn parse_args() Options {
             opts.command = .help;
             return opts;
         } else if (arg.len > 0 and arg[0] == '-') {
-            Log.log("eztex", .err, "unknown option '{s}'", .{arg});
+            Log.log(io, "eztex", .err, "unknown option '{s}'", .{arg});
             opts.command = .help;
             return opts;
         } else {
             if (opts.input_file == null) {
                 opts.input_file = arg;
             } else {
-                Log.log("eztex", .err, "unexpected argument '{s}'", .{arg});
+                Log.log(io, "eztex", .err, "unexpected argument '{s}'", .{arg});
                 opts.command = .help;
                 return opts;
             }
@@ -174,7 +192,7 @@ fn parse_args() Options {
     return opts;
 }
 
-fn print_usage() void {
+fn print_usage(io: Io) void {
     const usage =
         \\eztex - TeX compiler (xetex engine, zig bridge)
         \\
@@ -190,6 +208,7 @@ fn print_usage() void {
         \\
         \\compile options:
         \\  --output, -o <file.pdf>     output path (default: <input>.pdf)
+        \\  --preview                   fast preview compile (up to 2 TeX passes)
         \\  --format <latex|plain>      TeX format (default: latex)
         \\  --deterministic             reproducible output (stable tags + timestamps)
         \\  --synctex                   enable synctex source references
@@ -214,21 +233,22 @@ fn print_usage() void {
         \\
     ;
     var buf: [4096]u8 = undefined;
-    var w = Log.stderr_writer(&buf);
+    var w = Log.stderr_writer(io, &buf);
     const iface = &w.interface;
     iface.writeAll(usage) catch {};
     iface.flush() catch {};
 }
 
-fn print_version() void {
-    Log.log("eztex", .info, "eztex 0.1.0 (xetex engine, zig bridge)", .{});
+fn print_version(io: Io) void {
+    const engine_name = Compiler.engine_display_name(Compiler.backend);
+    Log.log(io, "eztex", .info, "eztex 0.1.0 ({s} engine, zig bridge)", .{engine_name});
 }
 
 // -- init command --
 
-fn do_init() u8 {
+fn do_init(io: Io) u8 {
     const config_filename = Config.filename;
-    fs.cwd().access(config_filename, .{}) catch |err| switch (err) {
+    Io.Dir.cwd().access(io, config_filename, .{}) catch |err| switch (err) {
         error.FileNotFound => {
             const template =
                 \\.{
@@ -236,43 +256,56 @@ fn do_init() u8 {
                 \\}
                 \\
             ;
-            const file = fs.cwd().createFile(config_filename, .{ .exclusive = true }) catch |e| {
-                Log.log("eztex", .err, "failed to create {s}: {}", .{ config_filename, e });
+            const file = Io.Dir.cwd().createFile(io, config_filename, .{ .exclusive = true }) catch |e| {
+                Log.log(io, "eztex", .err, "failed to create {s}: {}", .{ config_filename, e });
                 return 1;
             };
-            defer file.close();
-            file.writeAll(template) catch |e| {
-                Log.log("eztex", .err, "failed to write {s}: {}", .{ config_filename, e });
+            defer file.close(io);
+            var write_buf: [256]u8 = undefined;
+            var writer = file.writer(io, &write_buf);
+            writer.interface.writeAll(template) catch |e| {
+                Log.log(io, "eztex", .err, "failed to write {s}: {}", .{ config_filename, e });
                 return 1;
             };
-            Log.log("eztex", .info, "created {s}", .{config_filename});
+            _ = writer.interface.flush() catch {};
+            Log.log(io, "eztex", .info, "created {s}", .{config_filename});
             return 0;
         },
         else => {
-            Log.log("eztex", .err, "cannot check {s}: {}", .{ config_filename, err });
+            Log.log(io, "eztex", .err, "cannot check {s}: {}", .{ config_filename, err });
             return 1;
         },
     };
-    Log.log("eztex", .err, "{s} already exists", .{config_filename});
+    Log.log(io, "eztex", .err, "{s} already exists", .{config_filename});
     return 1;
 }
 
 // -- entry point --
 
-pub fn main() u8 {
-    var opts = parse_args();
+pub fn main(init: std.process.Init) u8 {
+    const io = init.io;
+
+    // Set the global io for C ABI bridge callbacks (ttbc_* functions).
+    Engine.set_global_io(io);
+
+    // Create and activate the centralized Runtime.
+    var rt = Runtime.init(io);
+    rt.activate();
+    defer rt.deactivate();
+
+    var opts = parse_args(init);
 
     var loaded_config: ?Config = null;
     if (opts.input_file) |input| {
         const config_dir = fs_path.dirname(input);
-        if (Config.load(std.heap.c_allocator, config_dir)) |maybe_config| {
+        if (Config.load(io, std.heap.c_allocator, config_dir)) |maybe_config| {
             if (maybe_config) |config| {
                 opts.apply_config(config);
                 loaded_config = config;
             }
         } else |_| {}
     } else if (opts.command == .compile or opts.command == .init) {
-        if (Config.load(std.heap.c_allocator, null)) |maybe_config| {
+        if (Config.load(io, std.heap.c_allocator, null)) |maybe_config| {
             if (maybe_config) |config| {
                 if (config.entry) |main_file| {
                     opts.input_file = main_file;
@@ -285,22 +318,22 @@ pub fn main() u8 {
 
     switch (opts.command) {
         .help => {
-            print_usage();
+            print_usage(io);
             return 0;
         },
         .version => {
-            print_version();
+            print_version(io);
             return 0;
         },
-        .init => return do_init(),
-        .watch => return Watcher.do_watch(opts.to_compile_config()),
+        .init => return do_init(io),
+        .watch => return Watcher.do_watch(io, opts.to_compile_config()),
         .compile => {
             const cc = opts.to_compile_config();
-            return Compiler.compile(&cc, loaded_config);
+            return Compiler.compile(io, &cc, loaded_config);
         },
         .generate_format => {
             const cc = opts.to_compile_config();
-            return Compiler.generate_format(&cc);
+            return Compiler.generate_format(io, &cc, loaded_config);
         },
     }
 }

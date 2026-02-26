@@ -7,6 +7,7 @@
 
 const std = @import("std");
 const fs = std.fs;
+const Io = std.Io;
 const Config = @This();
 
 // compilation target
@@ -40,15 +41,7 @@ pub const default_bundle_digest = compute_digest(default_bundle_url);
 
 fn compute_digest(comptime input: []const u8) [64]u8 {
     @setEvalBranchQuota(10000);
-    var hash: [32]u8 = undefined;
-    std.crypto.hash.sha2.Sha256.hash(input, &hash, .{});
-    const hex_chars = "0123456789abcdef";
-    var hex: [64]u8 = undefined;
-    for (hash, 0..) |byte, i| {
-        hex[i * 2] = hex_chars[byte >> 4];
-        hex[i * 2 + 1] = hex_chars[byte & 0x0f];
-    }
-    return hex;
+    return @import("Digest.zig").hexDigest(input);
 }
 
 // return canonical defaults for all fields.
@@ -72,45 +65,44 @@ pub fn effective_bundle(self: Config) ResolvedBundle {
     };
 }
 
-// compute digest from a URL at runtime (SHA-256 hex). uses a static buffer.
-var runtime_digest_buf: [64]u8 = undefined;
-pub fn digest_from_url(url: []const u8) []const u8 {
-    if (std.mem.eql(u8, url, default_bundle_url)) return &default_bundle_digest;
-    var hash: [32]u8 = undefined;
-    std.crypto.hash.sha2.Sha256.hash(url, &hash, .{});
-    const hex_chars = "0123456789abcdef";
-    for (hash, 0..) |byte, i| {
-        runtime_digest_buf[i * 2] = hex_chars[byte >> 4];
-        runtime_digest_buf[i * 2 + 1] = hex_chars[byte & 0x0f];
-    }
-    return &runtime_digest_buf;
+// compute SHA-256 hex digest from a URL at runtime. returns by value (thread-safe).
+pub fn digest_from_url(url: []const u8) [64]u8 {
+    if (std.mem.eql(u8, url, default_bundle_url)) return default_bundle_digest;
+    return @import("Digest.zig").hexDigest(url);
 }
 
 // load config from directory, or return defaults if no config file found.
-pub fn load_or_default(allocator: std.mem.Allocator, dir_path: ?[]const u8) Config {
-    const maybe = load(allocator, dir_path) catch return Config.default();
+pub fn load_or_default(io: Io, allocator: std.mem.Allocator, dir_path: ?[]const u8) Config {
+    const maybe = load(io, allocator, dir_path) catch return Config.default();
     return maybe orelse Config.default();
 }
 
 // attempt to load eztex.zon from the given directory.
 // returns null if file doesn't exist. errors on malformed ZON.
-pub fn load(allocator: std.mem.Allocator, dir_path: ?[]const u8) !?Config {
+pub fn load(io: Io, allocator: std.mem.Allocator, dir_path: ?[]const u8) !?Config {
     var path_buf: [4096]u8 = undefined;
     const config_path = if (dir_path) |d|
         std.fmt.bufPrint(&path_buf, "{s}/{s}", .{ d, filename }) catch return null
     else
         filename;
 
-    const file = fs.cwd().openFile(config_path, .{}) catch |err| switch (err) {
+    const file = Io.Dir.cwd().openFile(io, config_path, .{}) catch |err| switch (err) {
         error.FileNotFound => return null,
         else => return null, // don't fail on permission errors etc
     };
-    defer file.close();
+    defer file.close(io);
 
-    const content = file.readToEndAllocOptions(allocator, 64 * 1024, null, .@"1", 0) catch return null;
+    var read_buf: [64 * 1024]u8 = undefined;
+    var file_reader = Io.File.Reader.init(file, io, &read_buf);
+    const content = file_reader.interface.allocRemaining(allocator, .unlimited) catch return null;
     defer allocator.free(content);
 
-    const config = std.zon.parse.fromSlice(Config, allocator, content, null, .{
+    // Ensure content is sentinel-terminated for ZON parsing
+    const content_sentinel = allocator.allocSentinel(u8, content.len, 0) catch return null;
+    defer allocator.free(content_sentinel);
+    @memcpy(content_sentinel, content);
+
+    const config = std.zon.parse.fromSliceAlloc(Config, allocator, content_sentinel, null, .{
         .ignore_unknown_fields = true,
     }) catch return null;
 
@@ -125,12 +117,14 @@ pub fn deinit(self: Config, allocator: std.mem.Allocator) void {
 
 test "load nonexistent config returns null" {
     const allocator = std.testing.allocator;
-    const result = try Config.load(allocator, "/nonexistent/path");
+    const io = std.testing.io;
+    const result = try Config.load(io, allocator, "/nonexistent/path");
     try std.testing.expect(result == null);
 }
 
 test "load valid config" {
     const allocator = std.testing.allocator;
+    const io = std.testing.io;
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
 
@@ -140,13 +134,15 @@ test "load valid config" {
         \\    .synctex = true,
         \\}
     ;
-    try tmp_dir.dir.writeFile(.{ .sub_path = filename, .data = content });
+    try tmp_dir.dir.writeFile(io, .{ .sub_path = filename, .data = content });
 
-    // get the path as a string
+    var rel_buf: [256]u8 = undefined;
+    const tmp_path = std.fmt.bufPrintZ(&rel_buf, ".zig-cache/tmp/{s}", .{&tmp_dir.sub_path}) catch return error.Unexpected;
     var path_buf: [4096]u8 = undefined;
-    const dir_path = try tmp_dir.dir.realpath(".", &path_buf);
+    const dir_path_raw = std.c.realpath(tmp_path, &path_buf) orelse return error.Unexpected;
+    const dir_path: []const u8 = std.mem.sliceTo(dir_path_raw, 0);
 
-    const config = try Config.load(allocator, dir_path);
+    const config = try Config.load(io, allocator, dir_path);
     try std.testing.expect(config != null);
     const c = config.?;
     defer c.deinit(allocator);
@@ -159,6 +155,7 @@ test "load valid config" {
 
 test "load config with format" {
     const allocator = std.testing.allocator;
+    const io = std.testing.io;
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
 
@@ -167,12 +164,15 @@ test "load config with format" {
         \\    .format = .plain,
         \\}
     ;
-    try tmp_dir.dir.writeFile(.{ .sub_path = filename, .data = content });
+    try tmp_dir.dir.writeFile(io, .{ .sub_path = filename, .data = content });
 
+    var rel_buf: [256]u8 = undefined;
+    const tmp_path = std.fmt.bufPrintZ(&rel_buf, ".zig-cache/tmp/{s}", .{&tmp_dir.sub_path}) catch return error.Unexpected;
     var path_buf: [4096]u8 = undefined;
-    const dir_path = try tmp_dir.dir.realpath(".", &path_buf);
+    const dir_path_raw = std.c.realpath(tmp_path, &path_buf) orelse return error.Unexpected;
+    const dir_path: []const u8 = std.mem.sliceTo(dir_path_raw, 0);
 
-    const config = try Config.load(allocator, dir_path);
+    const config = try Config.load(io, allocator, dir_path);
     try std.testing.expect(config != null);
     const c = config.?;
     defer c.deinit(allocator);
@@ -182,20 +182,25 @@ test "load config with format" {
 
 test "malformed config returns null" {
     const allocator = std.testing.allocator;
+    const io = std.testing.io;
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
 
-    try tmp_dir.dir.writeFile(.{ .sub_path = filename, .data = "this is not valid zon {{{" });
+    try tmp_dir.dir.writeFile(io, .{ .sub_path = filename, .data = "this is not valid zon {{{" });
 
+    var rel_buf: [256]u8 = undefined;
+    const tmp_path = std.fmt.bufPrintZ(&rel_buf, ".zig-cache/tmp/{s}", .{&tmp_dir.sub_path}) catch return error.Unexpected;
     var path_buf: [4096]u8 = undefined;
-    const dir_path = try tmp_dir.dir.realpath(".", &path_buf);
+    const dir_path_raw = std.c.realpath(tmp_path, &path_buf) orelse return error.Unexpected;
+    const dir_path: []const u8 = std.mem.sliceTo(dir_path_raw, 0);
 
-    const config = try Config.load(allocator, dir_path);
+    const config = try Config.load(io, allocator, dir_path);
     try std.testing.expect(config == null);
 }
 
 test "load config with bundle" {
     const allocator = std.testing.allocator;
+    const io = std.testing.io;
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
 
@@ -207,12 +212,15 @@ test "load config with bundle" {
         \\    },
         \\}
     ;
-    try tmp_dir.dir.writeFile(.{ .sub_path = filename, .data = content });
+    try tmp_dir.dir.writeFile(io, .{ .sub_path = filename, .data = content });
 
+    var rel_buf: [256]u8 = undefined;
+    const tmp_path = std.fmt.bufPrintZ(&rel_buf, ".zig-cache/tmp/{s}", .{&tmp_dir.sub_path}) catch return error.Unexpected;
     var path_buf: [4096]u8 = undefined;
-    const dir_path = try tmp_dir.dir.realpath(".", &path_buf);
+    const dir_path_raw = std.c.realpath(tmp_path, &path_buf) orelse return error.Unexpected;
+    const dir_path: []const u8 = std.mem.sliceTo(dir_path_raw, 0);
 
-    const config = try Config.load(allocator, dir_path);
+    const config = try Config.load(io, allocator, dir_path);
     try std.testing.expect(config != null);
     const c = config.?;
     defer c.deinit(allocator);
@@ -225,6 +233,7 @@ test "load config with bundle" {
 
 test "load config with bundle url only" {
     const allocator = std.testing.allocator;
+    const io = std.testing.io;
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
 
@@ -235,12 +244,15 @@ test "load config with bundle url only" {
         \\    },
         \\}
     ;
-    try tmp_dir.dir.writeFile(.{ .sub_path = filename, .data = content });
+    try tmp_dir.dir.writeFile(io, .{ .sub_path = filename, .data = content });
 
+    var rel_buf: [256]u8 = undefined;
+    const tmp_path = std.fmt.bufPrintZ(&rel_buf, ".zig-cache/tmp/{s}", .{&tmp_dir.sub_path}) catch return error.Unexpected;
     var path_buf: [4096]u8 = undefined;
-    const dir_path = try tmp_dir.dir.realpath(".", &path_buf);
+    const dir_path_raw = std.c.realpath(tmp_path, &path_buf) orelse return error.Unexpected;
+    const dir_path: []const u8 = std.mem.sliceTo(dir_path_raw, 0);
 
-    const config = try Config.load(allocator, dir_path);
+    const config = try Config.load(io, allocator, dir_path);
     try std.testing.expect(config != null);
     const c = config.?;
     defer c.deinit(allocator);
@@ -253,7 +265,7 @@ test "load config with bundle url only" {
 
 test "digest_from_url returns default for default URL" {
     const d = digest_from_url(default_bundle_url);
-    try std.testing.expectEqualStrings(&default_bundle_digest, d);
+    try std.testing.expectEqualStrings(&default_bundle_digest, &d);
 }
 
 test "digest_from_url returns deterministic hash for custom URL" {
@@ -261,5 +273,5 @@ test "digest_from_url returns deterministic hash for custom URL" {
     try std.testing.expect(d1.len == 64);
     // calling again with same URL should produce same result
     const d2 = digest_from_url("https://example.com/bundle.tar");
-    try std.testing.expectEqualStrings(d1, d2);
+    try std.testing.expectEqualStrings(&d1, &d2);
 }

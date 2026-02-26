@@ -20,10 +20,11 @@ export type WorkerOutMsg =
 
 export type FileContent = string | Uint8Array;
 export type ProjectFiles = Record<string, FileContent>;
+export type CompileMode = "preview" | "full";
 
 export type WorkerInMsg =
   | { type: "init" }
-  | { type: "compile"; files: ProjectFiles; main?: string }
+  | { type: "compile"; files: ProjectFiles; main?: string; mode?: CompileMode }
   | { type: "clear_cache" };
 
 // debug flag: set via ?debug=1 query param (passed from main thread) or EZTEX_DEBUG env

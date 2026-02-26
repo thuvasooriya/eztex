@@ -7,6 +7,27 @@
 #include <setjmp.h>
 #include <stdio.h> /*vsnprintf*/
 
+/* Engine run serialization: prevents concurrent engine invocations from
+ * corrupting the shared jump_buffer and other global state.
+ * WASI is single-threaded, so we skip the mutex there.
+ */
+#ifndef __wasi__
+#ifdef _WIN32
+#include <windows.h>
+static CRITICAL_SECTION engine_mutex;
+static int engine_mutex_initialized = 0;
+static void engine_mutex_init(void) {
+    if (!engine_mutex_initialized) {
+        InitializeCriticalSection(&engine_mutex);
+        engine_mutex_initialized = 1;
+    }
+}
+#else
+#include <pthread.h>
+static pthread_mutex_t engine_mutex = PTHREAD_MUTEX_INITIALIZER;
+#endif
+#endif
+
 
 #define BUF_SIZE 1024
 static char format_buf[BUF_SIZE] = "";
@@ -131,6 +152,14 @@ _ttbc_get_error_message(void)
 jmp_buf *
 ttbc_global_engine_enter(void)
 {
+#ifndef __wasi__
+#ifdef _WIN32
+    engine_mutex_init();
+    EnterCriticalSection(&engine_mutex);
+#else
+    pthread_mutex_lock(&engine_mutex);
+#endif
+#endif
     return &jump_buffer;
 }
 
@@ -138,6 +167,13 @@ ttbc_global_engine_enter(void)
 void
 ttbc_global_engine_exit(void)
 {
+#ifndef __wasi__
+#ifdef _WIN32
+    LeaveCriticalSection(&engine_mutex);
+#else
+    pthread_mutex_unlock(&engine_mutex);
+#endif
+#endif
 }
 
 

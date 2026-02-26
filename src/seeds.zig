@@ -423,7 +423,7 @@ pub fn write_init_seed_list(out: [*]u8, cap: usize) usize {
         if (pos + name.len + 1 > cap) return 0;
         @memcpy(out[pos..][0..name.len], name);
         pos += name.len;
-        out[pos] = 10;
+        out[pos] = '\n';
         pos += 1;
     }
     return pos;
@@ -436,7 +436,7 @@ pub fn write_format_gen_seed_list(out: [*]u8, cap: usize) usize {
         if (pos + name.len + 1 > cap) return 0;
         @memcpy(out[pos..][0..name.len], name);
         pos += name.len;
-        out[pos] = 10;
+        out[pos] = '\n';
         pos += 1;
     }
     return pos;

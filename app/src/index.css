@@ -1192,6 +1192,7 @@ body {
   max-height: 320px;
   display: flex;
   flex-direction: column;
+  z-index: 100;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -1214,7 +1215,10 @@ body {
 
 .diag-pill-list {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
   padding: 4px 8px 8px;
 }
 

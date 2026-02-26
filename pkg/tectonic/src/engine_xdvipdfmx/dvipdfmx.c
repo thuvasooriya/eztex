@@ -502,7 +502,10 @@ tt_engine_xdvipdfmx_main(
 ) {
   int rv;
 
+  dpx_reset_message_handle();
+
   if (setjmp(*ttbc_global_engine_enter())) {
+    dpx_reset_message_handle();
     ttbc_global_engine_exit();
     return 99;
   }
@@ -524,6 +527,7 @@ tt_engine_xdvipdfmx_main(
     config->paperspec
   );
 
+  dpx_reset_message_handle();
   ttbc_global_engine_exit();
   return rv;
 }

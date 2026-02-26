@@ -13,15 +13,17 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const fs = std.fs;
+const Io = std.Io;
 const posix = std.posix;
+const Digest = @import("Digest.zig");
 
 const Cache = @This();
 
 allocator: std.mem.Allocator,
-base_dir: [512]u8 = .{0} ** 512,
+base_dir: [512]u8 = @splat(0),
 base_dir_len: usize = 0,
 manifest: std.StringHashMap(ManifestEntry),
-manifest_path: [1024]u8 = .{0} ** 1024,
+manifest_path: [1024]u8 = @splat(0),
 manifest_path_len: usize = 0,
 dirty: bool = false,
 
@@ -48,14 +50,14 @@ pub fn deinit(self: *Cache) void {
 // detect and set the platform-appropriate cache directory.
 // returns false if no cache directory could be determined (e.g. WASM).
 pub fn detect_cache_dir(self: *Cache) bool {
-    const home = posix.getenv("HOME") orelse return false;
+    const home = std.c.getenv("HOME") orelse return false;
 
     // macOS: ~/Library/Caches/eztex/v1/
     // Linux/other: $XDG_CACHE_HOME/eztex/v1/ or ~/.cache/eztex/v1/
     const cache_base = if (comptime builtin.os.tag == .macos)
         std.fmt.bufPrint(&self.base_dir, "{s}/Library/Caches/eztex/v1", .{home}) catch return false
     else blk: {
-        const xdg = posix.getenv("XDG_CACHE_HOME");
+        const xdg = std.c.getenv("XDG_CACHE_HOME");
         if (xdg) |xdg_dir| {
             break :blk std.fmt.bufPrint(&self.base_dir, "{s}/eztex/v1", .{xdg_dir}) catch return false;
         }
@@ -82,25 +84,40 @@ pub fn ensure_dirs(self: *Cache) !void {
     if (self.base_dir_len == 0) return error.NoCacheDir;
     const dir = self.get_cache_dir();
 
-    // create base dirs
+    // create local io instance for native-only module
+    var threaded: std.Io.Threaded = .init_single_threaded;
+    const io = threaded.io();
+
+    // create base dirs manually using createDirPath (creates parent dirs as needed)
     var buf: [1024]u8 = undefined;
     for ([_][]const u8{ "files", "manifests", "indexes", "formats" }) |sub| {
         const path = std.fmt.bufPrint(&buf, "{s}/{s}", .{ dir, sub }) catch continue;
-        fs.cwd().makePath(path) catch {};
+        // Create dir and any parent directories - ignore errors if it exists
+        Io.Dir.cwd().createDirPath(io, path) catch {};
     }
 }
 
 // load a manifest file (format: "name size hash" per line)
 pub fn load_manifest(self: *Cache, path: []const u8) !void {
-    const file = try fs.cwd().openFile(path, .{});
-    defer file.close();
+    // create local io instance for native-only module
+    var threaded: std.Io.Threaded = .init_single_threaded;
+    const io = threaded.io();
 
-    const content = try file.readToEndAlloc(self.allocator, 16 * 1024 * 1024);
-    defer self.allocator.free(content);
+    const file = try Io.Dir.cwd().openFile(io, path, .{});
+    defer file.close(io);
+
+    // Read file content manually (Io.File doesn't have readToEndAlloc in 0.16)
+    const stat = try file.stat(io);
+    const content = try self.allocator.alloc(u8, stat.size);
+    errdefer self.allocator.free(content);
+    var read_buf: [4096]u8 = undefined;
+    var file_reader = file.readerStreaming(io, &read_buf);
+    const reader = &file_reader.interface;
+    try reader.readSliceAll(content);
 
     var line_iter = std.mem.splitScalar(u8, content, '\n');
     while (line_iter.next()) |line| {
-        const trimmed = std.mem.trimRight(u8, line, " \t\r");
+        const trimmed = std.mem.trim(u8, line, " \t\r");
         if (trimmed.len < 66) continue; // minimum: "x 0 " + 64 hex chars
 
         // parse from right: last 64 chars = hash, then size, then name
@@ -151,14 +168,16 @@ pub fn load_manifest(self: *Cache, path: []const u8) !void {
 }
 
 // save manifest to disk (only if dirty)
-pub fn save_manifest(self: *Cache) !void {
+pub fn save_manifest(self: *Cache, io: Io) !void {
     if (!self.dirty) return;
     if (self.manifest_path_len == 0) return error.NoManifestPath;
 
     const path = self.manifest_path[0..self.manifest_path_len];
-    const file = try fs.cwd().createFile(path, .{});
-    defer file.close();
+    const file = try Io.Dir.cwd().createFile(io, path, .{});
+    defer file.close(io);
 
+    var write_buf: [4096]u8 = undefined;
+    var writer = file.writerStreaming(io, &write_buf);
     var it = self.manifest.iterator();
     while (it.next()) |entry| {
         var buf: [2048]u8 = undefined;
@@ -167,8 +186,9 @@ pub fn save_manifest(self: *Cache) !void {
             entry.value_ptr.size,
             &entry.value_ptr.hash,
         }) catch continue;
-        file.writeAll(line) catch {};
+        writer.interface.writeAll(line) catch {};
     }
+    _ = writer.interface.flush() catch {};
 
     self.dirty = false;
 }
@@ -186,7 +206,7 @@ pub fn has(self: *const Cache, name: []const u8) bool {
 }
 
 // open a cached file by name. returns null if not in manifest or file missing.
-pub fn open_cached(self: *const Cache, name: []const u8) ?fs.File {
+pub fn open_cached(self: *const Cache, io: Io, name: []const u8) ?Io.File {
     const entry = self.manifest.get(name) orelse return null;
     const dir = self.get_cache_dir();
     if (dir.len == 0) return null;
@@ -198,21 +218,37 @@ pub fn open_cached(self: *const Cache, name: []const u8) ?fs.File {
         entry.hash[2..],
     }) catch return null;
 
-    return fs.cwd().openFile(path, .{}) catch null;
+    const file = Io.Dir.cwd().openFile(io, path, .{}) catch return null;
+
+    // Validate actual file size against manifest to catch corrupted/truncated entries
+    const stat = file.stat(io) catch {
+        file.close(io);
+        return null;
+    };
+    const actual_size: u64 = @intCast(@min(stat.size, std.math.maxInt(u64)));
+    if (actual_size != entry.size) {
+        std.log.debug("Cache size mismatch for '{s}': expected {d}, got {d}, treating as miss", .{
+            name, entry.size, actual_size,
+        });
+        file.close(io);
+        return null;
+    }
+
+    return file;
 }
 
 // write content to cache under its content hash. updates manifest.
-pub fn write(self: *Cache, name: []const u8, hex_hash: *const [64]u8, content: []const u8) !void {
+pub fn write(self: *Cache, io: Io, name: []const u8, hex_hash: *const [64]u8, content: []const u8) !void {
     const dir = self.get_cache_dir();
     if (dir.len == 0) return error.NoCacheDir;
 
-    // ensure subdirectory exists
+    // ensure subdirectory exists using createDirPath (creates parent dirs as needed)
     var dir_buf: [1024]u8 = undefined;
     const sub_dir = std.fmt.bufPrint(&dir_buf, "{s}/files/{s}", .{
         dir,
         hex_hash[0..2],
     }) catch return error.PathTooLong;
-    fs.cwd().makePath(sub_dir) catch {};
+    Io.Dir.cwd().createDirPath(io, sub_dir) catch {};
 
     // write file
     var path_buf: [1024]u8 = undefined;
@@ -222,9 +258,12 @@ pub fn write(self: *Cache, name: []const u8, hex_hash: *const [64]u8, content: [
         hex_hash[2..],
     }) catch return error.PathTooLong;
 
-    const file = try fs.cwd().createFile(path, .{});
-    defer file.close();
-    try file.writeAll(content);
+    const file = try Io.Dir.cwd().createFile(io, path, .{});
+    defer file.close(io);
+    var write_buf: [4096]u8 = undefined;
+    var writer = file.writerStreaming(io, &write_buf);
+    try writer.interface.writeAll(content);
+    try writer.interface.flush();
 
     // update manifest
     const size: u32 = @intCast(@min(content.len, std.math.maxInt(u32)));
@@ -248,22 +287,26 @@ pub fn write(self: *Cache, name: []const u8, hex_hash: *const [64]u8, content: [
 
 // compute sha256 hex hash of content
 pub fn hash_content(content: []const u8) [64]u8 {
-    var hash: [32]u8 = undefined;
-    std.crypto.hash.sha2.Sha256.hash(content, &hash, .{});
-    var hex_hash: [64]u8 = undefined;
-    const hex_chars = "0123456789abcdef";
-    for (hash, 0..) |byte, i| {
-        hex_hash[i * 2] = hex_chars[byte >> 4];
-        hex_hash[i * 2 + 1] = hex_chars[byte & 0x0f];
-    }
-    return hex_hash;
+    return Digest.hexDigest(content);
 }
 
 // read cached file content by name (returns owned slice, caller frees)
-pub fn read_cached(self: *const Cache, name: []const u8) ?[]u8 {
-    const file = self.open_cached(name) orelse return null;
-    defer file.close();
-    return file.readToEndAlloc(self.allocator, 64 * 1024 * 1024) catch null;
+pub fn read_cached(self: *const Cache, io: Io, name: []const u8) ?[]u8 {
+    const file = self.open_cached(io, name) orelse return null;
+    defer file.close(io);
+
+    // Read file content manually (Io.File doesn't have readToEndAlloc in 0.16)
+    const stat = file.stat(io) catch return null;
+    const content = self.allocator.alloc(u8, stat.size) catch return null;
+    errdefer self.allocator.free(content);
+    var read_buf: [4096]u8 = undefined;
+    var file_reader = file.readerStreaming(io, &read_buf);
+    const reader = &file_reader.interface;
+    reader.readSliceAll(content) catch {
+        self.allocator.free(content);
+        return null;
+    };
+    return content;
 }
 
 // get the number of entries in the manifest

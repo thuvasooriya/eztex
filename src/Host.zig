@@ -13,6 +13,7 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+const Io = std.Io;
 const Engine = @import("Engine.zig");
 
 pub const is_wasm = builtin.cpu.arch == .wasm32;
@@ -43,8 +44,8 @@ pub const SeedResult = struct {
 
 // platform-specific setup: cache discovery + BundleStore init (native) or JS host init (WASM).
 // returns cache directory path on native, null on WASM.
-pub fn setup(world: *Engine.World, verbose: bool, cache_dir_override: ?[]const u8) ?[]const u8 {
-    return Impl.setup(world, verbose, cache_dir_override);
+pub fn setup(world: *Engine.World, verbose: bool, cache_dir_override: ?[]const u8, data_url: []const u8, index_url: []const u8, digest: *const [64]u8) ?[]const u8 {
+    return Impl.setup(world, verbose, cache_dir_override, data_url, index_url, digest);
 }
 
 // initialize the host layer. native: sets up cache dir, HTTP state.
@@ -71,7 +72,7 @@ pub fn cache_check(name: []const u8) CacheStatus {
 }
 
 // read file content from the persistent cache. returns null if not cached.
-pub fn cache_open(name: []const u8) ?std.fs.File {
+pub fn cache_open(name: []const u8) ?Io.File {
     return Impl.cache_open(name);
 }
 

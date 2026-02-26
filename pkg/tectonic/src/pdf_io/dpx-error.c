@@ -48,12 +48,25 @@ static char _dpx_message_buf[1024];
 static rust_output_handle_t
 _dpx_ensure_output_handle (void)
 {
+    if (_dpx_message_handle != INVALID_HANDLE)
+        return _dpx_message_handle;
+
     _dpx_message_handle = ttbc_output_open_stdout();
 
     if (_dpx_message_handle == INVALID_HANDLE)
         _tt_abort("xdvipdfmx cannot get output logging handle?!");
 
     return _dpx_message_handle;
+}
+
+
+void
+dpx_reset_message_handle (void)
+{
+    if (_dpx_message_handle != INVALID_HANDLE)
+        ttbc_output_close(_dpx_message_handle);
+
+    _dpx_message_handle = INVALID_HANDLE;
 }
 
 
@@ -72,8 +85,12 @@ _dpx_print_to_stdout (const char *fmt, va_list argp, int warn)
         _dpx_message_buf[n] = '\0';
     }
 
-    if (warn)
+    if (warn) {
+        /* route warnings solely through the Zig diagnostic handler.
+         * do NOT also write to stdout -- that caused "warning: warning:" duplication. */
         ttstub_issue_warning("%s", _dpx_message_buf);
+        return;
+    }
 
     ttbc_output_write(_dpx_ensure_output_handle(), _dpx_message_buf, n);
 }
@@ -101,13 +118,8 @@ dpx_warning (const char *fmt, ...)
     if (_dpx_quietness > 1)
         return;
 
-    if (_last_message_type == DPX_MESG_INFO)
-        ttbc_output_write(_dpx_ensure_output_handle(), "\n", 1);
-
-    ttbc_output_write(_dpx_ensure_output_handle(), "warning: ", 9);
     va_start(argp, fmt);
     _dpx_print_to_stdout (fmt, argp, 1);
     va_end(argp);
-    ttbc_output_write(_dpx_ensure_output_handle(), "\n", 1);
     _last_message_type = DPX_MESG_WARN;
 }

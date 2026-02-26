@@ -7,12 +7,14 @@
 
 import { createSignal } from "solid-js";
 import type { ProjectFiles } from "./project_store";
+import type { CompileMode } from "./worker_client";
 
 export type WatchState = "idle" | "scheduled" | "compiling" | "dirty_compiling";
 
 export type CompileRequest = {
   files: ProjectFiles;
   main: string;
+  mode: CompileMode;
 };
 
 type WatchDeps = {
@@ -96,7 +98,7 @@ export function create_watch_controller(deps: WatchDeps) {
     compile_started_at = performance.now();
     set_state("compiling");
     set_dirty(false);
-    deps.compile({ files: { ...files }, main: deps.get_main() });
+    deps.compile({ files: { ...files }, main: deps.get_main(), mode: "preview" });
   }
 
   // attempt to cancel the running compile and immediately start a new one.
@@ -111,7 +113,7 @@ export function create_watch_controller(deps: WatchDeps) {
       return false;
     }
 
-    const req: CompileRequest = { files: { ...files }, main: deps.get_main() };
+    const req: CompileRequest = { files: { ...files }, main: deps.get_main(), mode: "preview" };
     const swapped = deps.cancel_and_recompile(req);
     if (swapped) {
       pre_compile_hash = h;

@@ -6,24 +6,33 @@
 //   - Re-exports of World.zig and BundleStore.zig for internal callers
 
 const std = @import("std");
-const fs = std.fs;
+const builtin = @import("builtin");
+const Io = std.Io;
 const Log = @import("Log.zig");
-const Host = @import("Host.zig");
 const Config = @import("Config.zig");
-const is_wasm = Host.is_wasm;
 pub const World = @import("World.zig");
 pub const BundleStore = @import("BundleStore.zig");
+const Runtime = @import("Runtime.zig");
+
+var global_io_instance: ?Io = null;
+var fallback_threaded: std.Io.Threaded = .init_single_threaded;
+
+pub fn set_global_io(io: Io) void {
+    global_io_instance = io;
+}
+
+pub fn get_global_io() Io {
+    if (Runtime.instance) |rt| return rt.io;
+    if (global_io_instance) |io| return io;
+    return fallback_threaded.io();
+}
 
 const Handle = World.Handle;
 const FileFormat = World.FileFormat;
 const INVALID_HANDLE = World.INVALID_HANDLE;
 
-// ====================================================================
-// Diagnostic type
-// ====================================================================
-
 const Diagnostic = struct {
-    buf: [4096]u8 = .{0} ** 4096,
+    buf: [4096]u8 = @splat(0),
     len: usize = 0,
     is_error: bool = false,
 
@@ -40,30 +49,30 @@ const Diagnostic = struct {
     }
 };
 
-// ====================================================================
-// Global state
-// file-scope globals required: C ABI callbacks have no user-data parameter
-// ====================================================================
-
 var global_world: World = .{};
 var global_bundle_store: ?BundleStore = null;
 var global_diag_handler: ?World.DiagnosticHandler = null;
 
 pub fn get_world() *World {
+    if (Runtime.instance) |rt| return &rt.world;
     return &global_world;
 }
 
 pub fn set_bundle_store(bs: BundleStore) void {
-    global_bundle_store = bs;
+    if (Runtime.instance) |rt| {
+        rt.bundle_store = bs;
+    } else {
+        global_bundle_store = bs;
+    }
 }
 
 pub fn get_bundle_store() *BundleStore {
+    if (Runtime.instance) |rt| return &rt.bundle_store;
     return &(global_bundle_store.?);
 }
 
-// lazily create a default BundleStore if none exists yet.
-// used by wasm_exports for the api_instance which never calls _start/main.
 pub fn ensure_bundle_store() *BundleStore {
+    if (Runtime.instance) |rt| return &rt.bundle_store;
     if (global_bundle_store == null) {
         global_bundle_store = BundleStore.init(
             std.heap.c_allocator,
@@ -75,93 +84,57 @@ pub fn ensure_bundle_store() *BundleStore {
 }
 
 pub fn deinit_bundle_store() void {
+    if (Runtime.instance) |rt| {
+        rt.bundle_store.deinit();
+        return;
+    }
     if (global_bundle_store) |*bs| bs.deinit();
     global_bundle_store = null;
 }
 
-// ====================================================================
-// Diagnostic handler
-// ====================================================================
-
 pub fn set_diagnostic_handler(handler: World.DiagnosticHandler) void {
-    global_diag_handler = handler;
-}
-
-fn emit_warning(text: []const u8) void {
-    if (global_diag_handler) |h| {
-        h.on_warning(text);
+    if (Runtime.instance) |rt| {
+        rt.diag_handler = handler;
     } else {
-        Log.log_stderr("", "warning: {s}", .{text});
+        global_diag_handler = handler;
     }
 }
 
-fn emit_error(text: []const u8) void {
-    if (global_diag_handler) |h| {
-        h.on_error(text);
+fn emit_warning(io: Io, text: []const u8) void {
+    const h = if (Runtime.instance) |rt| rt.diag_handler else global_diag_handler;
+    if (h) |handler| {
+        handler.on_warning(io, text);
     } else {
-        Log.log_stderr("", "error: {s}", .{text});
+        Log.log_stderr(io, "", "warning: {s}", .{text});
     }
 }
 
-fn emit_info(text: []const u8) void {
-    if (global_diag_handler) |h| {
-        h.on_info(text);
+fn emit_error(io: Io, text: []const u8) void {
+    const h = if (Runtime.instance) |rt| rt.diag_handler else global_diag_handler;
+    if (h) |handler| {
+        handler.on_error(io, text);
     } else {
-        Log.log_stderr("", "{s}", .{text});
+        Log.log_stderr(io, "", "error: {s}", .{text});
     }
 }
 
-// ====================================================================
-// Diagnostic handler
-// ====================================================================
-
-var bridge_verbose: bool = false;
-
-pub fn set_verbose(v: bool) void {
-    bridge_verbose = v;
-    World.set_verbose(v);
+fn emit_info(io: Io, text: []const u8) void {
+    const h = if (Runtime.instance) |rt| rt.diag_handler else global_diag_handler;
+    if (h) |handler| {
+        handler.on_info(io, text);
+    } else {
+        Log.log_stderr(io, "", "{s}", .{text});
+    }
 }
-
-fn stderr_writer(buf: []u8) fs.File.Writer {
-    return Log.stderr_writer(buf);
-}
-
-fn log_bridge_always(comptime fmt: []const u8, args: anytype) void {
-    var buf: [4096]u8 = undefined;
-    var writer = stderr_writer(&buf);
-    const w = &writer.interface;
-    w.print(fmt ++ "\n", args) catch {};
-    w.flush() catch {};
-}
-
-pub fn log_bundle(comptime fmt: []const u8, args: anytype) void {
-    if (!bridge_verbose) return;
-    var buf: [4096]u8 = undefined;
-    var writer = stderr_writer(&buf);
-    const w = &writer.interface;
-    w.print("[bundle] " ++ fmt ++ "\n", args) catch {};
-    w.flush() catch {};
-}
-
-fn log_bridge(comptime fmt: []const u8, args: anytype) void {
-    if (!bridge_verbose) return;
-    var buf: [4096]u8 = undefined;
-    var writer = stderr_writer(&buf);
-    const w = &writer.interface;
-    w.print("[bridge] " ++ fmt ++ "\n", args) catch {};
-    w.flush() catch {};
-}
-
-// ====================================================================
-// Exported C functions -- diagnostics
-// ====================================================================
 
 export fn ttbc_issue_warning(text: [*:0]const u8) void {
-    emit_warning(std.mem.span(text));
+    const io = get_global_io();
+    emit_warning(io, std.mem.span(text));
 }
 
 export fn ttbc_issue_error(text: [*:0]const u8) void {
-    emit_error(std.mem.span(text));
+    const io = get_global_io();
+    emit_error(io, std.mem.span(text));
 }
 
 export fn ttbc_diag_begin_warning() ?*Diagnostic {
@@ -184,34 +157,35 @@ export fn ttbc_diag_append(diag: ?*Diagnostic, text: [*:0]const u8) void {
 
 export fn ttbc_diag_finish(diag: ?*Diagnostic) void {
     if (diag) |d| {
-        if (global_diag_handler != null and d.len > 0) {
+        const has_handler = if (Runtime.instance) |rt| rt.diag_handler != null else global_diag_handler != null;
+        if (has_handler and d.len > 0) {
+            const io = get_global_io();
             if (d.is_error) {
-                emit_error(d.slice());
+                emit_error(io, d.slice());
             } else {
-                emit_warning(d.slice());
+                emit_warning(io, d.slice());
             }
         }
         std.heap.c_allocator.destroy(d);
     }
 }
 
-// ====================================================================
-// Exported C functions -- MD5
-// ====================================================================
-
 const Md5 = std.crypto.hash.Md5;
 
 export fn ttbc_get_file_md5(path: [*:0]const u8, digest: [*]u8) c_int {
     const path_slice = std.mem.span(path);
     const world = get_world();
+    const io = get_global_io();
 
-    const file = world.try_open_input(path_slice, World.TTBC_FILE_FORMAT_TEX) orelse {
+    const file = world.try_open_input(io, path_slice, World.TTBC_FILE_FORMAT_TEX) orelse {
         @memset(digest[0..16], 0);
         return 1;
     };
-    defer file.close();
+    defer file.close(io);
 
-    const content = file.readToEndAlloc(std.heap.c_allocator, 16 * 1024 * 1024) catch {
+    var read_buf: [64 * 1024]u8 = undefined;
+    var file_reader = Io.File.Reader.init(file, io, &read_buf);
+    const content = file_reader.interface.allocRemaining(std.heap.c_allocator, .limited(16 * 1024 * 1024)) catch {
         @memset(digest[0..16], 0);
         return 1;
     };
@@ -226,26 +200,23 @@ export fn ttbc_get_data_md5(data: [*]const u8, len: usize, digest: [*]u8) c_int 
     return 0;
 }
 
-// ====================================================================
-// Exported C functions -- output
-// ====================================================================
-
 export fn ttbc_output_open(name: [*:0]const u8, is_gz: c_int) Handle {
     const name_slice = std.mem.span(name);
-    Log.dbg("bridge", "output_open('{s}', is_gz={d})", .{ name_slice, is_gz });
+    const io = get_global_io();
+    Log.dbg(io, "bridge", "output_open('{s}', is_gz={d})", .{ name_slice, is_gz });
 
     const world = get_world();
     const file = blk: {
         if (world.output_dir_len > 0) {
             const out_dir = world.output_dir[0..world.output_dir_len];
-            const dir = fs.cwd().openDir(out_dir, .{}) catch {
-                break :blk fs.cwd().createFile(name_slice, .{}) catch return INVALID_HANDLE;
+            const dir = Io.Dir.cwd().openDir(io, out_dir, .{}) catch {
+                break :blk Io.Dir.cwd().createFile(io, name_slice, .{}) catch return INVALID_HANDLE;
             };
             var d = dir;
-            defer d.close();
-            break :blk d.createFile(name_slice, .{}) catch return INVALID_HANDLE;
+            defer d.close(io);
+            break :blk d.createFile(io, name_slice, .{}) catch return INVALID_HANDLE;
         } else {
-            break :blk fs.cwd().createFile(name_slice, .{}) catch return INVALID_HANDLE;
+            break :blk Io.Dir.cwd().createFile(io, name_slice, .{}) catch return INVALID_HANDLE;
         }
     };
 
@@ -254,11 +225,12 @@ export fn ttbc_output_open(name: [*:0]const u8, is_gz: c_int) Handle {
 
 export fn ttbc_output_open_stdout() Handle {
     const world = get_world();
-    return world.alloc_output(fs.File.stdout(), "stdout", true, false);
+    return world.alloc_output(Io.File.stdout(), "stdout", true, false);
 }
 
 export fn ttbc_output_putc(handle: Handle, c: c_int) c_int {
     const world = get_world();
+    const io = get_global_io();
     const slot = world.get_output(handle) orelse return -1;
     const byte: [1]u8 = .{@intCast(c & 0xff)};
     if (slot.is_gz) {
@@ -266,36 +238,41 @@ export fn ttbc_output_putc(handle: Handle, c: c_int) c_int {
         buf.append(std.heap.c_allocator, byte[0]) catch return -1;
         return c;
     }
-    slot.file.writeAll(&byte) catch return -1;
+    var write_buf: [4096]u8 = undefined;
+    var writer = slot.file.writerStreaming(io, &write_buf);
+    writer.interface.writeAll(&byte) catch return -1;
+    writer.interface.flush() catch return -1;
     return c;
 }
 
 export fn ttbc_output_write(handle: Handle, data: [*]const u8, len: usize) usize {
     const world = get_world();
+    const io = get_global_io();
     const slot = world.get_output(handle) orelse return 0;
     if (slot.is_gz) {
         const buf = slot.gz_buf orelse return 0;
         buf.appendSlice(std.heap.c_allocator, data[0..len]) catch return 0;
         return len;
     }
-    slot.file.writeAll(data[0..len]) catch return 0;
+    var write_buf: [4096]u8 = undefined;
+    var writer = slot.file.writerStreaming(io, &write_buf);
+    writer.interface.writeAll(data[0..len]) catch return 0;
+    writer.interface.flush() catch return 0;
     return len;
 }
 
-// No-op: Zig's std.fs.File.writeAll issues direct write() syscalls with no
-// user-space buffering, so there is nothing to flush.
 export fn ttbc_output_flush(handle: Handle) c_int {
     _ = handle;
     return 0;
 }
 
-// zlib gzdopen/gzwrite/gzclose for gzip output (resolved via zlib_lib)
 extern fn gzdopen(fd: c_int, mode: [*:0]const u8) ?*anyopaque;
 extern fn gzwrite(gz: *anyopaque, buf: [*]const u8, len: c_uint) c_int;
 extern fn gzclose(gz: *anyopaque) c_int;
 
 export fn ttbc_output_close(handle: Handle) c_int {
     const world = get_world();
+    const io = get_global_io();
     const slot = world.get_output(handle) orelse return 0;
     defer world.outputs[handle - 1] = null;
 
@@ -306,81 +283,96 @@ export fn ttbc_output_close(handle: Handle) c_int {
                 std.heap.c_allocator.destroy(buf);
             }
             const data = buf.items;
-            // gzdopen takes ownership of the fd; dup so our fs.File.close() is
-            // still valid after gzclose (which will close the dup'd fd).
             const raw_fd = slot.file.handle;
-            const dup_fd = std.posix.dup(raw_fd) catch {
-                // dup unavailable (e.g. WASM) -- write raw uncompressed data
-                if (data.len > 0) slot.file.writeAll(data) catch {};
-                slot.file.close();
+            if (builtin.os.tag == .windows) {
+                var write_buf: [4096]u8 = undefined;
+                var writer = slot.file.writer(io, &write_buf);
+                if (data.len > 0) _ = writer.interface.writeAll(data) catch {};
+                _ = writer.interface.flush() catch {};
+                slot.file.close(io);
                 return 0;
-            };
+            }
+            const dup_result = std.posix.system.dup(raw_fd);
+            if (dup_result < 0) {
+                var write_buf: [4096]u8 = undefined;
+                var writer = slot.file.writer(io, &write_buf);
+                if (data.len > 0) _ = writer.interface.writeAll(data) catch {};
+                _ = writer.interface.flush() catch {};
+                slot.file.close(io);
+                return 0;
+            }
+            const dup_fd: c_int = @intCast(dup_result);
             const gz = gzdopen(dup_fd, "wb") orelse {
-                std.posix.close(dup_fd);
-                if (data.len > 0) slot.file.writeAll(data) catch {};
-                slot.file.close();
+                _ = std.posix.system.close(dup_fd);
+                var write_buf: [4096]u8 = undefined;
+                var writer = slot.file.writer(io, &write_buf);
+                if (data.len > 0) _ = writer.interface.writeAll(data) catch {};
+                _ = writer.interface.flush() catch {};
+                slot.file.close(io);
                 return -1;
             };
             if (data.len > 0) {
-                _ = gzwrite(gz, data.ptr, @intCast(data.len));
+                const written = gzwrite(gz, data.ptr, @intCast(data.len));
+                if (written < 0 or @as(usize, @intCast(written)) != data.len) {
+                    _ = gzclose(gz);
+                    slot.file.close(io);
+                    return -1;
+                }
             }
-            _ = gzclose(gz); // closes dup_fd, flushes gzip trailer
-            slot.file.close(); // closes raw_fd (position already correct via dup)
+            _ = gzclose(gz);
+            slot.file.close(io);
         }
         return 0;
     }
 
     if (!slot.is_stdout) {
-        slot.file.close();
+        slot.file.close(io);
     }
     return 0;
 }
 
-// ====================================================================
-// Exported C functions -- input
-// ====================================================================
-
 export fn ttbc_input_open(name: [*:0]const u8, format: FileFormat, is_gz: c_int) Handle {
     _ = is_gz;
     const name_slice = std.mem.span(name);
-    Log.dbg("bridge", "input_open('{s}', format={d})", .{ name_slice, format });
+    const io = get_global_io();
+    Log.dbg(io, "bridge", "input_open('{s}', format={d})", .{ name_slice, format });
 
     const world = get_world();
 
-    // serve format files from memory when available (avoids temp file I/O)
     if (format == World.TTBC_FILE_FORMAT_FORMAT) {
         if (world.format_data) |data| {
             const h = world.alloc_memory_input(data, name_slice);
-            Log.dbg("bridge", "  -> memory-backed handle {d} ({d} bytes)", .{ h, data.len });
+            Log.dbg(io, "bridge", "  -> memory-backed handle {d} ({d} bytes)", .{ h, data.len });
             return h;
         }
     }
 
-    const file = world.try_open_input(name_slice, format) orelse {
-        Log.dbg("bridge", "  -> not found", .{});
+    const file = world.try_open_input(io, name_slice, format) orelse {
+        Log.dbg(io, "bridge", "  -> not found", .{});
         return INVALID_HANDLE;
     };
 
-    const h = world.alloc_input(file, name_slice);
-    Log.dbg("bridge", "  -> handle {d}", .{h});
+    const h = world.alloc_input(io, file, name_slice);
+    Log.dbg(io, "bridge", "  -> handle {d}", .{h});
     return h;
 }
 
 export fn ttbc_input_open_primary() Handle {
     const world = get_world();
+    const io = get_global_io();
     if (world.primary_input_len == 0) {
-        Log.dbg("bridge", "input_open_primary: no primary input set", .{});
+        Log.dbg(io, "bridge", "input_open_primary: no primary input set", .{});
         return INVALID_HANDLE;
     }
     const name = world.primary_input[0..world.primary_input_len];
-    Log.dbg("bridge", "input_open_primary('{s}')", .{name});
+    Log.dbg(io, "bridge", "input_open_primary('{s}')", .{name});
 
-    const file = world.try_open_input(name, World.TTBC_FILE_FORMAT_TEX) orelse {
-        Log.dbg("bridge", "  -> not found", .{});
+    const file = world.try_open_input(io, name, World.TTBC_FILE_FORMAT_TEX) orelse {
+        Log.dbg(io, "bridge", "  -> not found", .{});
         return INVALID_HANDLE;
     };
 
-    return world.alloc_input(file, name);
+    return world.alloc_input(io, file, name);
 }
 
 export fn ttbc_get_last_input_abspath(buffer: [*]u8, len: usize) isize {
@@ -395,21 +387,21 @@ export fn ttbc_get_last_input_abspath(buffer: [*]u8, len: usize) isize {
 
 export fn ttbc_input_get_size(handle: Handle) usize {
     const world = get_world();
+    const io = get_global_io();
     const slot = world.get_input(handle) orelse return 0;
-    return slot.get_size() catch return 0;
+    return slot.get_size(io) catch return 0;
 }
 
 export fn ttbc_input_get_mtime(handle: Handle) i64 {
     const world = get_world();
+    if (world.deterministic_mtime) |fixed| return fixed;
     const slot = world.get_input(handle) orelse return 0;
-    // memory-backed inputs have no mtime
-    const f = slot.file orelse return 0;
-    const stat = f.stat() catch return 0;
-    return @intCast(@divTrunc(stat.mtime, std.time.ns_per_s));
+    return slot.mtime_sec;
 }
 
 export fn ttbc_input_seek(handle: Handle, offset: isize, whence: c_int, internal_error: ?*c_int) usize {
     const world = get_world();
+    const io = get_global_io();
     const slot = world.get_input(handle) orelse {
         if (internal_error) |e| e.* = 1;
         return 0;
@@ -419,7 +411,7 @@ export fn ttbc_input_seek(handle: Handle, offset: isize, whence: c_int, internal
 
     const new_pos: u64 = switch (whence) {
         World.SEEK_SET => blk: {
-            slot.seek_to(@intCast(offset)) catch {
+            slot.seek_to(io, @intCast(offset)) catch {
                 if (internal_error) |e| e.* = 1;
                 return 0;
             };
@@ -428,32 +420,38 @@ export fn ttbc_input_seek(handle: Handle, offset: isize, whence: c_int, internal
         },
         World.SEEK_CUR => blk: {
             if (offset == 0) {
-                const pos = slot.get_pos() catch {
+                const pos = slot.get_pos(io) catch {
                     if (internal_error) |e| e.* = 1;
                     return 0;
                 };
                 break :blk if (has_ungetc) pos - 1 else pos;
             }
             const adj: i64 = if (has_ungetc) -1 else 0;
-            slot.seek_by(@as(i64, @intCast(offset)) + adj) catch {
+            slot.seek_by(io, @as(i64, @intCast(offset)) + adj) catch {
                 if (internal_error) |e| e.* = 1;
                 return 0;
             };
             slot.ungetc_byte = null;
-            const pos = slot.get_pos() catch {
+            const pos = slot.get_pos(io) catch {
                 if (internal_error) |e| e.* = 1;
                 return 0;
             };
             break :blk pos;
         },
         World.SEEK_END => blk: {
-            const size = slot.get_size() catch {
+            const size = slot.get_size(io) catch {
                 if (internal_error) |e| e.* = 1;
                 return 0;
             };
             const size_i: i64 = @intCast(size);
-            const target: u64 = @intCast(size_i + @as(i64, @intCast(offset)));
-            slot.seek_to(target) catch {
+            const target_i = size_i + @as(i64, @intCast(offset));
+            // Guard negative target positions before casting to u64
+            if (target_i < 0) {
+                if (internal_error) |e| e.* = 1;
+                return 0;
+            }
+            const target: u64 = @intCast(target_i);
+            slot.seek_to(io, target) catch {
                 if (internal_error) |e| e.* = 1;
                 return 0;
             };
@@ -471,6 +469,7 @@ export fn ttbc_input_seek(handle: Handle, offset: isize, whence: c_int, internal
 
 export fn ttbc_input_getc(handle: Handle) c_int {
     const world = get_world();
+    const io = get_global_io();
     const slot = world.get_input(handle) orelse return -1;
 
     if (slot.ungetc_byte) |b| {
@@ -479,7 +478,7 @@ export fn ttbc_input_getc(handle: Handle) c_int {
     }
 
     var buf: [1]u8 = undefined;
-    const n = slot.read(&buf) catch return -1;
+    const n = slot.read(io, &buf) catch return -1;
     if (n == 0) return -1;
     return @intCast(buf[0]);
 }
@@ -493,6 +492,7 @@ export fn ttbc_input_ungetc(handle: Handle, ch: c_int) c_int {
 
 export fn ttbc_input_read(handle: Handle, data: [*]u8, len: usize) isize {
     const world = get_world();
+    const io = get_global_io();
     const slot = world.get_input(handle) orelse return -1;
 
     var dest = data[0..len];
@@ -508,7 +508,7 @@ export fn ttbc_input_read(handle: Handle, data: [*]u8, len: usize) isize {
     }
 
     while (dest.len > 0) {
-        const n = slot.read(dest) catch return if (total > 0) @as(isize, @intCast(total)) else -1;
+        const n = slot.read(io, dest) catch return if (total > 0) @as(isize, @intCast(total)) else -1;
         if (n == 0) return if (total > 0) @as(isize, @intCast(total)) else -1;
         dest = dest[n..];
         total += n;
@@ -519,6 +519,7 @@ export fn ttbc_input_read(handle: Handle, data: [*]u8, len: usize) isize {
 
 export fn ttbc_input_read_partial(handle: Handle, data: [*]u8, len: usize) isize {
     const world = get_world();
+    const io = get_global_io();
     const slot = world.get_input(handle) orelse return -1;
 
     if (slot.ungetc_byte) |b| {
@@ -529,32 +530,25 @@ export fn ttbc_input_read_partial(handle: Handle, data: [*]u8, len: usize) isize
         }
     }
 
-    const n = slot.read(data[0..len]) catch return -1;
+    const n = slot.read(io, data[0..len]) catch return -1;
     if (n == 0) return -1;
     return @intCast(n);
 }
 
 export fn ttbc_input_close(handle: Handle) c_int {
     const world = get_world();
+    const io = get_global_io();
     const slot = world.get_input(handle) orelse return 0;
-    slot.close();
+    slot.close(io);
     world.inputs[handle - 1] = null;
     return 0;
 }
 
-// ====================================================================
-// Exported C functions -- shell escape
-// ====================================================================
-
 export fn ttbc_shell_escape(cmd: [*]const u16, len: usize) c_int {
     _ = cmd;
     _ = len;
-    return 1; // disallowed
+    return 1;
 }
-
-// ====================================================================
-// Force export fn emission for modules with C ABI exports
-// ====================================================================
 
 comptime {
     _ = @import("Flate.zig");
@@ -562,37 +556,29 @@ comptime {
     _ = @import("wasm_exports.zig");
 }
 
-// ====================================================================
-// Checkpoint callback -- engine lifecycle events from C side
-// ====================================================================
-
-pub const CheckpointId = enum(c_int) {
-    format_loaded = 1,
-    _,
-};
-
-pub const CheckpointCallback = struct {
-    func: *const fn (userdata: ?*anyopaque, id: CheckpointId) void,
-    userdata: ?*anyopaque,
-};
+pub const CheckpointCallback = Runtime.CheckpointCallback;
 
 extern fn ttbc_set_checkpoint_callback(
     func: ?*const fn (userdata: ?*anyopaque, id: c_int) callconv(.c) void,
     userdata: ?*anyopaque,
 ) void;
 
-var checkpoint_handler: ?CheckpointCallback = null;
-
 fn checkpoint_trampoline(userdata: ?*anyopaque, raw_id: c_int) callconv(.c) void {
     _ = userdata;
-    const id: CheckpointId = @enumFromInt(raw_id);
-    if (checkpoint_handler) |h| {
-        h.func(h.userdata, id);
+    const h = if (Runtime.instance) |rt| rt.checkpoint_handler else checkpoint_handler;
+    if (h) |cb| {
+        cb.func(cb.userdata, raw_id);
     }
 }
 
+var checkpoint_handler: ?CheckpointCallback = null;
+
 pub fn set_checkpoint_callback(callback: ?CheckpointCallback) void {
-    checkpoint_handler = callback;
+    if (Runtime.instance) |rt| {
+        rt.checkpoint_handler = callback;
+    } else {
+        checkpoint_handler = callback;
+    }
     if (callback != null) {
         ttbc_set_checkpoint_callback(&checkpoint_trampoline, null);
     } else {
@@ -601,6 +587,10 @@ pub fn set_checkpoint_callback(callback: ?CheckpointCallback) void {
 }
 
 pub fn clear_checkpoint_callback() void {
-    checkpoint_handler = null;
+    if (Runtime.instance) |rt| {
+        rt.checkpoint_handler = null;
+    } else {
+        checkpoint_handler = null;
+    }
     ttbc_set_checkpoint_callback(null, null);
 }

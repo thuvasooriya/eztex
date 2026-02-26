@@ -24,7 +24,12 @@ pub fn build(b: *std.Build) void {
     lib.root_module.addCMacro("GRAPHITE2_NFILEFACE", "1");
     lib.root_module.addCMacro("GRAPHITE2_NTRACING", "1");
 
-    const cxx_flags: []const []const u8 = &.{
+    const cxx_flags: []const []const u8 = if (target.result.os.tag == .windows) &.{
+        "-fno-rtti",
+        "-fno-exceptions",
+        "-fno-sanitize=undefined",
+        "-Wno-unknown-pragmas",
+    } else &.{
         "-fno-rtti",
         "-fno-exceptions",
         "-fno-sanitize=undefined",
@@ -35,7 +40,7 @@ pub fn build(b: *std.Build) void {
 
     // core source files from files.mk / CMakeLists.txt
     // using call_machine for portability (direct_machine requires gcc computed gotos)
-    lib.addCSourceFiles(.{
+    lib.root_module.addCSourceFiles(.{
         .root = upstream.path("src"),
         .files = &.{
             "call_machine.cpp",

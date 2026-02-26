@@ -2,7 +2,7 @@
     .name = .grphite,
     .version = "0.0.0",
     .fingerprint = 0xa35ae776f71af200, // Changing this has security and trust implications.
-    .minimum_zig_version = "0.15.2",
+    .minimum_zig_version = "0.17.0-dev.269+ebff43698",
     .dependencies = .{
         .graphite = .{
             .url = "git+https://github.com/silnrsi/graphite#c9bdca92942086eb51c07b02e5ddbcc007ac0569",

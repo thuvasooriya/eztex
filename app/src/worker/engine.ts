@@ -27,6 +27,7 @@ import {
   send_cache_status,
   format_size,
   type Diagnostic,
+  type CompileMode,
   type ProjectFiles,
 } from "./protocol.ts";
 import * as opfs from "./opfs.ts";
@@ -36,18 +37,135 @@ import * as bundle from "./bundle_fetch.ts";
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
+const INTERMEDIATE_SUFFIXES = [
+  ".aux",
+  ".bbl",
+  ".bibstate",
+  ".blg",
+  ".toc",
+  ".out",
+  ".nav",
+  ".snm",
+  ".lof",
+  ".lot",
+  ".vrb",
+  ".synctex.gz",
+];
+
 let wasm_module: WebAssembly.Module | null = null;
 let cached_files: Map<string, Uint8Array> | null = null;
 let cached_index_text: Uint8Array | null = null;
 
 // -- WASI filesystem builder --
 
-function build_wasi_fs(user_files: ProjectFiles | null): {
+function stable_hash(text: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+function common_dir_prefix(paths: string[]): string {
+  if (paths.length === 0) return "";
+  const dir_parts = paths.map((path) => {
+    const parts = path.split("/").filter(Boolean);
+    parts.pop();
+    return parts;
+  });
+  const prefix: string[] = [];
+  const max_len = Math.min(...dir_parts.map((parts) => parts.length));
+  for (let i = 0; i < max_len; i++) {
+    const segment = dir_parts[0][i];
+    if (dir_parts.every((parts) => parts[i] === segment)) {
+      prefix.push(segment);
+      continue;
+    }
+    break;
+  }
+  return prefix.join("/");
+}
+
+function derive_project_id(user_files: ProjectFiles, main_file: string): string {
+  const names = Object.keys(user_files).filter(Boolean).sort();
+  const root = common_dir_prefix(names);
+  return stable_hash(`${root}\n${main_file}\n${names.join("\n")}`);
+}
+
+function is_persisted_intermediate(path: string): boolean {
+  return INTERMEDIATE_SUFFIXES.some((suffix) => path.endsWith(suffix));
+}
+
+function collect_intermediate_files(
+  dir: Map<string, WasiFile | Directory>,
+): Map<string, Uint8Array> {
+  const files = new Map<string, Uint8Array>();
+
+  function walk(entries: Map<string, WasiFile | Directory>, prefix: string): void {
+    for (const [name, inode] of entries) {
+      const path = prefix ? `${prefix}/${name}` : name;
+      if (inode instanceof Directory) {
+        walk(inode.contents, path);
+        continue;
+      }
+      if (!inode.data || inode.data.byteLength === 0 || !is_persisted_intermediate(path)) {
+        continue;
+      }
+      files.set(path, new Uint8Array(inode.data));
+    }
+  }
+
+  walk(dir, "");
+  return files;
+}
+
+function build_wasi_fs(
+  user_files: ProjectFiles | null,
+  restored_files: Map<string, Uint8Array> | null = null,
+): {
   root_map: Map<string, WasiFile | Directory>;
   tmp_map: Map<string, WasiFile | Directory>;
 } {
   const root_map = new Map<string, WasiFile | Directory>();
   const fonts_map = new Map<string, WasiFile | Directory>();
+
+  // ensure directory node exists in parent_map and return it.
+  // if a file already exists at this name, warn and replace it with a directory.
+  function ensure_dir(parent_map: Map<string, WasiFile | Directory>, name: string): Map<string, WasiFile | Directory> {
+    const existing = parent_map.get(name);
+    if (existing instanceof Directory) return existing.contents;
+    if (existing !== undefined) {
+      dbg("wasi_fs", `collision: '${name}' exists as file, replacing with directory`);
+    }
+    const dir = new Map<string, WasiFile | Directory>();
+    parent_map.set(name, new Directory(dir));
+    return dir;
+  }
+
+  // place file at path (e.g. "figures/frontmatter/logo.png") into root_map tree.
+  // if a directory already exists at the leaf name, warn and replace it with the file.
+  function place_file(root: Map<string, WasiFile | Directory>, file_path: string, data: Uint8Array) {
+    const parts = file_path.split("/");
+    if (parts.length === 1) {
+      const existing = root.get(file_path);
+      if (existing instanceof Directory) {
+        dbg("wasi_fs", `collision: '${file_path}' exists as directory, replacing with file`);
+      }
+      root.set(file_path, new WasiFile(data));
+      return;
+    }
+    let current = root;
+    for (let i = 0; i < parts.length - 1; i++) {
+      current = ensure_dir(current, parts[i]);
+    }
+    const leaf = parts[parts.length - 1];
+    const existing = current.get(leaf);
+    if (existing instanceof Directory) {
+      dbg("wasi_fs", `collision: '${file_path}' exists as directory, replacing with file`);
+    }
+    current.set(leaf, new WasiFile(data));
+  }
 
   let cached_count = 0;
   if (cached_files) {
@@ -55,7 +173,7 @@ function build_wasi_fs(user_files: ProjectFiles | null): {
       if (name.startsWith("fonts/")) {
         fonts_map.set(name.slice(6), new WasiFile(new Uint8Array(data)));
       } else {
-        root_map.set(name, new WasiFile(new Uint8Array(data)));
+        place_file(root_map, name, new Uint8Array(data));
       }
       cached_count++;
     }
@@ -65,14 +183,23 @@ function build_wasi_fs(user_files: ProjectFiles | null): {
   const tmp_map = new Map<string, WasiFile | Directory>();
   root_map.set("tmp", new Directory(tmp_map));
 
+  let restored_count = 0;
+  for (const [name, data] of restored_files || []) {
+    place_file(root_map, name, new Uint8Array(data));
+    restored_count++;
+  }
+
   // write user files into WASI filesystem (null for format generation)
   const user_count = Object.keys(user_files || {}).length;
   for (const [name, content] of Object.entries(user_files || {})) {
     const bytes = typeof content === "string" ? encoder.encode(content) : new Uint8Array(content);
-    root_map.set(name, new WasiFile(bytes));
+    place_file(root_map, name, bytes);
   }
 
-  dbg("wasi_fs", `built: ${cached_count} cached + ${user_count} user + fonts dir (${fonts_map.size} fonts) + tmp dir`);
+  dbg(
+    "wasi_fs",
+    `built: ${cached_count} cached + ${restored_count} restored + ${user_count} user + fonts dir (${fonts_map.size} fonts) + tmp dir`,
+  );
   return { root_map, tmp_map };
 }
 
@@ -298,10 +425,11 @@ function run_wasm(
   wasi_args: string[],
   user_files: ProjectFiles | null,
   classify_stderr: boolean = false,
+  restored_files: Map<string, Uint8Array> | null = null,
 ): RunResult {
   const label = wasi_args[1] ?? "wasm";
   dbg("run", `run_wasm: args=[${wasi_args.join(",")}], files=${user_files ? Object.keys(user_files).length : 0}`);
-  const { root_map, tmp_map } = build_wasi_fs(user_files);
+  const { root_map, tmp_map } = build_wasi_fs(user_files, restored_files);
   const { env, set_instance, stats } = make_fetch_env();
 
   const diag_parser = classify_stderr ? make_diag_stderr_handler() : null;
@@ -546,20 +674,36 @@ function resolve_main(user_files: ProjectFiles, main?: string): string {
 
 // -- compile (single run, fetch-on-open) --
 
-export async function compile(user_files: ProjectFiles, main?: string): Promise<void> {
+export async function compile(user_files: ProjectFiles, main?: string, mode: CompileMode = "full"): Promise<void> {
   if (!wasm_module || !cached_files) {
     log("eztex", "error", "engine not ready");
     return;
   }
 
   const main_file = resolve_main(user_files, main);
+  const project_id = derive_project_id(user_files, main_file);
   send_status("Compiling...", "loading");
-  dbg("eztex", `compiling ${main_file} (${Object.keys(user_files).length} file(s))...`);
+  dbg("eztex", `compiling ${main_file} in ${mode} mode (${Object.keys(user_files).length} file(s))...`);
 
   const t0 = performance.now();
 
   try {
-    const { exit_code, root_map, tmp_map, fetch_stats } = run_wasm(["eztex", "compile", "--synctex", main_file], user_files, true);
+    const restored_intermediates = await opfs.load_project_intermediates(project_id);
+    if (restored_intermediates.size > 0) {
+      dbg("eztex", `restoring ${restored_intermediates.size} intermediate file(s) for ${project_id}`);
+    }
+
+    const { exit_code, root_map, tmp_map, fetch_stats } = run_wasm(
+      mode === "preview"
+        ? ["eztex", "compile", "--synctex", "--preview", main_file]
+        : ["eztex", "compile", "--synctex", main_file],
+      user_files,
+      true,
+      restored_intermediates,
+    );
+
+    const intermediate_files = collect_intermediate_files(root_map);
+    await opfs.save_project_intermediates(project_id, intermediate_files, exit_code === 0);
 
     // persist xelatex.fmt if generated during this run
     const fmt_inode = tmp_map.get("xelatex.fmt") as WasiFile | undefined;

@@ -57,15 +57,15 @@ pub fn build(b: *std.Build) void {
         .linkage = linkage,
     });
 
-    uc.addIncludePath(icu_dep.path(b.pathJoin(&.{ "icu4c", "source", "common" })));
+    uc.root_module.addIncludePath(icu_dep.path(b.pathJoin(&.{ "icu4c", "source", "common" })));
 
-    uc.addCSourceFiles(.{
+    uc.root_module.addCSourceFiles(.{
         .root = icu_dep.path(b.pathJoin(&.{ "icu4c", "source", "common" })),
         .files = icu_common_files,
         .flags = uc_flags,
     });
 
-    uc.addCSourceFiles(.{
+    uc.root_module.addCSourceFiles(.{
         .root = icu_dep.path(b.pathJoin(&.{ "icu4c", "source", "stubdata" })),
         .files = &.{"stubdata.cpp"},
         .flags = stubdata_flags,

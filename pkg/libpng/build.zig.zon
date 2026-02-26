@@ -2,7 +2,7 @@
     .name = .libpng,
     .version = "1.6.53",
     .fingerprint = 0xb7a09eb41a8526a2,
-    .minimum_zig_version = "0.15.2",
+    .minimum_zig_version = "0.17.0-dev.269+ebff43698",
     .paths = .{
         "build.zig",
         "build.zig.zon",

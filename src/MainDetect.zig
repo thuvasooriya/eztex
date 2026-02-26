@@ -28,7 +28,8 @@ const known_names = [_][]const u8{
 pub fn detect(
     allocator: std.mem.Allocator,
     files: []const []const u8,
-    read_fn: ?*const fn ([]const u8) ?[]const u8,
+    ctx: ?*anyopaque,
+    read_fn: ?*const fn (?*anyopaque, []const u8) ?[]const u8,
 ) ?[]const u8 {
     // collect root-level .tex files (no path separators)
     var tex_files: std.ArrayList([]const u8) = .empty;
@@ -52,7 +53,7 @@ pub fn detect(
         var doc_class_count: usize = 0;
 
         for (tex_files.items) |f| {
-            if (reader(f)) |content| {
+            if (reader(ctx, f)) |content| {
                 if (has_documentclass(content)) {
                     doc_class_count += 1;
                     if (doc_class_file == null) doc_class_file = f;
@@ -68,7 +69,7 @@ pub fn detect(
             for (&known_names) |name| {
                 for (tex_files.items) |f| {
                     if (std.mem.eql(u8, basename(f), name)) {
-                        if (reader(f)) |content| {
+                        if (reader(ctx, f)) |content| {
                             if (has_documentclass(content)) return f;
                         }
                     }
@@ -119,7 +120,7 @@ fn has_documentclass(content: []const u8) bool {
 test "detect single tex file" {
     const allocator = std.testing.allocator;
     const files = [_][]const u8{"paper.tex"};
-    const result = detect(allocator, &files, null);
+    const result = detect(allocator, &files, null, null);
     try std.testing.expect(result != null);
     try std.testing.expectEqualStrings("paper.tex", result.?);
 }
@@ -127,7 +128,7 @@ test "detect single tex file" {
 test "detect known name priority" {
     const allocator = std.testing.allocator;
     const files = [_][]const u8{ "chapter1.tex", "main.tex", "appendix.tex" };
-    const result = detect(allocator, &files, null);
+    const result = detect(allocator, &files, null, null);
     try std.testing.expect(result != null);
     try std.testing.expectEqualStrings("main.tex", result.?);
 }
@@ -135,7 +136,7 @@ test "detect known name priority" {
 test "detect thesis.tex over unknown" {
     const allocator = std.testing.allocator;
     const files = [_][]const u8{ "intro.tex", "thesis.tex", "conclusion.tex" };
-    const result = detect(allocator, &files, null);
+    const result = detect(allocator, &files, null, null);
     try std.testing.expect(result != null);
     try std.testing.expectEqualStrings("thesis.tex", result.?);
 }
@@ -143,7 +144,7 @@ test "detect thesis.tex over unknown" {
 test "detect alphabetically first as fallback" {
     const allocator = std.testing.allocator;
     const files = [_][]const u8{ "zebra.tex", "alpha.tex", "beta.tex" };
-    const result = detect(allocator, &files, null);
+    const result = detect(allocator, &files, null, null);
     try std.testing.expect(result != null);
     try std.testing.expectEqualStrings("alpha.tex", result.?);
 }
@@ -151,7 +152,7 @@ test "detect alphabetically first as fallback" {
 test "detect ignores subdirectory files" {
     const allocator = std.testing.allocator;
     const files = [_][]const u8{ "chapters/intro.tex", "main.tex" };
-    const result = detect(allocator, &files, null);
+    const result = detect(allocator, &files, null, null);
     try std.testing.expect(result != null);
     try std.testing.expectEqualStrings("main.tex", result.?);
 }
@@ -159,7 +160,7 @@ test "detect ignores subdirectory files" {
 test "detect no tex files returns null" {
     const allocator = std.testing.allocator;
     const files = [_][]const u8{ "README.md", "Makefile" };
-    const result = detect(allocator, &files, null);
+    const result = detect(allocator, &files, null, null);
     try std.testing.expect(result == null);
 }
 
@@ -169,7 +170,7 @@ test "detect with documentclass reader" {
 
     // mydoc.tex has \documentclass, others don't
     const reader = struct {
-        fn read(name: []const u8) ?[]const u8 {
+        fn read(_: ?*anyopaque, name: []const u8) ?[]const u8 {
             if (std.mem.eql(u8, name, "mydoc.tex")) {
                 return "\\documentclass{article}\n\\begin{document}\nHello\n\\end{document}";
             }
@@ -177,7 +178,7 @@ test "detect with documentclass reader" {
         }
     }.read;
 
-    const result = detect(allocator, &files, &reader);
+    const result = detect(allocator, &files, null, &reader);
     try std.testing.expect(result != null);
     try std.testing.expectEqualStrings("mydoc.tex", result.?);
 }

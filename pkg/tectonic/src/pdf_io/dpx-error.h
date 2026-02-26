@@ -31,6 +31,7 @@
 #include "dpx-system.h"
 
 void shut_up (int quietness);
+void dpx_reset_message_handle (void);
 
 PRINTF_FUNC(1,2) void dpx_message (const char *fmt, ...);
 PRINTF_FUNC(1,2) void dpx_warning (const char *fmt, ...);
