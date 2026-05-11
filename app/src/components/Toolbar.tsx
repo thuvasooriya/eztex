@@ -13,6 +13,8 @@ import { create_room_links } from "../lib/collab_share";
 import type { CollabStatus, CollabPermission } from "../lib/collab_provider";
 import type { LocalFolderSync, ConflictInfo } from "../lib/local_folder_sync";
 import type { WatchController } from "../lib/watch_controller";
+import type { AgentReviewStore } from "../lib/agent_review";
+import type { Awareness } from "y-protocols/awareness";
 import logo_svg from "/logo.svg?raw";
 
 type Props = {
@@ -39,6 +41,10 @@ type Props = {
   collab_status?: CollabStatus;
   collab_permission?: CollabPermission | null;
   collab_peer_count?: number;
+  agent_review_store?: AgentReviewStore;
+  awareness?: Awareness | null;
+  on_show_agent_panel?: () => void;
+  on_copy_agent_write_link?: () => void;
 };
 
 const Logo: Component = () => (
@@ -801,6 +807,22 @@ const Toolbar: Component<Props> = (props) => {
             </div>
           </AnimatedShow>
         </div>
+        <Show when={props.collab_status === "connected" && props.agent_review_store}>
+          <button
+            class="toolbar-toggle agent-indicator"
+            title="Agent panel"
+            onClick={() => props.on_show_agent_panel?.()}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 2a2 2 0 0 1 2 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 0 1 7 7h1a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-1v1a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-1H3a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1h1a7 7 0 0 1 7-7h1V5.73A2 2 0 0 1 12 2z"/>
+              <circle cx="9" cy="14" r="1" fill="currentColor"/>
+              <circle cx="15" cy="14" r="1" fill="currentColor"/>
+            </svg>
+            <Show when={props.agent_review_store && props.agent_review_store!.pending().length > 0}>
+              <span class="share-peer-badge agent-pending-badge">{props.agent_review_store!.pending().length}</span>
+            </Show>
+          </button>
+        </Show>
         <div class="compile-group" ref={compile_group_ref}>
           <AnimatedShow when={show_logs()}>
             <div class="click-interceptor" onMouseDown={dismiss_logs} />

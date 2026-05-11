@@ -208,3 +208,63 @@ export function encode_snapshot(doc: Y.Doc): Uint8Array {
 export function apply_snapshot(doc: Y.Doc, bytes: Uint8Array, origin?: unknown): void {
   Y.applyUpdate(doc, bytes, origin);
 }
+
+// agent-accessible helpers (operate directly on Y.Doc)
+
+export function list_project_paths(doc: Y.Doc): string[] {
+  const paths = doc.getMap(Y_PATHS);
+  return Array.from(paths.keys());
+}
+
+export function read_project_file(doc: Y.Doc, path: string): string | Uint8Array | null {
+  const yp = bind_y_project_doc(doc);
+  const fid = yp.paths.get(path) as FileId | undefined;
+  if (!fid) return null;
+  const meta = yp.file_meta.get(fid) as Y.Map<unknown> | undefined;
+  const kind = meta?.get("kind") as string | undefined;
+  if (kind === "binary") {
+    return null;
+  }
+  const ytext = yp.texts.get(fid);
+  return ytext?.toString() ?? null;
+}
+
+export function get_project_ytext(doc: Y.Doc, path: string): Y.Text | null {
+  const yp = bind_y_project_doc(doc);
+  const fid = yp.paths.get(path) as FileId | undefined;
+  if (!fid) return null;
+  return yp.texts.get(fid) ?? null;
+}
+
+export function create_or_get_project_ytext(doc: Y.Doc, path: string): Y.Text {
+  const yp = bind_y_project_doc(doc);
+  return get_or_create_text_file(yp, path, "");
+}
+
+export function delete_project_file(doc: Y.Doc, path: string): boolean {
+  const yp = bind_y_project_doc(doc);
+  return delete_file_entry(yp, path);
+}
+
+export function rename_project_file(doc: Y.Doc, from: string, to: string): boolean {
+  const yp = bind_y_project_doc(doc);
+  return rename_file_path(yp, from, to);
+}
+
+export function encode_state_vector_base64(doc: Y.Doc): string {
+  const sv = Y.encodeStateVector(doc);
+  const binary = String.fromCharCode(...sv);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
+}
+
+export function has_state_advanced_since(doc: Y.Doc, base_state_vector: string): boolean {
+  try {
+    let str = base_state_vector.replace(/-/g, "+").replace(/_/g, "/");
+    str += new Array(5 - (str.length % 4)).join("=");
+    const bytes = new Uint8Array(atob(str).split("").map((c) => c.charCodeAt(0)));
+    const currentSv = Y.encodeStateVector(doc);
+    return currentSv.length !== bytes.length || currentSv.some((b, i) => b !== bytes[i]);
+  } catch {
+    return true;
+  }
+}

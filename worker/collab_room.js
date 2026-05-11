@@ -65,6 +65,9 @@ export const FrameKind = {
   Awareness: 3,
 };
 
+const MAX_AGENT_FRAME_BYTES = 512 * 1024;
+const MAX_AGENT_UPDATES_PER_MINUTE = 120;
+
 export class CollabRoom {
   constructor(state, env) {
     this.ctx = state;
@@ -74,6 +77,7 @@ export class CollabRoom {
     this.room_doc = null;
     this._pending_updates = 0;
     this._persist_timer = null;
+    this._agent_update_timestamps = new Map();
 
     this.ctx.blockConcurrencyWhile(async () => {
       const meta = await this.ctx.storage.get(ROOM_META_KEY);
@@ -129,11 +133,30 @@ export class CollabRoom {
     if (message instanceof ArrayBuffer) {
       const bytes = new Uint8Array(message);
       if (bytes.length < 1) return;
+
+      if (bytes.length > MAX_AGENT_FRAME_BYTES) {
+        if (peer && peer.kind === "agent") {
+          ws.send(JSON.stringify({ type: "error", code: "frame_too_large", message: `Frame exceeds ${MAX_AGENT_FRAME_BYTES} byte limit` }));
+          return;
+        }
+      }
+
       const kind = bytes[0];
       const payload = bytes.slice(1);
 
       if (kind === FrameKind.DocUpdate) {
-        if (!peer || peer.permission !== "write") return;
+        if (!peer || peer.permission !== "write") {
+          if (peer) {
+            ws.send(JSON.stringify({ type: "error", code: "permission_denied", message: "Read-only peers cannot write" }));
+          }
+          return;
+        }
+        if (peer.kind === "agent") {
+          if (!this._check_agent_rate(peer.peer_id)) {
+            ws.send(JSON.stringify({ type: "error", code: "rate_limited", message: "Agent update rate exceeded" }));
+            return;
+          }
+        }
         this._apply_update(payload);
         this._broadcast_binary(bytes, ws);
       } else if (kind === FrameKind.SyncStep1 || kind === FrameKind.SyncStep2) {
@@ -194,6 +217,7 @@ export class CollabRoom {
       peer_id,
       permission: "write",
       identity,
+      kind: "human",
       joined_at: Date.now(),
     };
     ws.serializeAttachment(attachment);
@@ -209,7 +233,7 @@ export class CollabRoom {
   }
 
   async _handle_join(ws, msg) {
-    const { room_id, token, peer_id, identity } = msg;
+    const { room_id, token, peer_id, identity, peer_kind, client_name } = msg;
 
     if (!this.room_meta) {
       ws.close(4404, "Room not found");
@@ -226,10 +250,13 @@ export class CollabRoom {
       return;
     }
 
+    const kind = peer_kind === "agent" ? "agent" : "human";
     const attachment = {
       peer_id,
       permission,
       identity,
+      kind,
+      client_name: client_name ?? null,
       joined_at: Date.now(),
     };
     ws.serializeAttachment(attachment);
@@ -304,5 +331,23 @@ export class CollabRoom {
       await this.ctx.storage.put(ROOM_META_KEY, this.room_meta);
     }
     await this.ctx.storage.setAlarm(Date.now() + SEVEN_DAYS_MS);
+  }
+
+  _check_agent_rate(peer_id) {
+    const now = Date.now();
+    const window_start = now - 60000;
+    let timestamps = this._agent_update_timestamps.get(peer_id);
+    if (!timestamps) {
+      timestamps = [];
+      this._agent_update_timestamps.set(peer_id, timestamps);
+    }
+    while (timestamps.length > 0 && timestamps[0] < window_start) {
+      timestamps.shift();
+    }
+    if (timestamps.length >= MAX_AGENT_UPDATES_PER_MINUTE) {
+      return false;
+    }
+    timestamps.push(now);
+    return true;
   }
 }

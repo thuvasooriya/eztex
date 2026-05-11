@@ -4,6 +4,7 @@ export interface UserIdentity {
   color_hue: number;
   color: string;
   created_at: number;
+  kind?: "human" | "agent";
 }
 
 const STORAGE_KEY = "eztex_identity";

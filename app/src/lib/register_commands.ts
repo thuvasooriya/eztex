@@ -8,6 +8,7 @@ import type { LocalFolderSync } from "./local_folder_sync";
 import { write_zip } from "./zip_utils";
 import { clear_bundle_cache, reset_all_persistence } from "./project_persist";
 import type { WatchController } from "./watch_controller";
+import type { AgentReviewStore } from "./agent_review";
 import type { Accessor, Setter } from "solid-js";
 
 export type CommandDeps = {
@@ -33,6 +34,10 @@ export type CommandDeps = {
   trigger_file_upload: () => void;
   trigger_folder_upload: () => void;
   trigger_zip_upload: () => void;
+  // agent
+  agent_review_store: AgentReviewStore;
+  set_show_agent_panel: Setter<boolean>;
+  on_copy_agent_write_link: () => void;
 };
 
 let deps: CommandDeps | null = null;
@@ -463,5 +468,66 @@ export function init_commands(d: CommandDeps): void {
         set_palette_open(true);
       }
     },
+  });
+
+  // -- Agent --
+
+  register_command({
+    id: "agent.showPanel",
+    label: "Show Agent Panel",
+    description: "Open the agent collaboration panel",
+    keywords: ["agent", "collab", "review", "ai"],
+    category: "Agent",
+    action: () => deps!.set_show_agent_panel(true),
+  });
+
+  register_command({
+    id: "agent.copyWriteLink",
+    label: "Copy Agent Write Link",
+    description: "Copy a WebSocket URL with write token for agent clients",
+    keywords: ["agent", "token", "write", "link", "mcp"],
+    category: "Agent",
+    when: () => !!deps!.store.room_id(),
+    action: () => deps!.on_copy_agent_write_link(),
+  });
+
+  register_command({
+    id: "agent.acceptReview",
+    label: "Accept Next Agent Review",
+    description: "Accept the first pending agent review",
+    keywords: ["agent", "review", "accept", "apply"],
+    category: "Agent",
+    when: () => deps!.agent_review_store.pending().length > 0,
+    action: () => {
+      const pending = deps!.agent_review_store.pending();
+      if (pending.length > 0) {
+        deps!.agent_review_store.accept(pending[0].id, deps!.store.ydoc());
+      }
+    },
+  });
+
+  register_command({
+    id: "agent.rejectReview",
+    label: "Reject Next Agent Review",
+    description: "Reject the first pending agent review",
+    keywords: ["agent", "review", "reject", "discard"],
+    category: "Agent",
+    when: () => deps!.agent_review_store.pending().length > 0,
+    action: () => {
+      const pending = deps!.agent_review_store.pending();
+      if (pending.length > 0) {
+        deps!.agent_review_store.reject(pending[0].id);
+      }
+    },
+  });
+
+  register_command({
+    id: "agent.clearCompletedReviews",
+    label: "Clear Completed Agent Reviews",
+    description: "Remove accepted, rejected, and stale reviews",
+    keywords: ["agent", "review", "clear", "clean"],
+    category: "Agent",
+    when: () => deps!.agent_review_store.reviews().some((r) => r.status !== "pending"),
+    action: () => deps!.agent_review_store.clear_completed(),
   });
 }

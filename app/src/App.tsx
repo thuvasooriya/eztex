@@ -22,9 +22,11 @@ import { create_local_folder_sync, type ConflictInfo } from "./lib/local_folder_
 import { create_watch_controller } from "./lib/watch_controller";
 import { get_all_commands, IS_MAC } from "./lib/commands";
 import { init_commands } from "./lib/register_commands";
+import { create_agent_review_store, type AgentReviewStore } from "./lib/agent_review";
 import Toolbar from "./components/Toolbar";
 import CommandPalette from "./components/CommandPalette";
 import ConflictDialog from "./components/ConflictDialog";
+import AgentPanel from "./components/AgentPanel";
 
 import FilePanel from "./components/FilePanel";
 import Editor from "./components/Editor";
@@ -93,6 +95,9 @@ const App: Component = () => {
   createEffect(() => set_read_only(collab_permission() === "read"));
 
   let _collab_provider: CollabProvider | null = null;
+
+  const agent_review_store: AgentReviewStore = create_agent_review_store();
+  const [show_agent_panel, set_show_agent_panel] = createSignal(false);
 
   let _editor_view: any = undefined;
   function set_editor_view_ref(v: any) { _editor_view = v; }
@@ -173,6 +178,9 @@ const App: Component = () => {
     trigger_file_upload: () => _trigger_file_upload(),
     trigger_folder_upload: () => _trigger_folder_upload(),
     trigger_zip_upload: () => _trigger_zip_upload(),
+    agent_review_store,
+    set_show_agent_panel,
+    on_copy_agent_write_link: handle_copy_agent_write_link,
   });
 
   let _cleanup_resize: (() => void) | null = null;
@@ -447,6 +455,31 @@ const App: Component = () => {
     set_show_reconnect(false);
   }
 
+  async function handle_copy_agent_write_link() {
+    const rid = store.room_id();
+    if (!rid) return;
+    const { get_owned_room, create_share_token } = await import("./lib/collab_share");
+    const owned = get_owned_room(rid);
+    if (!owned) return;
+    const token = await create_share_token(owned.room_secret, rid, "w");
+    const ws_proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const ws_url = `${ws_proto}//${window.location.host}/collab/ws/${rid}`;
+    const link = `${ws_url}#${token}`;
+    try {
+      await navigator.clipboard.writeText(link);
+    } catch {
+      alert(`Agent write link: ${link}`);
+    }
+  }
+
+  function handle_accept_review(id: string) {
+    agent_review_store.accept(id, store.ydoc());
+  }
+
+  function handle_reject_review(id: string) {
+    agent_review_store.reject(id);
+  }
+
   return (
     <div class="app">
       <Toolbar
@@ -477,6 +510,10 @@ const App: Component = () => {
         collab_status={_collab_status()}
         collab_permission={collab_permission()}
         collab_peer_count={_collab_peer_count()}
+        agent_review_store={agent_review_store}
+        awareness={_collab_provider ? store.awareness() : null}
+        on_show_agent_panel={() => set_show_agent_panel(true)}
+        on_copy_agent_write_link={handle_copy_agent_write_link}
       />
 
       <div class={workspace_class()}>
@@ -589,6 +626,17 @@ const App: Component = () => {
       />
 
       <CommandPalette store={store} />
+
+      <Show when={show_agent_panel()}>
+        <AgentPanel
+          awareness={_collab_provider ? store.awareness() : null}
+          review_store={agent_review_store}
+          on_accept={handle_accept_review}
+          on_reject={handle_reject_review}
+          on_clear_completed={() => agent_review_store.clear_completed()}
+          on_close={() => set_show_agent_panel(false)}
+        />
+      </Show>
     </div>
   );
 };
