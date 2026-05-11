@@ -209,6 +209,42 @@ pub export fn eztex_query_index_url(out_ptr: [*]u8, out_cap: usize) usize {
     return url.len;
 }
 
+// format serial number embedded in .fmt files (must match xetex_bindings.h)
+pub const FORMAT_SERIAL = 33;
+
+// return format serial number for JS-side validation.
+pub export fn eztex_query_format_serial() u32 {
+    return FORMAT_SERIAL;
+}
+
+// build precompiled format download URL.
+// format: {bundle_base}/formats/xelatex_v{serial}_{target}_{digest_prefix}.fmt
+// where bundle_base is default_bundle_url with last path segment stripped.
+pub export fn eztex_query_format_url(out_ptr: [*]u8, out_cap: usize) usize {
+    const bundle_url = Config.default_bundle_url;
+    // find last '/' to get base URL
+    const last_slash = std.mem.lastIndexOfScalar(u8, bundle_url, '/');
+    const base = if (last_slash) |idx| bundle_url[0..idx] else bundle_url;
+
+    const digest_prefix = Config.default_bundle_digest[0..16];
+    const suffix = std.fmt.comptimePrint("/formats/xelatex_v{d}_wasm32-wasi_{s}.fmt", .{ FORMAT_SERIAL, digest_prefix });
+    const total = base.len + suffix.len;
+    if (out_cap < total) return 0;
+    @memcpy(out_ptr[0..base.len], base);
+    @memcpy(out_ptr[base.len..][0..suffix.len], suffix);
+    return total;
+}
+
+// return the OPFS cache key for format files.
+// format: formats/v{serial}_{digest_prefix}/xelatex.fmt
+pub export fn eztex_query_format_cache_key(out_ptr: [*]u8, out_cap: usize) usize {
+    const digest_prefix = Config.default_bundle_digest[0..16];
+    const key = std.fmt.comptimePrint("formats/v{d}_{s}/xelatex.fmt", .{ FORMAT_SERIAL, digest_prefix });
+    if (out_cap < key.len) return 0;
+    @memcpy(out_ptr[0..key.len], key);
+    return key.len;
+}
+
 // -- file list exports --
 
 pub export fn eztex_query_seed_init(out_ptr: [*]u8, out_cap: usize) usize {

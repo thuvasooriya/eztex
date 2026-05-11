@@ -20,6 +20,9 @@ interface EztexExports extends WebAssembly.Exports {
   eztex_query_seed_init(out_ptr: number, out_cap: number): number;
   eztex_query_seed_format(out_ptr: number, out_cap: number): number;
   eztex_query_index(name_ptr: number, name_len: number, out_offset: number, out_length: number): number;
+  eztex_query_format_serial(): number;
+  eztex_query_format_url(out_ptr: number, out_cap: number): number;
+  eztex_query_format_cache_key(out_ptr: number, out_cap: number): number;
 }
 
 let api_instance: WebAssembly.Instance | null = null;
@@ -169,6 +172,47 @@ export function query_seed_format(): string[] {
   const result = read_newline_list((p, c) => inst().eztex_query_seed_format(p, c));
   dbg("wasm_api", `query_seed_format: ${result.length} files`);
   return result;
+}
+
+let _format_serial: number | null = null;
+
+export function format_serial(): number {
+  if (_format_serial !== null) return _format_serial;
+  _format_serial = inst().eztex_query_format_serial();
+  dbg("wasm_api", `format_serial: ${_format_serial}`);
+  return _format_serial;
+}
+
+let _format_url: string | null = null;
+
+export function format_url(): string {
+  if (_format_url) return _format_url;
+  dbg("wasm_api", "format_url: calling eztex_query_format_url");
+  const out_cap = 512;
+  const out_ptr = alloc(out_cap);
+  const n = inst().eztex_query_format_url(out_ptr, out_cap);
+  const mem = new Uint8Array(inst().memory.buffer);
+  const s = decoder.decode(mem.subarray(out_ptr, out_ptr + n));
+  dealloc(out_ptr, out_cap);
+  _format_url = s;
+  dbg("wasm_api", `format_url: "${s}"`);
+  return s;
+}
+
+let _format_cache_key: string | null = null;
+
+export function format_cache_key(): string {
+  if (_format_cache_key) return _format_cache_key;
+  dbg("wasm_api", "format_cache_key: calling eztex_query_format_cache_key");
+  const out_cap = 128;
+  const out_ptr = alloc(out_cap);
+  const n = inst().eztex_query_format_cache_key(out_ptr, out_cap);
+  const mem = new Uint8Array(inst().memory.buffer);
+  const s = decoder.decode(mem.subarray(out_ptr, out_ptr + n));
+  dealloc(out_ptr, out_cap);
+  _format_cache_key = s;
+  dbg("wasm_api", `format_cache_key: "${s}"`);
+  return s;
 }
 
 // -- index lookup: resolve a filename to (offset, length) via Zig ITAR index --

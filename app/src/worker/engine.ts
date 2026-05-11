@@ -129,6 +129,7 @@ function build_wasi_fs(
 } {
   const root_map = new Map<string, WasiFile | Directory>();
   const fonts_map = new Map<string, WasiFile | Directory>();
+  const tmp_map = new Map<string, WasiFile | Directory>();
 
   // ensure directory node exists in parent_map and return it.
   // if a file already exists at this name, warn and replace it with a directory.
@@ -167,11 +168,16 @@ function build_wasi_fs(
     current.set(leaf, new WasiFile(data));
   }
 
+  // collect format files to place in tmp/ after tmp_map is created
+  const format_files: [string, Uint8Array][] = [];
+
   let cached_count = 0;
   if (cached_files) {
     for (const [name, data] of cached_files) {
       if (name.startsWith("fonts/")) {
         fonts_map.set(name.slice(6), new WasiFile(new Uint8Array(data)));
+      } else if (name === "xelatex.fmt") {
+        format_files.push([name, new Uint8Array(data)]);
       } else {
         place_file(root_map, name, new Uint8Array(data));
       }
@@ -180,8 +186,12 @@ function build_wasi_fs(
   }
 
   root_map.set("fonts", new Directory(fonts_map));
-  const tmp_map = new Map<string, WasiFile | Directory>();
   root_map.set("tmp", new Directory(tmp_map));
+
+  // place format files into tmp/ (engine expects them here)
+  for (const [name, data] of format_files) {
+    place_file(tmp_map, name, data);
+  }
 
   let restored_count = 0;
   for (const [name, data] of restored_files || []) {
@@ -484,6 +494,86 @@ function run_wasm(
   return { exit_code, root_map, tmp_map, fetch_stats: stats };
 }
 
+// -- download precompiled xelatex.fmt from server --
+
+async function download_format(): Promise<boolean> {
+  if (!wasm_api.has_instance()) return false;
+
+  const url = wasm_api.format_url();
+  const serial = wasm_api.format_serial();
+  dbg("fmt", `downloading precompiled format (serial ${serial}) from ${url}...`);
+  send_status("Downloading format...", "loading");
+
+  let data: Uint8Array | null = null;
+  let last_err: string | null = null;
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const resp = await fetch(url, { signal: AbortSignal.timeout(120000) });
+      if (!resp.ok) {
+        if (resp.status === 404) {
+          dbg("fmt", "precompiled format not available on server (404)");
+          return false;
+        }
+        last_err = `HTTP ${resp.status}`;
+        continue;
+      }
+      data = new Uint8Array(await resp.arrayBuffer());
+      last_err = null;
+      break;
+    } catch (err) {
+      last_err = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  if (last_err || !data) {
+    const offline = typeof navigator !== "undefined" && !navigator.onLine;
+    const hint = offline ? " -- you appear to be offline" : "";
+    log("fmt", "warn", `format download failed${hint}: ${last_err}`);
+    return false;
+  }
+
+  // validation: size check (2-50MB)
+  const min_size = 1024 * 1024;
+  const max_size = 50 * 1024 * 1024;
+  if (data.byteLength < min_size) {
+    log("fmt", "warn", `downloaded format too small (${format_size(data.byteLength)}), rejecting`);
+    return false;
+  }
+  if (data.byteLength > max_size) {
+    log("fmt", "warn", `downloaded format too large (${format_size(data.byteLength)}), rejecting`);
+    return false;
+  }
+
+  // validation: header magic "TTNC" and format serial
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  const magic_bytes = new Uint8Array(data.buffer, data.byteOffset, 4);
+  const magic = String.fromCharCode(...magic_bytes);
+  if (magic !== "TTNC") {
+    log("fmt", "warn", `downloaded format has invalid magic "${magic}", rejecting`);
+    return false;
+  }
+  const serial_be = view.getUint32(4, false); // big-endian (canonical format)
+  if (serial_be !== serial) {
+    log("fmt", "warn", `downloaded format serial mismatch: expected ${serial}, got ${serial_be}, rejecting`);
+    return false;
+  }
+
+  // validation: footer magic (last 4 bytes of dump)
+  const footer_offset = data.byteLength - 4;
+  const footer_magic = view.getUint32(footer_offset, false);
+  if (footer_magic !== 0x0000029a) {
+    log("fmt", "warn", `downloaded format has invalid footer 0x${footer_magic.toString(16)}, rejecting`);
+    return false;
+  }
+
+  cached_files!.set("xelatex.fmt", data);
+  const cache_key = wasm_api.format_cache_key();
+  opfs.save_format(cache_key, data);
+  log("fmt", "info", `downloaded xelatex.fmt (${format_size(data.byteLength)})`);
+  return true;
+}
+
 // -- generate xelatex.fmt via initex (fetch-on-open for missing files) --
 
 async function generate_format(): Promise<boolean> {
@@ -506,7 +596,8 @@ async function generate_format(): Promise<boolean> {
     if (fetch_stats.fetches > 0) {
       dbg("fmt", `fetched ${fetch_stats.fetches} files on-demand (${format_size(fetch_stats.fetch_bytes)}), ${fetch_stats.cache_hits} cache hits`);
     }
-    opfs.cache_file("xelatex.fmt", fmt_copy);
+    const cache_key = wasm_api.format_cache_key();
+    opfs.save_format(cache_key, fmt_copy);
     return true;
   }
 
@@ -618,9 +709,18 @@ export async function init(): Promise<void> {
   }
 
   // step 6: load xelatex.fmt from OPFS if available
-  await opfs.load_format(cached_files);
+  const fmt_cache_key = wasm_api.format_cache_key();
+  await opfs.load_format(cached_files, fmt_cache_key);
 
-  // step 7: generate format if not available
+  // step 7: if no cached format, try downloading precompiled format from network
+  if (!cached_files.has("xelatex.fmt")) {
+    const downloaded = await download_format();
+    if (downloaded) {
+      dbg("fmt", "using downloaded precompiled format");
+    }
+  }
+
+  // step 8: generate format if still not available (download failed or unavailable)
   if (!cached_files.has("xelatex.fmt")) {
     dbg("fmt", "no format file found, generating on first launch...");
     const fmt_keys = wasm_api.query_seed_format();
@@ -711,7 +811,8 @@ export async function compile(user_files: ProjectFiles, main?: string, mode: Com
       const fmt_copy = new Uint8Array(fmt_inode.data);
       cached_files.set("xelatex.fmt", fmt_copy);
       dbg("fmt", `generated xelatex.fmt (${format_size(fmt_copy.byteLength)}), caching to OPFS`);
-      opfs.cache_file("xelatex.fmt", fmt_copy);
+      const cache_key = wasm_api.format_cache_key();
+      opfs.save_format(cache_key, fmt_copy);
     }
 
     const elapsed = ((performance.now() - t0) / 1000).toFixed(2);

@@ -242,16 +242,43 @@ export async function write_all(
   send_cache_status("cached", `${files.size} files saved`);
 }
 
-// load xelatex.fmt from OPFS if available
-export async function load_format(cached_files: Map<string, Uint8Array>): Promise<void> {
+// load xelatex.fmt from OPFS if available.
+// uses versioned cache key (e.g. "formats/v33_c16079/xelatex.fmt").
+// falls back to legacy root "xelatex.fmt" for migration.
+export async function load_format(
+  cached_files: Map<string, Uint8Array>,
+  cache_key: string,
+): Promise<void> {
   if (!supported || cached_files.has("xelatex.fmt")) return;
   try {
     const dir = await get_dir();
-    const fmt_data = await read(dir, "xelatex.fmt");
+
+    // try versioned path first
+    let fmt_data = await read_nested(dir, cache_key);
+    let source = cache_key;
+
+    // fall back to legacy root path for migration
+    if (!fmt_data) {
+      fmt_data = await read(dir, "xelatex.fmt");
+      source = "xelatex.fmt (legacy)";
+    }
+
     if (fmt_data) {
       cached_files.set("xelatex.fmt", fmt_data);
-      dbg("cache", `loaded xelatex.fmt from OPFS (${format_size(fmt_data.byteLength)})`);
+      dbg("cache", `loaded xelatex.fmt from OPFS (${format_size(fmt_data.byteLength)}) [${source}]`);
     }
+  } catch {
+    // non-critical
+  }
+}
+
+// save xelatex.fmt to OPFS under a versioned cache key.
+export async function save_format(cache_key: string, data: Uint8Array): Promise<void> {
+  if (!supported) return;
+  try {
+    const dir = await get_dir();
+    await write_nested(dir, cache_key, data);
+    dbg("cache", `saved xelatex.fmt to OPFS [${cache_key}]`);
   } catch {
     // non-critical
   }

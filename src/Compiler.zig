@@ -475,7 +475,7 @@ fn setup_world(io: Io, engine: EngineApi.Engine, format: Format, verbose: bool, 
         }
     } else {
         clear_format_memory(world);
-        run_initex(io, world, engine, format, true);
+        run_initex(io, world, engine, format, false);
         _ = load_generated_format(io, world, engine, format, key);
     }
 }

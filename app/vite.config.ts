@@ -15,6 +15,17 @@ export default defineConfig({
         ],
         navigateFallback: '/index.html',
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
+        // Don't let Service Worker intercept cross-origin worker requests
+        // (bundle, index, format files are fetched from external worker URL)
+        runtimeCaching: [
+          {
+            urlPattern: /^https:\/\/eztex-cors-proxy\.thuva\.workers\.dev\/.*/,
+            handler: 'NetworkOnly',
+            options: {
+              cacheName: 'external-worker',
+            },
+          },
+        ],
       },
       manifest: false, // use public/manifest.webmanifest directly
     }),

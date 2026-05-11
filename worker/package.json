@@ -1,0 +1,20 @@
+{
+  "name": "eztex-cors-proxy",
+  "version": "1.0.0",
+  "description": "CORS proxy for Tectonic LaTeX bundle server",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail",
+    "generate-format": "bun run generate-wasm-format.ts",
+    "upload-format": "bun run upload-r2.ts assets/xelatex_v33_wasm32-wasi_c1607948053fc5d4.fmt formats/xelatex_v33_wasm32-wasi_c1607948053fc5d4.fmt",
+    "upload": "bun run upload-r2.ts",
+    "verify-r2": "bun run verify-r2.ts"
+  },
+  "dependencies": {
+    "@bjorn3/browser_wasi_shim": "0.4.2"
+  },
+  "devDependencies": {
+    "wrangler": "^3.0.0"
+  }
+}

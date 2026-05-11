@@ -1,0 +1,11 @@
+name = "eztex-cors-proxy"
+main = "index.js"
+compatibility_date = "2024-01-01"
+
+[[r2_buckets]]
+binding = "ASSETS"
+bucket_name = "eztex-assets"
+preview_bucket_name = "eztex-assets"
+
+# Optional: custom domain
+# routes = [{ pattern = "packages.eztex.dev/*", zone_name = "eztex.dev" }]
