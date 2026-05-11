@@ -1156,5 +1156,53 @@ https://eztex.app/c/room123#w.signature_here
 
 ---
 
+---
+
+## 14. Development Workflow (NEW)
+
+### Wave-Based Iterative Implementation
+
+**Process**:
+1. **gpt55 (Task ID: `ses_1e9362f08ffe78oVgw2ByjnB5r`)** writes wave requirements, constraints, examples, and rules
+2. **glm** executes the implementation wave
+3. **gpt55** reviews the completed implementation
+4. **Repeat** until all waves are complete
+
+**Supporting Subagents**:
+| Subagent | Role | When to Use |
+|----------|------|-------------|
+| **gpt55** | Primary architect & planner | Requirements, design decisions, reviews |
+| **glm** | High-confidence implementation | Code execution, wave completion |
+| **scout** | Read-only file search | Finding files, patterns, edit surfaces |
+| **researcher** | Research & information gathering | External docs, libraries, strategies |
+| **builder** | Batch editing & refactoring | Low-effort, high-repetition changes |
+
+**Task ID Reference**:
+- `ses_1e9362f08ffe78oVgw2ByjnB5r` - gpt55 (use for all planning/consultation/review)
+
+**Wave Definitions**:
+
+| Wave | Scope | Est. Duration | Dependencies |
+|------|-------|---------------|--------------|
+| **Wave 0** | Yjs CRDT foundation + Editor refactor | 2-3 weeks | None |
+| **Wave 1** | Multi-project OPFS persistence | 2 weeks | Wave 0 |
+| **Wave 2** | Same-tab sync (BroadcastChannel) | 3-5 days | Wave 0 |
+| **Wave 3** | Remote collab (WS + DO relay) | 4-6 weeks | Wave 1, 2 |
+| **Wave 4** | Agent integration (WS collaborator) | 3-4 weeks | Wave 3 |
+| **Wave 5** | Local folder bidirectional sync | 2-3 weeks | Wave 0 |
+| **Wave 6** | Pierre libraries + polish | 2-3 weeks | Wave 4 |
+| **Wave 7** | Advanced features (MCP, WebRTC, etc.) | 4-8 weeks | Wave 4 |
+
+**Implementation Rules**:
+1. Each wave produces working, testable code
+2. No wave breaks existing functionality
+3. Review gate before proceeding to next wave
+4. gpt55 defines acceptance criteria for each wave
+5. All code follows existing project style (AGENTS.md rules)
+6. Tests required for collaboration-critical paths
+
+---
+
 *Document version: 2026-05-11*
 *Collaboration section added based on comprehensive analysis of Zed architecture, Yjs CRDT evaluation, Cloudflare Durable Objects research, Pierre libraries assessment, and agent integration design.*
+*Development workflow documented for wave-based iterative implementation.*
