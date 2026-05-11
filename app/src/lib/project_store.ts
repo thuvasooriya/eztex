@@ -42,7 +42,8 @@ const ORIGIN_REMOTE_BC = "eztex:remote-broadcast";
 const ORIGIN_LOAD = "eztex:load";
 
 export function create_project_store() {
-  let pid: ProjectId = "";
+  let _pid: ProjectId = "";
+  const [project_id_signal, set_project_id_signal] = createSignal<ProjectId>("");
   const ydoc = new Y.Doc();
   let yp = bind_y_project_doc(ydoc);
   const awareness = new Awareness(ydoc);
@@ -93,8 +94,8 @@ export function create_project_store() {
   }
 
   function broadcast_update(update: Uint8Array) {
-    if (!bc || !pid) return;
-    bc.postMessage({ type: "sync", sender_id, project_id: pid, update });
+    if (!bc || !_pid) return;
+    bc.postMessage({ type: "sync", sender_id, project_id: _pid, update });
   }
 
   ydoc.on("update", (update: Uint8Array, origin: unknown) => {
@@ -109,33 +110,35 @@ export function create_project_store() {
   });
 
   function init(id: ProjectId) {
-    pid = id;
-    const channel_name = `eztex:yjs:${pid}`;
+    _pid = id;
+    set_project_id_signal(id);
+    const channel_name = `eztex:yjs:${_pid}`;
     bc = new BroadcastChannel(channel_name);
 
     bc.onmessage = (e: MessageEvent) => {
       const msg = e.data;
       if (!msg || msg.sender_id === sender_id) return;
-      if (msg.project_id !== pid) return;
+      if (msg.project_id !== _pid) return;
 
       if (msg.type === "sync") {
         Y.applyUpdate(ydoc, msg.update, ORIGIN_REMOTE_BC);
       } else if (msg.type === "hello") {
         const state = Y.encodeStateAsUpdate(ydoc);
-        bc!.postMessage({ type: "state-response", sender_id, project_id: pid, update: state });
+        bc!.postMessage({ type: "state-response", sender_id, project_id: _pid, update: state });
       } else if (msg.type === "state-request") {
         const state = Y.encodeStateAsUpdate(ydoc);
-        bc!.postMessage({ type: "state-response", sender_id, project_id: pid, update: state });
+        bc!.postMessage({ type: "state-response", sender_id, project_id: _pid, update: state });
       } else if (msg.type === "state-response") {
         Y.applyUpdate(ydoc, msg.update, ORIGIN_REMOTE_BC);
       }
     };
 
-    bc.postMessage({ type: "hello", sender_id, project_id: pid });
-    bc.postMessage({ type: "state-request", sender_id, project_id: pid });
+    bc.postMessage({ type: "hello", sender_id, project_id: _pid });
+    bc.postMessage({ type: "state-request", sender_id, project_id: _pid });
   }
 
   function file_names(): string[] {
+    revision(); // track ydoc changes for solidjs reactivity
     const mf = main_file();
     return list_paths(yp).sort((a, b) => {
       if (a === mf) return -1;
@@ -299,6 +302,7 @@ export function create_project_store() {
         const fid = create_file_id();
         if (content instanceof Uint8Array) {
           binary_cache.set(path, content);
+          _dirty_blob_paths.add(path);
           const meta_map = new Y.Map<unknown>();
           meta_map.set("id", fid);
           meta_map.set("path", path);
@@ -442,7 +446,7 @@ export function create_project_store() {
   }
 
   async function flush_dirty_blobs(): Promise<void> {
-    if (!pid || _dirty_blob_paths.size === 0) return;
+    if (!_pid || _dirty_blob_paths.size === 0) return;
     const paths = Array.from(_dirty_blob_paths);
     _dirty_blob_paths.clear();
     for (const path of paths) {
@@ -450,18 +454,18 @@ export function create_project_store() {
       if (!bytes) continue;
       const hash = await compute_hash(bytes);
       create_binary_file_ref(yp, path, hash, bytes.length);
-      await persist_blob(pid, hash, bytes);
+      await persist_blob(_pid, hash, bytes);
     }
   }
 
   async function load_persisted_blobs(): Promise<void> {
-    if (!pid) return;
+    if (!_pid) return;
     for (const path of list_paths(yp)) {
       const fid = get_file_id(yp, path);
       if (!fid) continue;
       const hash = yp.blob_refs.get(fid) as string | undefined;
       if (hash && !binary_cache.has(path)) {
-        const bytes = await load_persisted_blob(pid, hash);
+        const bytes = await load_persisted_blob(_pid, hash);
         if (bytes) binary_cache.set(path, bytes);
       }
     }
@@ -505,7 +509,7 @@ export function create_project_store() {
     on_change,
     init_from_template,
     // new Yjs API
-    project_id: () => pid,
+    project_id: project_id_signal,
     ydoc: () => ydoc,
     awareness: () => awareness,
     room_id,

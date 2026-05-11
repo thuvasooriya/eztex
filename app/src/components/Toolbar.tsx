@@ -8,7 +8,7 @@ import { is_binary, is_text_ext } from "../lib/project_store";
 import type { ProjectFiles } from "../lib/project_store";
 import { save_pdf, clear_bundle_cache, reset_all_persistence } from "../lib/project_persist";
 import type { ProjectCatalogEntry } from "../lib/project_persist";
-import { list_projects, rename_project, delete_project, get_project_url, create_project } from "../lib/project_manager";
+import { list_projects, rename_project, delete_project, get_project_url, create_project, set_current_project, duplicate_project } from "../lib/project_manager";
 import { create_room_links } from "../lib/collab_share";
 import type { CollabStatus, CollabPermission } from "../lib/collab_provider";
 import type { LocalFolderSync, ConflictInfo } from "../lib/local_folder_sync";
@@ -16,6 +16,7 @@ import type { WatchController } from "../lib/watch_controller";
 import type { AgentReviewStore } from "../lib/agent_review";
 import type { Awareness } from "y-protocols/awareness";
 import logo_svg from "/logo.svg?raw";
+import { show_input_modal, show_confirm_modal, show_choice_modal, show_alert_modal } from "../lib/modal_store";
 
 type Props = {
   store: ProjectStore;
@@ -176,6 +177,12 @@ const Toolbar: Component<Props> = (props) => {
     void refresh_projects();
   });
 
+  // refresh project name when project_id changes (handles init + switches)
+  createEffect(() => {
+    props.store.project_id();
+    void refresh_projects();
+  });
+
   // close project menu on click outside
   createEffect(() => {
     if (!show_project_menu()) return;
@@ -225,20 +232,35 @@ const Toolbar: Component<Props> = (props) => {
 
   function handle_switch_project(id: string) {
     set_show_project_menu(false);
-    window.location.href = get_project_url(id);
+    set_current_project(id).then(() => {
+      window.location.href = get_project_url(id);
+    });
   }
 
   async function handle_new_project() {
-    const name = prompt("Project name:", "Untitled Project");
+    const all = await list_projects();
+    const default_name = all.length === 0 ? "Demo Project" : "Untitled Project";
+    const name = await show_input_modal({
+      title: "New Project",
+      message: "Enter a name for your new project.",
+      placeholder: "Project name",
+      default_value: default_name,
+    });
     if (name === null) return;
     const id = await create_project(name || undefined);
+    await set_current_project(id);
     window.location.href = get_project_url(id);
   }
 
   async function handle_rename_project() {
     const id = props.store.project_id();
     if (!id) return;
-    const name = prompt("Rename project:", current_project_name());
+    const name = await show_input_modal({
+      title: "Rename Project",
+      message: `Rename "${current_project_name()}"`,
+      placeholder: "New name",
+      default_value: current_project_name(),
+    });
     if (name === null || !name.trim()) return;
     await rename_project(id, name.trim());
     set_current_project_name(name.trim());
@@ -249,16 +271,33 @@ const Toolbar: Component<Props> = (props) => {
     const id = props.store.project_id();
     if (!id) return;
     const name = current_project_name();
-    if (!confirm(`Delete "${name}"? This cannot be undone.`)) return;
+    const confirmed = await show_confirm_modal({
+      title: "Delete Project",
+      message: `Delete "${name}"? This cannot be undone.`,
+      confirm_label: "Delete",
+      danger: true,
+    });
+    if (!confirmed) return;
     set_show_project_menu(false);
     await delete_project(id);
     const all = await list_projects();
     if (all.length > 0) {
-      window.location.href = get_project_url(all[0].id);
+      set_current_project(all[0].id).then(() => {
+        window.location.href = get_project_url(all[0].id);
+      });
     } else {
       const new_id = await create_project();
       window.location.href = get_project_url(new_id);
     }
+  }
+
+  async function handle_duplicate_project() {
+    const id = props.store.project_id();
+    if (!id) return;
+    set_show_project_menu(false);
+    const new_id = await duplicate_project(id);
+    await set_current_project(new_id);
+    window.location.href = get_project_url(new_id);
   }
 
   // close info modal on Escape
@@ -376,18 +415,30 @@ const Toolbar: Component<Props> = (props) => {
     return false;
   }
 
-  // merge uploaded files into existing project with conflict detection
-  // if the project only has default content, replace entirely (load_files)
-  // otherwise, merge non-conflicting files and report conflicts
-  function merge_or_load(incoming: ProjectFiles) {
-    const existing_names = props.store.file_names();
-    const is_default_project = existing_names.length === 1 && existing_names[0] === "main.tex";
+  // prompt user for how to handle imported files
+  async function merge_or_load(incoming: ProjectFiles) {
+    const choice = await show_choice_modal({
+      title: "Import Files",
+      message: "How would you like to import these files?",
+      options: [
+        { label: "Create new project", value: "new", variant: "primary" },
+        { label: "Merge with current", value: "merge", variant: "default" },
+        { label: "Replace current", value: "replace", variant: "danger" },
+      ],
+    });
 
-    if (is_default_project) {
+    if (choice === "new") {
+      handle_import_as_new_project(incoming);
+      return;
+    }
+
+    if (choice === "replace") {
       props.store.load_files(incoming);
       return;
     }
 
+    // choice === "merge" or null (cancelled):
+    if (choice === null) return;
     const non_conflicting: ProjectFiles = {};
     const conflicts: ConflictInfo[] = [];
 
@@ -417,16 +468,66 @@ const Toolbar: Component<Props> = (props) => {
     }
   }
 
+  async function handle_import_as_new_project(incoming: ProjectFiles) {
+    const id = await create_project("Imported Project");
+    await set_current_project(id);
+
+    // save snapshot with the imported files
+    const { create_y_project_doc, encode_snapshot: enc_snap, get_or_create_text_file, create_binary_file_ref, set_project_metadata } = await import("../lib/y_project_doc");
+    const { save_ydoc_snapshot, save_blob, compute_hash } = await import("../lib/project_persist");
+    const yp = create_y_project_doc(id, "Imported Project");
+    for (const [path, content] of Object.entries(incoming)) {
+      if (content instanceof Uint8Array) {
+        const hash = await compute_hash(content);
+        await save_blob(id, hash, content);
+        create_binary_file_ref(yp, path, hash, content.length);
+      } else {
+        get_or_create_text_file(yp, path, content);
+      }
+    }
+
+    // detect entry file
+    let detected_main = "main.tex";
+    const tex_files = Object.entries(incoming).filter(([name, content]) =>
+      typeof content === "string" && name.endsWith(".tex")
+    );
+    const files_with_documentclass = tex_files.filter(([_, content]) =>
+      (content as string).includes("\\documentclass")
+    );
+    if (files_with_documentclass.length === 1) {
+      detected_main = files_with_documentclass[0][0];
+    } else if (files_with_documentclass.length > 1) {
+      const choice = await show_choice_modal({
+        title: "Select Entry File",
+        message: "Which .tex file is the main entry point for compilation?",
+        options: files_with_documentclass.map(([name]) => ({
+          label: name,
+          value: name,
+          variant: "default" as const,
+        })),
+      });
+      if (choice) detected_main = choice;
+    } else if (tex_files.length > 0) {
+      detected_main = tex_files[0][0];
+    }
+    set_project_metadata(yp, { main_file: detected_main });
+
+    await save_ydoc_snapshot(id, enc_snap(yp.doc));
+    yp.doc.destroy();
+
+    window.location.href = get_project_url(id);
+  }
+
   async function handle_zip_upload(e: Event) {
     const input = e.target as HTMLInputElement;
     const file = input.files?.[0];
     if (!file) return;
     try {
       const files = await read_zip(file);
-      if (Object.keys(files).length === 0) { alert("No .tex files found in zip."); return; }
+      if (Object.keys(files).length === 0) { await show_alert_modal({ title: "Import Error", message: "No .tex files found in zip." }); return; }
       merge_or_load(files);
     } catch (err: any) {
-      alert("Failed to read zip: " + err.message);
+      await show_alert_modal({ title: "Import Error", message: "Failed to read zip: " + err.message });
     }
     input.value = "";
   }
@@ -448,7 +549,7 @@ const Toolbar: Component<Props> = (props) => {
         files[name] = await file.text();
       }
     }
-    if (Object.keys(files).length === 0) { alert("No supported files found in folder."); return; }
+    if (Object.keys(files).length === 0) { await show_alert_modal({ title: "Import Error", message: "No supported files found in folder." }); return; }
     merge_or_load(files);
     input.value = "";
   }
@@ -468,7 +569,7 @@ const Toolbar: Component<Props> = (props) => {
         files[name] = await file.text();
       }
     }
-    if (Object.keys(files).length === 0) { alert("No supported files found."); return; }
+    if (Object.keys(files).length === 0) { await show_alert_modal({ title: "Import Error", message: "No supported files found." }); return; }
     merge_or_load(files);
     input.value = "";
   }
@@ -484,7 +585,13 @@ const Toolbar: Component<Props> = (props) => {
   }
 
   async function handle_reset() {
-    if (!confirm("Reset everything? This deletes all project files and cached bundles.")) return;
+    const confirmed = await show_confirm_modal({
+      title: "Reset Everything",
+      message: "This will delete all project files and cached bundles. This cannot be undone.",
+      confirm_label: "Reset",
+      danger: true,
+    });
+    if (!confirmed) return;
     set_show_info_modal(false);
     worker_client.clear_cache();
     await reset_all_persistence();
@@ -610,12 +717,34 @@ const Toolbar: Component<Props> = (props) => {
               </svg>
               New Project
             </button>
+            <button class="upload-dropdown-item" onClick={() => { set_show_project_menu(false); zip_input_ref?.click(); }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13.659 22H18a2 2 0 0 0 2-2V8a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 14 2H6a2 2 0 0 0-2 2v11.5"/><path d="M14 2v5a1 1 0 0 0 1 1h5"/><path d="M8 12v-1"/><path d="M8 18v-2"/><path d="M8 7V6"/><circle cx="8" cy="20" r="2"/></svg>
+              Import Project
+            </button>
+            <Show when={props.folder_sync?.is_supported() && !props.folder_sync?.state().active}>
+              <button class="upload-dropdown-item" onClick={() => { set_show_project_menu(false); props.folder_sync?.open_folder(); }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 20H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H20a2 2 0 0 1 2 2v.5"/><path d="M12 10v4h4"/><path d="m12 14 1.535-1.605a5 5 0 0 1 8 1.5"/><path d="M22 22v-4h-4"/><path d="m22 18-1.535 1.605a5 5 0 0 1-8-1.5"/></svg>
+                Open Folder
+              </button>
+            </Show>
+            <button class="upload-dropdown-item" onClick={() => { set_show_project_menu(false); handle_download_zip(); }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z"/><path d="M12 22V12"/><polyline points="3.29 7 12 12 20.71 7"/><path d="m7.5 4.27 9 5.15"/></svg>
+              Export Project
+            </button>
+            <div class="upload-dropdown-divider" />
             <button class="upload-dropdown-item" onClick={handle_rename_project}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
                 <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
               </svg>
               Rename
+            </button>
+            <button class="upload-dropdown-item" onClick={handle_duplicate_project}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="9" y="9" width="13" height="13" rx="2" />
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+              </svg>
+              Duplicate
             </button>
             <button class="upload-dropdown-item danger-item" onClick={handle_delete_project}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -664,19 +793,6 @@ const Toolbar: Component<Props> = (props) => {
                     </svg>
                     Upload Folder
                   </button>
-                  <button class="upload-dropdown-item" onClick={() => { zip_input_ref?.click(); set_show_upload_menu(false); }}>
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13.659 22H18a2 2 0 0 0 2-2V8a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 14 2H6a2 2 0 0 0-2 2v11.5"/><path d="M14 2v5a1 1 0 0 0 1 1h5"/><path d="M8 12v-1"/><path d="M8 18v-2"/><path d="M8 7V6"/><circle cx="8" cy="20" r="2"/>
-                    </svg>
-                    Import Zip
-                  </button>
-                  <Show when={props.folder_sync?.is_supported() && !props.folder_sync?.state().active}>
-                    <div class="upload-dropdown-divider" />
-                    <button class="upload-dropdown-item" onClick={() => { props.folder_sync?.open_folder(); set_show_upload_menu(false); }}>
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-folder-sync-icon lucide-folder-sync"><path d="M9 20H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H20a2 2 0 0 1 2 2v.5"/><path d="M12 10v4h4"/><path d="m12 14 1.535-1.605a5 5 0 0 1 8 1.5"/><path d="M22 22v-4h-4"/><path d="m22 18-1.535 1.605a5 5 0 0 1-8-1.5"/>
-                    </svg>
-                      Open Folder
-                    </button>
-                  </Show>
                 </div>
               </AnimatedShow>
             </div>
@@ -701,10 +817,6 @@ const Toolbar: Component<Props> = (props) => {
                       Download PDF
                     </button>
                   </Show>
-                  <button class="upload-dropdown-item" onClick={() => { handle_download_zip(); set_show_download_menu(false); }}>
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z"/><path d="M12 22V12"/><polyline points="3.29 7 12 12 20.71 7"/><path d="m7.5 4.27 9 5.15"/></svg>
-                    Export Zip
-                  </button>
                 </div>
               </AnimatedShow>
             </div>
@@ -825,7 +937,9 @@ const Toolbar: Component<Props> = (props) => {
         </Show>
         <div class="compile-group" ref={compile_group_ref}>
           <AnimatedShow when={show_logs()}>
-            <div class="click-interceptor" onMouseDown={dismiss_logs} />
+            <Show when={!logs_pinned()}>
+              <div class="click-interceptor" onMouseDown={dismiss_logs} />
+            </Show>
             <div class="compile-logs-popover">
               <div class="popover-action-bar">
                 <button

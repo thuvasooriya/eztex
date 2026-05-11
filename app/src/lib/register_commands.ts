@@ -10,6 +10,7 @@ import { clear_bundle_cache, reset_all_persistence } from "./project_persist";
 import type { WatchController } from "./watch_controller";
 import type { AgentReviewStore } from "./agent_review";
 import type { Accessor, Setter } from "solid-js";
+import { show_input_modal, show_confirm_modal, show_alert_modal } from "./modal_store";
 
 export type CommandDeps = {
   store: ProjectStore;
@@ -142,7 +143,7 @@ export function init_commands(d: CommandDeps): void {
 
   register_command({
     id: "file.upload_zip",
-    label: "Import ZIP",
+    label: "Import Project",
     description: "Import a project from a ZIP archive",
     keywords: ["upload", "archive"],
     category: "File",
@@ -294,7 +295,7 @@ export function init_commands(d: CommandDeps): void {
 
   register_command({
     id: "project.download_zip",
-    label: "Export Project as ZIP",
+    label: "Export Project",
     description: "Download the entire project as a ZIP file",
     keywords: ["save", "archive", "backup"],
     category: "Project",
@@ -342,11 +343,20 @@ export function init_commands(d: CommandDeps): void {
     keywords: ["create", "blank"],
     category: "Project",
     action: async () => {
-      const name = prompt("Project name:", "Untitled Project");
+      const { list_projects } = await import("./project_manager");
+      const projects = await list_projects();
+      const default_name = projects.length === 0 ? "Demo Project" : "Untitled Project";
+      const name = await show_input_modal({
+        title: "New Project",
+        message: "Enter a name for your new project.",
+        placeholder: "Project name",
+        default_value: default_name,
+      });
       if (name === null) return;
       const { create_project } = await import("./project_manager");
-      const { get_project_url } = await import("./project_manager");
+      const { get_project_url, set_current_project } = await import("./project_manager");
       const id = await create_project(name || undefined);
+      await set_current_project(id);
       window.location.href = get_project_url(id);
     },
   });
@@ -361,13 +371,22 @@ export function init_commands(d: CommandDeps): void {
       const pid = deps!.store.project_id();
       if (!pid) return;
       const { create_room_links } = await import("./collab_share");
-      const links = await create_room_links(pid, "Untitled Project", window.location.origin);
+      const { get_project } = await import("./project_manager");
+      const entry = await get_project(pid);
+      const project_name = entry?.name ?? "Untitled Project";
+      const links = await create_room_links(pid, project_name, window.location.origin);
       deps!.store.set_room_id(links.room_id);
       try {
         await navigator.clipboard.writeText(links.write_url);
-        alert("Write link copied to clipboard!");
+        await show_alert_modal({
+          title: "Share Link Copied",
+          message: "The write link has been copied to your clipboard.",
+        });
       } catch {
-        alert(`Write link: ${links.write_url}`);
+        await show_alert_modal({
+          title: "Share Link",
+          message: `Write link: ${links.write_url}`,
+        });
       }
     },
   });
@@ -389,7 +408,13 @@ export function init_commands(d: CommandDeps): void {
     keywords: ["clear", "destroy", "wipe"],
     category: "Project",
     action: async () => {
-      if (!confirm("Reset everything? This deletes all project files and cached bundles.")) return;
+      const confirmed = await show_confirm_modal({
+        title: "Reset Everything",
+        message: "This will delete all project files and cached bundles. This cannot be undone.",
+        confirm_label: "Reset",
+        danger: true,
+      });
+      if (!confirmed) return;
       worker_client.clear_cache();
       await reset_all_persistence();
       window.location.reload();

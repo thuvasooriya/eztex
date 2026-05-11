@@ -9,6 +9,7 @@ import {
   load_synctex,
   load_catalog,
   load_ydoc_snapshot,
+  load_project_manifest,
   migrate_v1_default_project,
   save_ydoc_project,
   save_project,
@@ -21,6 +22,7 @@ import { get_or_create_identity } from "./lib/identity";
 import { create_local_folder_sync, type ConflictInfo } from "./lib/local_folder_sync";
 import { create_watch_controller } from "./lib/watch_controller";
 import { get_all_commands, IS_MAC } from "./lib/commands";
+import { show_alert_modal } from "./lib/modal_store";
 import { init_commands } from "./lib/register_commands";
 import { create_agent_review_store, type AgentReviewStore } from "./lib/agent_review";
 import Toolbar from "./components/Toolbar";
@@ -34,6 +36,7 @@ import Preview from "./components/Preview";
 import DiagnosticPill from "./components/DiagnosticPill";
 import ResizeHandle from "./components/ResizeHandle";
 import Onboarding, { is_onboarded } from "./components/Onboarding";
+import Modal from "./components/Modal";
 
 const NARROW_BREAKPOINT = 900;
 const TOO_NARROW_BREAKPOINT = 600;
@@ -230,7 +233,21 @@ const App: Component = () => {
     if (snapshot && snapshot.length > 0) {
       store.apply_ydoc_snapshot(snapshot);
       loaded_from_snapshot = true;
+      if (store.file_names().length === 0) {
+        loaded_from_snapshot = false;
+      } else {
+        // sync main_file signal from restored ydoc metadata
+        const meta = store.ydoc().getMap("meta");
+        const saved_main = meta.get("main_file") as string | undefined;
+        if (saved_main) {
+          store.set_main_file(saved_main);
+        }
+      }
     }
+
+    // check if this is a v2 project (exists in catalog)
+    const catalog = await load_catalog();
+    const is_v2_project = catalog.projects.some(p => p.id === project_id);
 
     const [pdf_bytes, synctex_text] = await Promise.all([
       load_pdf(project_id),
@@ -239,18 +256,30 @@ const App: Component = () => {
 
     let pdf_restored = false;
     if (!loaded_from_snapshot) {
-      const saved = await load_project();
-      if (saved && Object.keys(saved.files).length > 0) {
-        store.load_files(saved.files);
-        if (saved.main_file && saved.main_file in saved.files) {
-          store.set_main_file(saved.main_file);
-          store.set_current_file(saved.main_file);
-        }
-      } else {
+      if (is_v2_project) {
+        // v2 project with no files - load template for fresh projects
         await store.init_from_template();
+      } else {
+        // v1 fallback only for legacy projects not in catalog
+        const saved = await load_project();
+        if (saved && Object.keys(saved.files).length > 0) {
+          store.load_files(saved.files);
+          if (saved.main_file && saved.main_file in saved.files) {
+            store.set_main_file(saved.main_file);
+            store.set_current_file(saved.main_file);
+          }
+        } else {
+          await store.init_from_template();
+        }
       }
     } else {
       await store.load_persisted_blobs();
+      // restore main_file from manifest if not already set from snapshot
+      const manifest = await load_project_manifest(project_id);
+      if (manifest?.main_file && store.file_names().includes(manifest.main_file)) {
+        store.set_main_file(manifest.main_file);
+        store.set_current_file(manifest.main_file);
+      }
     }
 
     if (pdf_bytes && pdf_bytes.length > 0) {
@@ -468,7 +497,10 @@ const App: Component = () => {
     try {
       await navigator.clipboard.writeText(link);
     } catch {
-      alert(`Agent write link: ${link}`);
+      await show_alert_modal({
+        title: "Agent Write Link",
+        message: link,
+      });
     }
   }
 
@@ -637,6 +669,7 @@ const App: Component = () => {
           on_close={() => set_show_agent_panel(false)}
         />
       </Show>
+      <Modal />
     </div>
   );
 };

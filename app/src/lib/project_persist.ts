@@ -170,7 +170,8 @@ export async function create_fresh_project(name?: string): Promise<ProjectId> {
   const project_id = create_project_id();
   const catalog = await load_catalog();
   const now = Date.now();
-  const project_name = name?.trim() || "Untitled Project";
+  const is_first = catalog.projects.length === 0;
+  const project_name = name?.trim() || (is_first ? "Demo Project" : "Untitled Project");
   catalog.current_project_id = project_id;
   catalog.projects.push({
     id: project_id,
@@ -191,6 +192,9 @@ export async function create_fresh_project(name?: string): Promise<ProjectId> {
     blobs_dir: "blobs",
     outputs_dir: "outputs",
   });
+  const yp = create_y_project_doc(project_id, project_name);
+  await save_ydoc_snapshot(project_id, encode_snapshot(yp.doc));
+  yp.doc.destroy();
   return project_id;
 }
 

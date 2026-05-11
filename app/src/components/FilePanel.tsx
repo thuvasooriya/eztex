@@ -2,6 +2,7 @@ import { type Component, For, Show, createSignal, createEffect, onCleanup, type 
 import type { ProjectStore } from "../lib/project_store";
 import { is_binary } from "../lib/project_store";
 import { build_tree, auto_suffix, type TreeNode } from "../lib/file_tree";
+import { show_alert_modal } from "../lib/modal_store";
 import type { LocalFolderSync } from "../lib/local_folder_sync";
 import { worker_client } from "../lib/worker_client";
 import FolderSyncStatus from "./FolderSyncStatus";
@@ -446,10 +447,10 @@ const FilePanel: Component<Props> = (props) => {
               <button class="ctx-menu-item" onClick={() => { start_rename(menu().file); set_ctx_menu(null); }}>
                 Rename
               </button>
-              <button class="ctx-menu-item danger" onClick={() => {
+              <button class="ctx-menu-item danger" onClick={async () => {
                 const all = props.store.file_names().filter(f => f.startsWith(menu().file));
                 if (all.some(f => f === props.store.main_file())) {
-                  alert("Cannot delete folder containing the entry file.");
+                  await show_alert_modal({ title: "Cannot Delete", message: "Cannot delete folder containing the entry file." });
                   return;
                 }
                 for (const f of all) props.store.remove_file(f);

@@ -5,6 +5,8 @@ import {
   load_project_manifest,
   save_project_manifest,
   create_fresh_project as _create_fresh_project,
+  load_ydoc_snapshot,
+  save_ydoc_snapshot,
 } from "./project_persist";
 
 export async function list_projects(): Promise<ProjectCatalogEntry[]> {
@@ -71,4 +73,64 @@ export function get_project_url(id: ProjectId): string {
   const url = new URL(window.location.href);
   url.searchParams.set("project", id);
   return url.pathname + url.search;
+}
+
+export async function duplicate_project(source_id: ProjectId, name?: string): Promise<ProjectId> {
+  const catalog = await load_catalog();
+  const source = catalog.projects.find((p) => p.id === source_id);
+  if (!source) throw new Error("Source project not found");
+
+  const { create_project_id } = await import("./y_project_doc");
+  const new_id = create_project_id();
+  const now = Date.now();
+  const new_name = name?.trim() || `${source.name} copy`;
+
+  const snapshot = await load_ydoc_snapshot(source_id);
+  if (snapshot) {
+    await save_ydoc_snapshot(new_id, snapshot);
+  }
+
+  const source_manifest = await load_project_manifest(source_id);
+  if (source_manifest) {
+    await save_project_manifest(new_id, {
+      ...source_manifest,
+      id: new_id,
+      name: new_name,
+      created_at: now,
+      updated_at: now,
+    });
+  }
+
+  if (snapshot && source_manifest) {
+    try {
+      const root = await navigator.storage.getDirectory();
+      const projects_dir_handle = await root.getDirectoryHandle("eztex-projects");
+      const projects = await projects_dir_handle.getDirectoryHandle("projects");
+      const src_dir = await projects.getDirectoryHandle(source_id);
+      const blobs_dir = await src_dir.getDirectoryHandle("blobs");
+      const new_dir = await projects.getDirectoryHandle(new_id, { create: true });
+      const new_blobs_dir = await new_dir.getDirectoryHandle("blobs", { create: true });
+      for await (const [blob_name] of (blobs_dir as any).entries()) {
+        const fh = await blobs_dir.getFileHandle(blob_name);
+        const file = await fh.getFile();
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        const wh = await new_blobs_dir.getFileHandle(blob_name, { create: true });
+        const w = await wh.createWritable();
+        await w.write(bytes);
+        await w.close();
+      }
+    } catch { /* blobs copy best-effort */ }
+  }
+
+  catalog.current_project_id = new_id;
+  catalog.projects.push({
+    id: new_id,
+    name: new_name,
+    main_file: source.main_file,
+    created_at: now,
+    updated_at: now,
+  });
+  await save_catalog(catalog);
+
+  return new_id;
 }

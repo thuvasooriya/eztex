@@ -21,9 +21,24 @@ const DiagnosticPill: Component<Props> = (props) => {
 
   function handle_diag_click(d: Diagnostic): void {
     if (!d.file || !d.line) return;
-    props.store.set_current_file(d.file);
-    worker_client.request_goto(d.file, d.line);
-    set_expanded(false);
+    let target = d.file;
+    if (props.store.files[target] === undefined) {
+      if (!target.endsWith(".tex")) {
+        const with_tex = target + ".tex";
+        if (props.store.files[with_tex] !== undefined) {
+          target = with_tex;
+        } else {
+          return;
+        }
+      } else {
+        return;
+      }
+    }
+    props.store.set_current_file(target);
+    worker_client.request_goto(target, d.line);
+    if (!pinned()) {
+      set_expanded(false);
+    }
   }
 
   function handle_copy_diags() {
@@ -62,7 +77,9 @@ const DiagnosticPill: Component<Props> = (props) => {
     <Show when={diags().length > 0}>
       <div class="diag-pill-container" ref={pill_ref}>
         <Show when={expanded()}>
-          <div class="click-interceptor" onMouseDown={dismiss_diags} />
+          <Show when={!pinned()}>
+            <div class="click-interceptor" onMouseDown={dismiss_diags} />
+          </Show>
           <div class="diag-pill-popover">
             <div class="diag-pill-header">
               <span>Diagnostics</span>
