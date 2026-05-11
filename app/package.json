@@ -20,8 +20,13 @@
     "@replit/codemirror-vim": "^6.3.0",
     "codemirror": "^6.0.2",
     "jszip": "^3.10.1",
+    "lib0": "^0.2.114",
     "pdfjs-dist": "^5.4.624",
-    "solid-js": "^1.9.10"
+    "solid-js": "^1.9.10",
+    "y-codemirror.next": "^0.3.5",
+    "y-indexeddb": "^9.0.12",
+    "y-protocols": "^1.0.6",
+    "yjs": "^13.6.27"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",

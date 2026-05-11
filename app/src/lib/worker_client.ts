@@ -7,6 +7,7 @@ import type { Diagnostic } from "../worker/protocol";
 import { decompress_gzip, parse_synctex, sync_to_pdf, sync_to_code } from "./synctex";
 import type { PdfSyncObject, SyncToPdfResult } from "./synctex";
 import { save_synctex as persist_synctex } from "./project_persist";
+import type { ProjectId } from "./y_project_doc";
 
 export type CompileMode = "preview" | "full";
 
@@ -50,6 +51,7 @@ function request_goto(file: string, line: number): void {
 
 let worker: Worker | null = null;
 let prev_pdf_url: string | null = null;
+let _project_id: ProjectId | null = null;
 
 // imperative compile-done callbacks -- supports multiple subscribers
 const _on_compile_done_cbs: Array<() => void> = [];
@@ -125,7 +127,7 @@ function handle_message(e: MessageEvent) {
               set_synctex_data(parsed);
               // persist immediately -- on_compile_done fires before this .then() resolves,
               // so saving from there would read stale/null synctex_text()
-              persist_synctex(text).catch(() => {});
+              persist_synctex(text, _project_id ?? undefined).catch(() => {});
             }
           })
           .catch(() => {});
@@ -244,6 +246,7 @@ function do_sync_to_code(page: number, x: number, y: number): void {
 
 export const worker_client = {
   init: init_worker,
+  set_project_id: (id: ProjectId | null) => { _project_id = id; },
   compile,
   compile_and_wait,
   cancel_and_recompile,

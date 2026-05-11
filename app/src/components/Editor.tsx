@@ -1,7 +1,7 @@
 import { type Component, onMount, onCleanup, createEffect, on, Show, createSignal, createMemo } from "solid-js";
-import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightSpecialChars, drawSelection } from "@codemirror/view";
+import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightSpecialChars, drawSelection, type ViewUpdate } from "@codemirror/view";
 import { EditorState, Compartment } from "@codemirror/state";
-import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
+import { defaultKeymap, indentWithTab } from "@codemirror/commands";
 import {
   StreamLanguage,
   syntaxHighlighting,
@@ -13,6 +13,8 @@ import {
 import { stex } from "@codemirror/legacy-modes/mode/stex";
 import { tags } from "@lezer/highlight";
 import { setDiagnostics as cmSetDiagnostics, type Diagnostic as CmDiagnostic } from "@codemirror/lint";
+import { yCollab, yUndoManagerKeymap } from "y-codemirror.next";
+import * as Y from "yjs";
 import type { ProjectStore } from "../lib/project_store";
 import { is_binary } from "../lib/project_store";
 import { worker_client } from "../lib/worker_client";
@@ -157,10 +159,18 @@ const tokyo_night_highlight = HighlightStyle.define([
 const Editor: Component<Props> = (props) => {
   let container_ref: HTMLDivElement | undefined;
   let view: EditorView | undefined;
-  let updating_from_outside = false;
 
-  // vim mode compartment -- reconfigured when props.vim_enabled changes
   const vim_compartment = new Compartment();
+  const undo_managers = new Map<string, Y.UndoManager>();
+
+  function get_undo_manager(path: string, ytext: Y.Text): Y.UndoManager {
+    let manager = undo_managers.get(path);
+    if (!manager) {
+      manager = new Y.UndoManager(ytext);
+      undo_managers.set(path, manager);
+    }
+    return manager;
+  }
 
   const current_is_binary = () => is_binary(props.store.current_file());
 
@@ -176,7 +186,6 @@ const Editor: Component<Props> = (props) => {
     on(
       () => ({ file: props.store.current_file(), mime: image_mime() }),
       ({ file, mime }) => {
-        // revoke previous blob url
         const prev = image_url();
         if (prev) URL.revokeObjectURL(prev);
         set_image_url(null);
@@ -195,16 +204,12 @@ const Editor: Component<Props> = (props) => {
     if (url) URL.revokeObjectURL(url);
   });
 
-  // debounced forward sync: cursor position -> PDF highlight
   let sync_timer: ReturnType<typeof setTimeout> | undefined;
-  // suppression flag: prevents forward sync when cursor is moved by reverse sync (goto_request)
   let suppress_forward_sync = false;
 
-  onMount(() => {
-    if (!container_ref) return;
-
-    const state = EditorState.create({
-      doc: props.store.get_text_content(props.store.current_file()) ?? "",
+  function create_editor_state(ytext: Y.Text, undoManager: Y.UndoManager): EditorState {
+    return EditorState.create({
+      doc: ytext.toString(),
       extensions: [
         lineNumbers(),
         highlightActiveLine(),
@@ -213,46 +218,48 @@ const Editor: Component<Props> = (props) => {
         bracketMatching(),
         indentOnInput(),
         foldGutter(),
-        history(),
         StreamLanguage.define(stex),
         syntaxHighlighting(tokyo_night_highlight),
         tokyo_night_theme,
-        keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
+        yCollab(ytext, null, { undoManager }),
+        keymap.of([...defaultKeymap, ...yUndoManagerKeymap, indentWithTab]),
         vim_compartment.of([]),
         EditorView.updateListener.of((update) => {
-          if (update.docChanged && !updating_from_outside) {
-            props.store.update_content(
-              props.store.current_file(),
-              update.state.doc.toString(),
-            );
-          }
-          // forward sync on cursor movement (selection change or doc change)
           if (update.selectionSet || update.docChanged) {
-            if (sync_timer !== undefined) clearTimeout(sync_timer);
-            sync_timer = setTimeout(() => {
-              if (suppress_forward_sync) {
-                if (import.meta.env.DEV) console.debug("[synctex:forward] suppressed (triggered by reverse sync goto)");
-                return;
-              }
-              const line = update.state.doc.lineAt(update.state.selection.main.head).number;
-              if (import.meta.env.DEV) console.debug("[synctex:forward] cursor debounce fired", { file: props.store.current_file(), line });
-              worker_client.sync_forward(props.store.current_file(), line);
-            }, 300);
+            schedule_forward_synctex(update);
           }
         }),
         EditorView.lineWrapping,
       ],
     });
+  }
+
+  function schedule_forward_synctex(update: ViewUpdate) {
+    if (sync_timer !== undefined) clearTimeout(sync_timer);
+    sync_timer = setTimeout(() => {
+      if (suppress_forward_sync) {
+        return;
+      }
+      const line = update.state.doc.lineAt(update.state.selection.main.head).number;
+      worker_client.sync_forward(props.store.current_file(), line);
+    }, 300);
+  }
+
+  onMount(() => {
+    if (!container_ref) return;
+
+    const file = props.store.current_file();
+    const ytext = props.store.get_ytext(file);
+    const undoManager = get_undo_manager(file, ytext);
+    const state = create_editor_state(ytext, undoManager);
 
     view = new EditorView({
       state,
       parent: container_ref,
     });
 
-    // expose editor view to App for command registry access
     props.on_editor_view(view);
 
-    // apply initial vim mode if enabled
     if (props.vim_enabled) {
       import("@replit/codemirror-vim").then(({ vim }) => {
         if (view) view.dispatch({ effects: vim_compartment.reconfigure(vim()) });
@@ -260,7 +267,6 @@ const Editor: Component<Props> = (props) => {
     }
   });
 
-  // reconfigure vim mode when toggled
   createEffect(
     on(
       () => props.vim_enabled,
@@ -279,20 +285,25 @@ const Editor: Component<Props> = (props) => {
 
   createEffect(
     on(
-      () => [props.store.current_file(), props.store.revision()] as const,
-      ([file]) => {
+      () => props.store.current_file(),
+      (file) => {
         if (!view) return;
-        updating_from_outside = true;
-        const content = current_is_binary() ? "" : (props.store.get_text_content(file) ?? "");
-        view.dispatch({
-          changes: { from: 0, to: view.state.doc.length, insert: content },
-        });
-        updating_from_outside = false;
+        if (current_is_binary()) return;
+
+        const ytext = props.store.get_ytext(file);
+        const undoManager = get_undo_manager(file, ytext);
+
+        view.setState(create_editor_state(ytext, undoManager));
+
+        if (props.vim_enabled) {
+          import("@replit/codemirror-vim").then(({ vim }) => {
+            if (view) view.dispatch({ effects: vim_compartment.reconfigure(vim()) });
+          });
+        }
       },
     ),
   );
 
-  // push external diagnostics into CodeMirror when they change
   createEffect(() => {
     if (!view) return;
     const diags = worker_client.diagnostics();
@@ -314,26 +325,20 @@ const Editor: Component<Props> = (props) => {
     view.dispatch(cmSetDiagnostics(view.state, cm_diags));
   });
 
-  // jump to line when goto_request fires
   createEffect(() => {
     const req = worker_client.goto_request();
     if (!req || !view) return;
     const file_matches = req.file === props.store.current_file();
     if (!file_matches) return;
-    if (import.meta.env.DEV) console.debug("[synctex:reverse] goto_request effect", { file: req.file, line: req.line });
     const line_num = Math.min(req.line, view.state.doc.lines);
     const line_obj = view.state.doc.line(line_num);
-    // suppress forward sync so dispatching the cursor change doesn't trigger
-    // a feedback loop: reverse sync -> cursor move -> forward sync -> highlight
     suppress_forward_sync = true;
     view.dispatch({
       selection: { anchor: line_obj.from },
       scrollIntoView: true,
     });
     view.focus();
-    // clear suppression after the debounce window (300ms) plus a small margin
     setTimeout(() => { suppress_forward_sync = false; }, 400);
-    // clear after consuming so stale state doesn't accumulate
     worker_client.clear_goto();
   });
 

@@ -3,7 +3,18 @@ import AnimatedShow from "./components/AnimatedShow";
 import { worker_client } from "./lib/worker_client";
 import { parse_synctex } from "./lib/synctex";
 import { create_project_store } from "./lib/project_store";
-import { save_project, load_project, load_pdf, load_synctex } from "./lib/project_persist";
+import {
+  load_project,
+  load_pdf,
+  load_synctex,
+  load_catalog,
+  load_ydoc_snapshot,
+  migrate_v1_default_project,
+  save_ydoc_project,
+  save_project,
+  create_fresh_project,
+} from "./lib/project_persist";
+import { get_project, set_current_project } from "./lib/project_manager";
 import { create_local_folder_sync, type ConflictInfo } from "./lib/local_folder_sync";
 import { create_watch_controller } from "./lib/watch_controller";
 import { get_all_commands, IS_MAC } from "./lib/commands";
@@ -60,33 +71,26 @@ const App: Component = () => {
   const [is_resizing, set_is_resizing] = createSignal(false);
   const [layout_switching, set_layout_switching] = createSignal(false);
 
-  // persist panel visibility to localStorage
   createEffect(() => localStorage.setItem(FILES_VISIBLE_KEY, String(files_visible())));
   createEffect(() => localStorage.setItem(PREVIEW_VISIBLE_KEY, String(preview_visible())));
 
-  // onboarding state
   const [show_onboarding, set_show_onboarding] = createSignal(!is_onboarded());
+  const [project_ready, set_project_ready] = createSignal(false);
 
-  // lifted from Toolbar: compile logs visibility
   const [show_logs, set_show_logs] = createSignal(false);
-  // lifted from Toolbar: info modal visibility
   const [show_info_modal, set_show_info_modal] = createSignal(false);
 
-  // vim mode state (persisted to localStorage)
   const [vim_enabled, set_vim_enabled] = createSignal(localStorage.getItem(VIM_ENABLED_KEY) === "true");
   createEffect(() => localStorage.setItem(VIM_ENABLED_KEY, String(vim_enabled())));
 
-  // editor view getter -- set by Editor component via prop callback
   let _editor_view: any = undefined;
   function set_editor_view_ref(v: any) { _editor_view = v; }
   function get_editor_view() { return _editor_view; }
 
-  // file input triggers -- set by Toolbar via prop callbacks
   let _trigger_file_upload = () => {};
   let _trigger_folder_upload = () => {};
   let _trigger_zip_upload = () => {};
 
-  // watch controller (lifted from Toolbar so commands can access it)
   const watch = create_watch_controller({
     get_files: () => store.files,
     get_main: () => store.main_file(),
@@ -94,23 +98,17 @@ const App: Component = () => {
     compile: (req) => worker_client.compile(req),
     cancel_and_recompile: (req) => worker_client.cancel_and_recompile(req),
   });
-  // wire imperative watch callbacks
   store.on_change(() => watch.notify_change());
   worker_client.on_compile_done(() => watch.notify_compile_done());
   onCleanup(() => watch.cleanup());
 
-  // conflict dialog state
   const [conflicts, set_conflicts] = createSignal<ConflictInfo[]>([]);
   const show_conflicts = () => conflicts().length > 0;
 
-  // reconnect banner state
   const [show_reconnect, set_show_reconnect] = createSignal(false);
   const [reconnect_folder_name, set_reconnect_folder_name] = createSignal("");
 
-  // in narrow mode, file panel is always overlay
   const files_overlay = () => is_narrow() && files_visible();
-
-  // horizontal split in narrow mode requires swap (too narrow for side-by-side)
   const use_swap_mode = () => is_narrow() && split_dir() === "horizontal";
 
   function toggle_files() {
@@ -137,14 +135,12 @@ const App: Component = () => {
     }, 100);
   }
 
-  // handle sync results -- check for conflicts
   async function handle_sync_result(result: Awaited<ReturnType<typeof folder_sync.sync_now>>) {
     if (result.status === "conflict") {
       set_conflicts(result.conflicts);
     }
   }
 
-  // initialize command registry
   init_commands({
     store,
     folder_sync,
@@ -168,8 +164,6 @@ const App: Component = () => {
     trigger_zip_upload: () => _trigger_zip_upload(),
   });
 
-  // track event listeners for cleanup -- registered synchronously so SolidJS
-  // can associate the onCleanup with the reactive root (before any awaits)
   let _cleanup_resize: (() => void) | null = null;
   let _cleanup_keydown: (() => void) | null = null;
   onCleanup(() => {
@@ -178,22 +172,66 @@ const App: Component = () => {
   });
 
   onMount(async () => {
-    // start engine loading in parallel with OPFS reads
     worker_client.init();
 
-    // wait for both project + PDF + synctex restore before registering on_ready
-    const [saved, pdf_bytes, synctex_text] = await Promise.all([load_project(), load_pdf(), load_synctex()]);
+    let project_id: string | null = null;
+    const url_params = new URLSearchParams(window.location.search);
+    const url_project_id = url_params.get("project");
+
+    if (url_project_id) {
+      const exists = await get_project(url_project_id);
+      if (exists) {
+        project_id = url_project_id;
+        await set_current_project(project_id);
+      }
+    }
+
+    if (!project_id) {
+      try {
+        const catalog = await load_catalog();
+        if (catalog.current_project_id) {
+          project_id = catalog.current_project_id;
+        } else {
+          project_id = await migrate_v1_default_project();
+        }
+      } catch {}
+    }
+
+    if (!project_id) {
+      project_id = await create_fresh_project();
+    }
+
+    store.init(project_id);
+    worker_client.set_project_id(project_id);
+
+    let loaded_from_snapshot = false;
+    const snapshot = await load_ydoc_snapshot(project_id);
+    if (snapshot && snapshot.length > 0) {
+      store.apply_ydoc_snapshot(snapshot);
+      loaded_from_snapshot = true;
+    }
+
+    const [pdf_bytes, synctex_text] = await Promise.all([
+      load_pdf(project_id),
+      load_synctex(project_id),
+    ]);
 
     let pdf_restored = false;
-    if (saved && Object.keys(saved.files).length > 0) {
-      store.load_files(saved.files);
-      if (saved.main_file && saved.main_file in saved.files) {
-        store.set_main_file(saved.main_file);
-        store.set_current_file(saved.main_file);
+    if (!loaded_from_snapshot) {
+      const saved = await load_project();
+      if (saved && Object.keys(saved.files).length > 0) {
+        store.load_files(saved.files);
+        if (saved.main_file && saved.main_file in saved.files) {
+          store.set_main_file(saved.main_file);
+          store.set_current_file(saved.main_file);
+        }
+      } else {
+        await store.init_from_template();
       }
     } else {
-      await store.init_from_template();
+      await store.load_persisted_blobs();
     }
+
     if (pdf_bytes && pdf_bytes.length > 0) {
       const url = URL.createObjectURL(new Blob([pdf_bytes.buffer as ArrayBuffer], { type: "application/pdf" }));
       worker_client.restore_pdf_url(url);
@@ -201,19 +239,14 @@ const App: Component = () => {
       pdf_restored = true;
     }
     if (synctex_text) {
-      if (import.meta.env.DEV) console.log("[synctex:restore] loaded synctex text from OPFS, length:", synctex_text.length);
       const parsed = parse_synctex(synctex_text);
       if (parsed) {
-        if (import.meta.env.DEV) console.log("[synctex:restore] parsed synctex, pages:", parsed.numberPages, "files:", Object.keys(parsed.files).length);
         worker_client.restore_synctex(parsed);
-      } else {
-        if (import.meta.env.DEV) console.log("[synctex:restore] parse_synctex returned undefined");
       }
-    } else {
-      if (import.meta.env.DEV) console.log("[synctex:restore] no synctex text in OPFS");
     }
 
-    // auto-compile when engine becomes ready (if no PDF was restored)
+    set_project_ready(true);
+
     worker_client.on_ready(() => {
       if (!pdf_restored) {
         const files = { ...store.files };
@@ -221,24 +254,27 @@ const App: Component = () => {
       }
     });
 
-    // auto-save project on changes (debounced) -- disabled when folder sync is active
     let save_timer: ReturnType<typeof setTimeout> | undefined;
     store.on_change(() => {
-      if (folder_sync.state().active) return; // folder sync handles persistence
+      if (folder_sync.state().active) return;
       if (save_timer !== undefined) clearTimeout(save_timer);
-      save_timer = setTimeout(() => {
-        save_project(store.files, store.main_file()).catch(() => {});
+      save_timer = setTimeout(async () => {
+        const pid = store.project_id();
+        if (pid) {
+          await store.flush_dirty_blobs();
+          save_ydoc_project(pid, store.encode_ydoc_snapshot(), store.main_file()).catch(() => {});
+        } else {
+          save_project(store.files, store.main_file()).catch(() => {});
+        }
       }, 1000);
     });
 
-    // sync trigger: compile complete
     worker_client.on_compile_done(() => {
       if (folder_sync.state().active && folder_sync.state().dirty_files.size > 0) {
         folder_sync.sync_now().then(handle_sync_result);
       }
     });
 
-    // check for stored folder handle and show reconnect banner
     if (folder_sync.is_supported()) {
       const has_handle = await folder_sync.has_stored_handle();
       if (has_handle) {
@@ -264,22 +300,17 @@ const App: Component = () => {
     _cleanup_keydown = () => document.removeEventListener("keydown", handle_keydown);
   });
 
-  // unified keybinding dispatch: match KeyboardEvent against registered command keybindings
   function handle_keydown(e: KeyboardEvent) {
-    // platform-aware modifier: on Mac, "Cmd" means metaKey; on non-Mac, "Cmd" means ctrlKey
     const mod = IS_MAC ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey;
 
-    // ignore non-modified keys when focused in an input/textarea
     const tag = (e.target as HTMLElement)?.tagName;
     if (!mod && (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT")) return;
     const shift = e.shiftKey;
     const key = e.key;
 
-    // build a keybinding string matching our format
     const parts: string[] = [];
     if (mod) parts.push("Cmd");
     if (shift) parts.push("Shift");
-    // normalize key name
     let key_name = key;
     if (key === "Enter") key_name = "Enter";
     else if (key === "/") key_name = "/";
@@ -288,7 +319,6 @@ const App: Component = () => {
     parts.push(key_name);
     const binding = parts.join("+");
 
-    // find matching command
     const cmds = get_all_commands();
     for (const cmd of cmds) {
       if (!cmd.keybinding) continue;
@@ -300,7 +330,6 @@ const App: Component = () => {
       }
     }
 
-    // handle F-keys (no modifier prefix)
     if (key === "F8" && !mod) {
       const fk_binding = shift ? "Shift+F8" : "F8";
       for (const cmd of cmds) {
@@ -314,7 +343,6 @@ const App: Component = () => {
     }
   }
 
-  // sync trigger: file switch -- sync the file being switched away from
   let prev_file = store.current_file();
   createEffect(() => {
     const current = store.current_file();
@@ -327,13 +355,10 @@ const App: Component = () => {
     prev_file = current;
   });
 
-  // when a goto is requested (reverse sync or diagnostic click), switch to the target file first
   createEffect(() => {
     const req = worker_client.goto_request();
     if (!req) return;
     const file_exists = store.files[req.file] !== undefined;
-    // only switch to files that actually exist in the project -- synctex can reference
-    // LaTeX internals (.cls, .sty) that aren't in the user's file store
     if (!file_exists) return;
     if (req.file !== store.current_file()) {
       store.set_current_file(req.file);
@@ -405,7 +430,6 @@ const App: Component = () => {
       />
 
       <div class={workspace_class()}>
-        {/* file panel: inline in wide mode, always rendered for transitions */}
         <Show when={!is_narrow()}>
           <div
             class={`file-panel-wrapper panel-wrapper panel-box ${!files_visible() ? "panel-collapsed" : ""}`}
@@ -423,14 +447,15 @@ const App: Component = () => {
 
         <div class={`split-container split-${split_dir()}`}>
           <div class="editor-wrapper panel-box">
-            <Editor
-              store={store}
-              vim_enabled={vim_enabled()}
-              on_editor_view={set_editor_view_ref}
-            />
+            <Show when={project_ready()}>
+              <Editor
+                store={store}
+                vim_enabled={vim_enabled()}
+                on_editor_view={set_editor_view_ref}
+              />
+            </Show>
           </div>
 
-          {/* Wide mode OR narrow+vertical stacked: show preview with resize handle */}
           <Show when={!use_swap_mode()}>
             <ResizeHandle
               direction={split_dir() === "vertical" ? "vertical" : "horizontal"}
@@ -449,7 +474,6 @@ const App: Component = () => {
             </div>
           </Show>
 
-          {/* Narrow swap mode (side-by-side/horizontal in narrow): full swap */}
           <Show when={use_swap_mode() && show_preview_in_narrow()}>
             <div class="preview-wrapper panel-wrapper panel-box" style={{ flex: 1 }}>
               <Preview />
@@ -458,7 +482,6 @@ const App: Component = () => {
         </div>
       </div>
 
-      {/* file panel overlay for narrow screens */}
       <AnimatedShow when={files_overlay()}>
         <div class="file-panel-wrapper overlay-mode panel-wrapper panel-box">
           <FilePanel store={store} folder_sync={folder_sync} />
@@ -478,7 +501,6 @@ const App: Component = () => {
         </div>
       </Show>
 
-      {/* conflict resolution dialog */}
       <AnimatedShow when={show_conflicts()}>
         <ConflictDialog
           conflicts={conflicts()}

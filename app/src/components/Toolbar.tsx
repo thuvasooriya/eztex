@@ -7,6 +7,8 @@ import type { ProjectStore } from "../lib/project_store";
 import { is_binary, is_text_ext } from "../lib/project_store";
 import type { ProjectFiles } from "../lib/project_store";
 import { save_pdf, clear_bundle_cache, reset_all_persistence } from "../lib/project_persist";
+import type { ProjectCatalogEntry } from "../lib/project_persist";
+import { list_projects, rename_project, delete_project, get_project_url, create_project } from "../lib/project_manager";
 import type { LocalFolderSync, ConflictInfo } from "../lib/local_folder_sync";
 import type { WatchController } from "../lib/watch_controller";
 import logo_svg from "/logo.svg?raw";
@@ -47,6 +49,9 @@ const Toolbar: Component<Props> = (props) => {
 
   const [show_upload_menu, set_show_upload_menu] = createSignal(false);
   const [show_download_menu, set_show_download_menu] = createSignal(false);
+  const [show_project_menu, set_show_project_menu] = createSignal(false);
+  const [projects, set_projects] = createSignal<ProjectCatalogEntry[]>([]);
+  const [current_project_name, set_current_project_name] = createSignal("");
   // show_info_modal and show_logs are now received via props (lifted to App)
   const show_info_modal = () => props.show_info_modal;
   const set_show_info_modal = props.set_show_info_modal;
@@ -56,6 +61,7 @@ const Toolbar: Component<Props> = (props) => {
   const [logs_auto_opened, set_logs_auto_opened] = createSignal(false);
   let compile_group_ref: HTMLDivElement | undefined;
   let log_ref: HTMLDivElement | undefined;
+  let project_btn_ref: HTMLDivElement | undefined;
 
   // cache state (moved from CachePill)
   const [cache_bytes, set_cache_bytes] = createSignal(0);
@@ -144,6 +150,68 @@ const Toolbar: Component<Props> = (props) => {
     document.addEventListener("click", handler);
     onCleanup(() => document.removeEventListener("click", handler));
   });
+
+  // load projects list
+  async function refresh_projects() {
+    const all = await list_projects();
+    set_projects(all);
+    const current = all.find((p) => p.id === props.store.project_id());
+    set_current_project_name(current?.name ?? "Untitled Project");
+  }
+
+  onMount(() => {
+    void refresh_projects();
+  });
+
+  // close project menu on click outside
+  createEffect(() => {
+    if (!show_project_menu()) return;
+    const handler = (e: MouseEvent) => {
+      if (project_btn_ref && !project_btn_ref.contains(e.target as Node)) {
+        set_show_project_menu(false);
+      }
+    };
+    document.addEventListener("click", handler);
+    onCleanup(() => document.removeEventListener("click", handler));
+  });
+
+  function handle_switch_project(id: string) {
+    set_show_project_menu(false);
+    window.location.href = get_project_url(id);
+  }
+
+  async function handle_new_project() {
+    const name = prompt("Project name:", "Untitled Project");
+    if (name === null) return;
+    const id = await create_project(name || undefined);
+    window.location.href = get_project_url(id);
+  }
+
+  async function handle_rename_project() {
+    const id = props.store.project_id();
+    if (!id) return;
+    const name = prompt("Rename project:", current_project_name());
+    if (name === null || !name.trim()) return;
+    await rename_project(id, name.trim());
+    set_current_project_name(name.trim());
+    await refresh_projects();
+  }
+
+  async function handle_delete_project() {
+    const id = props.store.project_id();
+    if (!id) return;
+    const name = current_project_name();
+    if (!confirm(`Delete "${name}"? This cannot be undone.`)) return;
+    set_show_project_menu(false);
+    await delete_project(id);
+    const all = await list_projects();
+    if (all.length > 0) {
+      window.location.href = get_project_url(all[0].id);
+    } else {
+      const new_id = await create_project();
+      window.location.href = get_project_url(new_id);
+    }
+  }
 
   // close info modal on Escape
   createEffect(() => {
@@ -235,7 +303,7 @@ const Toolbar: Component<Props> = (props) => {
         .then((r) => r.arrayBuffer())
         .then((buf) => {
           const bytes = new Uint8Array(buf);
-          save_pdf(bytes).catch(() => {});
+          save_pdf(bytes, props.store.project_id() || undefined).catch(() => {});
           if (props.folder_sync?.state().active) {
             props.folder_sync.write_pdf(bytes).catch(() => {});
           }
@@ -461,7 +529,57 @@ const Toolbar: Component<Props> = (props) => {
             </div>
           </div>
         </AnimatedShow>
-        <div class="toolbar-divider" />
+        <div class="upload-menu-wrapper" ref={project_btn_ref}>
+        <button
+          class="toolbar-project-btn"
+          title="Switch project"
+          onClick={() => set_show_project_menu(v => !v)}
+        >
+          <span class="toolbar-project-name">{current_project_name()}</span>
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
+        </button>
+        <AnimatedShow when={show_project_menu()}>
+          <div class="upload-dropdown project-dropdown">
+            <For each={projects()}>
+              {(project) => (
+                <button
+                  class={`upload-dropdown-item ${project.id === props.store.project_id() ? "active-project" : ""}`}
+                  onClick={() => handle_switch_project(project.id)}
+                >
+                  <span class="project-name">{project.name}</span>
+                </button>
+              )}
+            </For>
+            <Show when={projects().length > 0}>
+              <div class="upload-dropdown-divider" />
+            </Show>
+            <button class="upload-dropdown-item" onClick={handle_new_project}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="12" y1="5" x2="12" y2="19" />
+                <line x1="5" y1="12" x2="19" y2="12" />
+              </svg>
+              New Project
+            </button>
+            <button class="upload-dropdown-item" onClick={handle_rename_project}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+              </svg>
+              Rename
+            </button>
+            <button class="upload-dropdown-item danger-item" onClick={handle_delete_project}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="3 6 5 6 21 6" />
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+              </svg>
+              Delete
+            </button>
+          </div>
+        </AnimatedShow>
+      </div>
+      <div class="toolbar-divider" />
         <Show when={props.on_toggle_files}>
           <button
             class={`toolbar-toggle ${props.files_visible ? "active" : ""}`}

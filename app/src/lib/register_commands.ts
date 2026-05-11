@@ -331,6 +331,22 @@ export function init_commands(d: CommandDeps): void {
   });
 
   register_command({
+    id: "project.new",
+    label: "New Project",
+    description: "Create a new empty project",
+    keywords: ["create", "blank"],
+    category: "Project",
+    action: async () => {
+      const name = prompt("Project name:", "Untitled Project");
+      if (name === null) return;
+      const { create_project } = await import("./project_manager");
+      const { get_project_url } = await import("./project_manager");
+      const id = await create_project(name || undefined);
+      window.location.href = get_project_url(id);
+    },
+  });
+
+  register_command({
     id: "project.open_folder",
     label: "Open Local Folder",
     description: "Connect a local folder for file sync",
