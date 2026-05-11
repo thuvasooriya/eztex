@@ -564,6 +564,7 @@ body {
   display: flex;
   align-items: center;
   padding: 5px 8px;
+  padding-left: calc(8px + var(--tree-depth, 0) * 14px);
   margin: 1px 6px;
   cursor: pointer;
   transition: background var(--transition);
@@ -611,6 +612,24 @@ body {
 
 .file-item.active .file-name {
   color: var(--fg);
+}
+
+.folder-icon {
+  flex-shrink: 0;
+  color: var(--fg-muted);
+}
+
+.folder-chevron {
+  margin-left: auto;
+}
+
+.folder-chevron svg {
+  transform: rotate(0deg);
+  transition: transform 150ms;
+}
+
+.folder-chevron.open svg {
+  transform: rotate(90deg);
 }
 
 .set-main-btn {
@@ -2267,6 +2286,15 @@ body {
               height var(--duration-normal) var(--ease-out);
 }
 
+.onboard-highlight-positioned {
+  position: fixed;
+  top: var(--highlight-top, 0px);
+  left: var(--highlight-left, 0px);
+  width: var(--highlight-width, 0px);
+  height: var(--highlight-height, 0px);
+  z-index: 601;
+}
+
 .onboard-tooltip {
   width: 300px;
   background: var(--bg);
@@ -2278,6 +2306,13 @@ body {
   flex-direction: column;
   gap: 8px;
   animation: scale-in var(--duration-fast) var(--ease-out);
+}
+
+.onboard-tooltip-positioned {
+  position: fixed;
+  top: var(--tooltip-top, 0px);
+  left: var(--tooltip-left, 0px);
+  z-index: 602;
 }
 
 .onboard-tooltip-header {
@@ -2311,6 +2346,10 @@ body {
   align-items: center;
   gap: 6px;
   margin-top: 4px;
+}
+
+.onboard-tooltip-spacer {
+  flex: 1;
 }
 
 /* === command palette === */
@@ -2499,6 +2538,7 @@ body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  width: var(--panel-width, auto);
 }
 
 .preview-wrapper {
@@ -2507,6 +2547,18 @@ body {
   position: relative;
   min-width: 0;
   min-height: 0;
+}
+
+.preview-horizontal-sized {
+  width: var(--preview-size, auto);
+}
+
+.preview-vertical-sized {
+  height: var(--preview-size, auto);
+}
+
+.preview-fill {
+  flex: 1;
 }
 
 /* suppress transitions during drag resize */

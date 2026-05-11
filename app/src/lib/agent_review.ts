@@ -1,3 +1,4 @@
+import { createSignal } from "solid-js";
 import * as Y from "yjs";
 import {
   create_or_get_project_ytext,
@@ -43,52 +44,34 @@ export interface AgentReviewStore {
   reject(id: string): void;
   mark_stale(id: string): void;
   clear_completed(): void;
-  on_change(cb: () => void): () => void;
 }
 
 const MAX_AGENT_REVIEW_FILES = 20;
 const MAX_AGENT_REVIEW_CHARS = 200_000;
 
 export function create_agent_review_store(): AgentReviewStore {
-  let _reviews: AgentReview[] = [];
-  const _cbs: Array<() => void> = [];
-
-  function notify() {
-    for (const cb of _cbs) cb();
-  }
-
-  function on_change(cb: () => void): () => void {
-    _cbs.push(cb);
-    return () => {
-      const i = _cbs.indexOf(cb);
-      if (i >= 0) _cbs.splice(i, 1);
-    };
-  }
-
-  function reviews(): AgentReview[] {
-    return _reviews;
-  }
+  const [reviews, set_reviews] = createSignal<AgentReview[]>([]);
 
   function pending(): AgentReview[] {
-    return _reviews.filter((r) => r.status === "pending");
+    return reviews().filter((review) => review.status === "pending");
   }
 
   function add(review: AgentReview): void {
     if (review.changes.length > MAX_AGENT_REVIEW_FILES) return;
     const totalChars = review.changes.reduce((s, c) => s + c.after.length, 0);
     if (totalChars > MAX_AGENT_REVIEW_CHARS) return;
-    _reviews.push(review);
-    notify();
+    set_reviews((prev) => [...prev, review]);
   }
 
   function accept(id: string, doc: Y.Doc): AgentWriteResult {
-    const review = _reviews.find((r) => r.id === id);
+    const review = reviews().find((r) => r.id === id);
     if (!review) return { ok: false, error: "review not found" };
     if (review.status !== "pending") return { ok: false, error: `review is ${review.status}` };
 
     if (review.base_state_vector && has_state_advanced_since(doc, review.base_state_vector)) {
-      review.status = "stale";
-      notify();
+      set_reviews((prev) => prev.map((entry) => (
+        entry.id === id ? { ...entry, status: "stale" } : entry
+      )));
       return { ok: false, error: "stale: document changed since review was created" };
     }
 
@@ -108,29 +91,31 @@ export function create_agent_review_store(): AgentReviewStore {
       }
     }, origin);
 
-    review.status = "accepted";
-    notify();
+    set_reviews((prev) => prev.map((entry) => (
+      entry.id === id ? { ...entry, status: "accepted" } : entry
+    )));
     return { ok: true, applied: true, transaction_id };
   }
 
   function reject(id: string): void {
-    const review = _reviews.find((r) => r.id === id);
+    const review = reviews().find((r) => r.id === id);
     if (!review || review.status !== "pending") return;
-    review.status = "rejected";
-    notify();
+    set_reviews((prev) => prev.map((entry) => (
+      entry.id === id ? { ...entry, status: "rejected" } : entry
+    )));
   }
 
   function mark_stale(id: string): void {
-    const review = _reviews.find((r) => r.id === id);
+    const review = reviews().find((r) => r.id === id);
     if (!review || review.status !== "pending") return;
-    review.status = "stale";
-    notify();
+    set_reviews((prev) => prev.map((entry) => (
+      entry.id === id ? { ...entry, status: "stale" } : entry
+    )));
   }
 
   function clear_completed(): void {
-    _reviews = _reviews.filter((r) => r.status === "pending");
-    notify();
+    set_reviews((prev) => prev.filter((review) => review.status === "pending"));
   }
 
-  return { reviews, pending, add, accept, reject, mark_stale, clear_completed, on_change };
+  return { reviews, pending, add, accept, reject, mark_stale, clear_completed };
 }

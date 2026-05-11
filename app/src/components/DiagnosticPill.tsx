@@ -1,4 +1,4 @@
-import { type Component, Show, For, createSignal, createEffect, untrack } from "solid-js";
+import { type Component, Show, For, createSignal, createEffect, createMemo, untrack } from "solid-js";
 import { worker_client } from "../lib/worker_client";
 import type { ProjectStore } from "../lib/project_store";
 import type { Diagnostic } from "../worker/protocol";
@@ -50,8 +50,14 @@ const DiagnosticPill: Component<Props> = (props) => {
   }
 
   const diags = () => worker_client.diagnostics();
-  const error_count = () => diags().filter(d => d.severity === "error").length;
-  const warn_count = () => diags().filter(d => d.severity === "warning").length;
+  const error_count = createMemo(() => diags().filter((diag) => diag.severity === "error").length);
+  const warn_count = createMemo(() => diags().filter((diag) => diag.severity === "warning").length);
+  const label_text = createMemo(() => {
+    if (error_count() > 0) {
+      return error_count() === 1 ? "error" : "errors";
+    }
+    return warn_count() === 1 ? "warning" : "warnings";
+  });
 
   // auto-expand on error diagnostics, auto-collapse when errors resolve
   // edge-triggered: only opens when error_count transitions from 0 to >0
@@ -125,9 +131,7 @@ const DiagnosticPill: Component<Props> = (props) => {
           <Show when={warn_count() > 0}>
             <span class="diag-pill-badge diag-pill-warnings">{warn_count()}</span>
           </Show>
-          <span class="diag-pill-label">
-            {error_count() > 0 ? (error_count() === 1 ? "error" : "errors") : (warn_count() === 1 ? "warning" : "warnings")}
-          </span>
+          <span class="diag-pill-label">{label_text()}</span>
         </button>
       </div>
     </Show>

@@ -1,4 +1,5 @@
-import { type Component, onMount, onCleanup, createSignal, createEffect, Show } from "solid-js";
+import { type Component, onMount, onCleanup, createSignal, createEffect, createMemo, Show, batch } from "solid-js";
+import type { EditorView } from "@codemirror/view";
 import AnimatedShow from "./components/AnimatedShow";
 import { worker_client } from "./lib/worker_client";
 import { parse_synctex } from "./lib/synctex";
@@ -19,6 +20,7 @@ import { get_project, set_current_project } from "./lib/project_manager";
 import { parse_collab_url, get_owned_room } from "./lib/collab_share";
 import { create_collab_provider, type CollabProvider, type CollabStatus, type CollabPermission } from "./lib/collab_provider";
 import { get_or_create_identity } from "./lib/identity";
+import { AppContextProvider } from "./lib/app_context";
 import { create_local_folder_sync, type ConflictInfo } from "./lib/local_folder_sync";
 import { create_watch_controller } from "./lib/watch_controller";
 import { get_all_commands, IS_MAC } from "./lib/commands";
@@ -91,20 +93,20 @@ const App: Component = () => {
   const [vim_enabled, set_vim_enabled] = createSignal(localStorage.getItem(VIM_ENABLED_KEY) === "true");
   createEffect(() => localStorage.setItem(VIM_ENABLED_KEY, String(vim_enabled())));
 
-  const [_collab_status, set_collab_status] = createSignal<CollabStatus>("idle");
+  const [collab_status, set_collab_status] = createSignal<CollabStatus>("idle");
   const [collab_permission, set_collab_permission] = createSignal<CollabPermission | null>(null);
-  const [_collab_peer_count, set_collab_peer_count] = createSignal(0);
-  const [read_only, set_read_only] = createSignal(false);
-  createEffect(() => set_read_only(collab_permission() === "read"));
+  const [collab_peer_count, set_collab_peer_count] = createSignal(0);
+  const read_only = createMemo(() => collab_permission() === "read");
 
-  let _collab_provider: CollabProvider | null = null;
+  const [collab_provider, set_collab_provider] = createSignal<CollabProvider | null>(null);
+  const collab_awareness = createMemo(() => collab_provider() ? store.awareness() : null);
 
   const agent_review_store: AgentReviewStore = create_agent_review_store();
   const [show_agent_panel, set_show_agent_panel] = createSignal(false);
 
-  let _editor_view: any = undefined;
-  function set_editor_view_ref(v: any) { _editor_view = v; }
-  function get_editor_view() { return _editor_view; }
+  let editor_view: EditorView | undefined;
+  function set_editor_view_ref(view: EditorView) { editor_view = view; }
+  function get_editor_view(): EditorView | undefined { return editor_view; }
 
   let _trigger_file_upload = () => {};
   let _trigger_folder_upload = () => {};
@@ -117,18 +119,24 @@ const App: Component = () => {
     compile: (req) => worker_client.compile(req),
     cancel_and_recompile: (req) => worker_client.cancel_and_recompile(req),
   });
-  store.on_change(() => watch.notify_change());
-  worker_client.on_compile_done(() => watch.notify_compile_done());
-  onCleanup(() => watch.cleanup());
+  const cleanup_watch_change = store.on_change(() => watch.notify_change());
+  const cleanup_watch_compile = worker_client.on_compile_done(() => watch.notify_compile_done());
 
   const [conflicts, set_conflicts] = createSignal<ConflictInfo[]>([]);
-  const show_conflicts = () => conflicts().length > 0;
+  const show_conflicts = createMemo(() => conflicts().length > 0);
 
   const [show_reconnect, set_show_reconnect] = createSignal(false);
   const [reconnect_folder_name, set_reconnect_folder_name] = createSignal("");
 
-  const files_overlay = () => is_narrow() && files_visible();
-  const use_swap_mode = () => is_narrow() && split_dir() === "horizontal";
+  const files_overlay = createMemo(() => is_narrow() && files_visible());
+  const use_swap_mode = createMemo(() => is_narrow() && split_dir() === "horizontal");
+
+  let layout_switch_timer: ReturnType<typeof setTimeout> | undefined;
+  let layout_switch_reset_timer: ReturnType<typeof setTimeout> | undefined;
+  let save_timer: ReturnType<typeof setTimeout> | undefined;
+  let cleanup_autosave: (() => void) | undefined;
+  let cleanup_folder_compile_sync: (() => void) | undefined;
+  let cleanup_worker_ready: (() => void) | undefined;
 
   function toggle_files() {
     set_files_visible((v) => !v);
@@ -143,14 +151,16 @@ const App: Component = () => {
   }
 
   function toggle_split() {
+    if (layout_switch_timer !== undefined) clearTimeout(layout_switch_timer);
+    if (layout_switch_reset_timer !== undefined) clearTimeout(layout_switch_reset_timer);
     set_layout_switching(true);
-    setTimeout(() => {
+    layout_switch_timer = setTimeout(() => {
       set_split_dir((d) => {
         const next = d === "horizontal" ? "vertical" : "horizontal";
         localStorage.setItem(SPLIT_DIR_KEY, next);
         return next;
       });
-      setTimeout(() => set_layout_switching(false), 100);
+      layout_switch_reset_timer = setTimeout(() => set_layout_switching(false), 100);
     }, 100);
   }
 
@@ -161,38 +171,62 @@ const App: Component = () => {
   }
 
   init_commands({
-    store,
-    folder_sync,
-    watch,
-    files_visible,
-    set_files_visible,
-    preview_visible,
-    set_preview_visible,
-    split_dir,
-    toggle_split,
-    toggle_preview,
-    show_logs,
-    set_show_logs,
-    set_show_info_modal,
-    set_show_onboarding,
-    get_editor_view,
-    set_vim_enabled,
-    vim_enabled,
-    trigger_file_upload: () => _trigger_file_upload(),
-    trigger_folder_upload: () => _trigger_folder_upload(),
-    trigger_zip_upload: () => _trigger_zip_upload(),
-    agent_review_store,
-    set_show_agent_panel,
-    on_copy_agent_write_link: handle_copy_agent_write_link,
+    project: {
+      store,
+      folder_sync,
+    },
+    compile: {
+      watch,
+      show_logs,
+      set_show_logs,
+    },
+    layout: {
+      files_visible,
+      set_files_visible,
+      preview_visible,
+      set_preview_visible,
+      split_dir,
+      toggle_split,
+      toggle_preview,
+      set_show_info_modal,
+      set_show_onboarding,
+    },
+    editor: {
+      get_editor_view,
+      set_vim_enabled,
+      vim_enabled,
+    },
+    uploads: {
+      trigger_file_upload: () => _trigger_file_upload(),
+      trigger_folder_upload: () => _trigger_folder_upload(),
+      trigger_zip_upload: () => _trigger_zip_upload(),
+    },
+    agent: {
+      agent_review_store,
+      set_show_agent_panel,
+      on_copy_agent_write_link: handle_copy_agent_write_link,
+    },
   });
 
-  let _cleanup_resize: (() => void) | null = null;
-  let _cleanup_keydown: (() => void) | null = null;
+  let cleanup_resize: (() => void) | null = null;
+  let cleanup_keydown: (() => void) | null = null;
   onCleanup(() => {
-    _cleanup_resize?.();
-    _cleanup_keydown?.();
-    _collab_provider?.destroy();
-    _collab_provider = null;
+    cleanup_autosave?.();
+    cleanup_folder_compile_sync?.();
+    cleanup_worker_ready?.();
+    cleanup_watch_change();
+    cleanup_watch_compile();
+    watch.cleanup();
+    if (layout_switch_timer !== undefined) clearTimeout(layout_switch_timer);
+    if (layout_switch_reset_timer !== undefined) clearTimeout(layout_switch_reset_timer);
+    if (save_timer !== undefined) clearTimeout(save_timer);
+    cleanup_resize?.();
+    cleanup_keydown?.();
+    collab_provider()?.destroy();
+    set_collab_provider(null);
+    folder_sync.cleanup();
+    store.destroy();
+    worker_client.destroy();
   });
 
   onMount(async () => {
@@ -326,13 +360,13 @@ const App: Component = () => {
         on_permission: set_collab_permission,
         on_peer_count: set_collab_peer_count,
       });
-      _collab_provider = provider;
+      set_collab_provider(provider);
       provider.connect();
     }
 
     set_project_ready(true);
 
-    worker_client.on_ready(() => {
+    cleanup_worker_ready = worker_client.on_ready(() => {
       if (!pdf_restored) {
         const files = { ...store.files };
         worker_client.compile({ files, main: store.main_file(), mode: "preview" });
@@ -344,8 +378,7 @@ const App: Component = () => {
       worker_client.compile({ files, main: store.main_file(), mode: "preview" });
     }
 
-    let save_timer: ReturnType<typeof setTimeout> | undefined;
-    store.on_change(() => {
+    cleanup_autosave = store.on_change(() => {
       if (folder_sync.state().active) return;
       if (save_timer !== undefined) clearTimeout(save_timer);
       save_timer = setTimeout(async () => {
@@ -359,7 +392,7 @@ const App: Component = () => {
       }, 1000);
     });
 
-    worker_client.on_compile_done(() => {
+    cleanup_folder_compile_sync = worker_client.on_compile_done(() => {
       if (folder_sync.state().active && folder_sync.state().dirty_files.size > 0) {
         folder_sync.sync_now().then(handle_sync_result);
       }
@@ -377,17 +410,19 @@ const App: Component = () => {
     const on_resize = () => {
       const w = window.innerWidth;
       const narrow = w < NARROW_BREAKPOINT;
-      set_is_narrow(narrow);
-      set_is_too_narrow(w <= TOO_NARROW_BREAKPOINT);
-      if (!narrow) {
-        set_show_preview_in_narrow(false);
-      }
+      batch(() => {
+        set_is_narrow(narrow);
+        set_is_too_narrow(w <= TOO_NARROW_BREAKPOINT);
+        if (!narrow) {
+          set_show_preview_in_narrow(false);
+        }
+      });
     };
     window.addEventListener("resize", on_resize);
-    _cleanup_resize = () => window.removeEventListener("resize", on_resize);
+    cleanup_resize = () => window.removeEventListener("resize", on_resize);
 
     document.addEventListener("keydown", handle_keydown);
-    _cleanup_keydown = () => document.removeEventListener("keydown", handle_keydown);
+    cleanup_keydown = () => document.removeEventListener("keydown", handle_keydown);
   });
 
   function handle_keydown(e: KeyboardEvent) {
@@ -471,7 +506,7 @@ const App: Component = () => {
     }
   }
 
-  const workspace_class = () => {
+  const workspace_class = createMemo(() => {
     let cls = "workspace";
     if (is_narrow()) cls += " narrow-mode";
     if (use_swap_mode() && show_preview_in_narrow()) cls += " show-preview";
@@ -479,7 +514,7 @@ const App: Component = () => {
     if (layout_switching()) cls += " layout-switching";
     cls += ` split-${split_dir()}`;
     return cls;
-  };
+  });
 
   async function handle_reconnect() {
     set_show_reconnect(false);
@@ -518,99 +553,104 @@ const App: Component = () => {
     agent_review_store.reject(id);
   }
 
+  const app_context = {
+    folder_sync,
+    collab: {
+      status: collab_status,
+      permission: collab_permission,
+      peer_count: collab_peer_count,
+      awareness: collab_awareness,
+    },
+    agent_review_store,
+  };
+
   return (
-    <div class="app">
-      <Toolbar
-        store={store}
-        watch={watch}
-        on_toggle_files={toggle_files}
-        on_toggle_preview={toggle_preview}
-        on_toggle_split={toggle_split}
-        files_visible={files_visible()}
-        preview_visible={use_swap_mode() ? show_preview_in_narrow() : preview_visible()}
-        split_dir={split_dir()}
-        swap_mode={use_swap_mode()}
-        folder_sync={folder_sync}
-        on_upload_conflicts={(c) => set_conflicts(c)}
-        reconnect_folder={show_reconnect() ? reconnect_folder_name() : null}
-        on_reconnect={handle_reconnect}
-        on_dismiss_reconnect={dismiss_reconnect}
-        on_start_tour={() => set_show_onboarding(true)}
-        show_logs={show_logs()}
-        set_show_logs={set_show_logs}
-        show_info_modal={show_info_modal()}
-        set_show_info_modal={set_show_info_modal}
-        register_file_triggers={(file_fn, folder_fn, zip_fn) => {
-          _trigger_file_upload = file_fn;
-          _trigger_folder_upload = folder_fn;
-          _trigger_zip_upload = zip_fn;
-        }}
-        collab_status={_collab_status()}
-        collab_permission={collab_permission()}
-        collab_peer_count={_collab_peer_count()}
-        agent_review_store={agent_review_store}
-        awareness={_collab_provider ? store.awareness() : null}
-        on_show_agent_panel={() => set_show_agent_panel(true)}
-        on_copy_agent_write_link={handle_copy_agent_write_link}
-      />
+    <AppContextProvider value={app_context}>
+      <div class="app">
+        <Toolbar
+          store={store}
+          watch={watch}
+          on_toggle_files={toggle_files}
+          on_toggle_preview={toggle_preview}
+          on_toggle_split={toggle_split}
+          files_visible={files_visible()}
+          preview_visible={use_swap_mode() ? show_preview_in_narrow() : preview_visible()}
+          split_dir={split_dir()}
+          swap_mode={use_swap_mode()}
+          on_upload_conflicts={(c) => set_conflicts(c)}
+          reconnect_folder={show_reconnect() ? reconnect_folder_name() : null}
+          on_reconnect={handle_reconnect}
+          on_dismiss_reconnect={dismiss_reconnect}
+          on_start_tour={() => set_show_onboarding(true)}
+          show_logs={show_logs()}
+          set_show_logs={set_show_logs}
+          show_info_modal={show_info_modal()}
+          set_show_info_modal={set_show_info_modal}
+          register_file_triggers={(file_fn, folder_fn, zip_fn) => {
+            _trigger_file_upload = file_fn;
+            _trigger_folder_upload = folder_fn;
+            _trigger_zip_upload = zip_fn;
+          }}
+          on_show_agent_panel={() => set_show_agent_panel(true)}
+        />
 
-      <div class={workspace_class()}>
-        <Show when={!is_narrow()}>
-          <div
-            class={`file-panel-wrapper panel-wrapper panel-box ${!files_visible() ? "panel-collapsed" : ""}`}
-            style={{ width: files_visible() ? `${file_panel_width()}px` : "0px", "flex-shrink": 0 }}
-          >
-            <FilePanel store={store} folder_sync={folder_sync} />
-          </div>
-          <ResizeHandle
-            direction="horizontal"
-            on_resize={handle_file_resize}
-            on_drag_start={() => set_is_resizing(true)}
-            on_drag_end={() => set_is_resizing(false)}
-          />
-        </Show>
-
-        <div class={`split-container split-${split_dir()}`}>
-          <div class="editor-wrapper panel-box">
-            <Show when={project_ready()}>
-              <Editor
-                store={store}
-                vim_enabled={vim_enabled()}
-                read_only={read_only()}
-                on_editor_view={set_editor_view_ref}
-              />
-            </Show>
-          </div>
-
-          <Show when={!use_swap_mode()}>
+        <div class={workspace_class()}>
+          <Show when={!is_narrow()}>
+            <div
+              class={`file-panel-wrapper panel-wrapper panel-box ${!files_visible() ? "panel-collapsed" : ""}`}
+              style={{ "--panel-width": files_visible() ? `${file_panel_width()}px` : "0px" }}
+            >
+              <FilePanel store={store} />
+            </div>
             <ResizeHandle
-              direction={split_dir() === "vertical" ? "vertical" : "horizontal"}
-              on_resize={handle_preview_resize}
+              direction="horizontal"
+              on_resize={handle_file_resize}
               on_drag_start={() => set_is_resizing(true)}
               on_drag_end={() => set_is_resizing(false)}
             />
-            <div
-              class={`preview-wrapper panel-wrapper panel-box ${!preview_visible() ? "panel-collapsed" : ""}`}
-              style={split_dir() === "vertical"
-                ? { height: preview_visible() ? `${preview_height()}px` : "0px", "flex-shrink": 0 }
-                : { width: preview_visible() ? `${preview_width()}px` : "0px", "flex-shrink": 0 }
-              }
-            >
-              <Preview />
-            </div>
           </Show>
 
-          <Show when={use_swap_mode() && show_preview_in_narrow()}>
-            <div class="preview-wrapper panel-wrapper panel-box" style={{ flex: 1 }}>
-              <Preview />
+          <div class={`split-container split-${split_dir()}`}>
+            <div class="editor-wrapper panel-box">
+              <Show when={project_ready()}>
+                <Editor
+                  store={store}
+                  vim_enabled={vim_enabled()}
+                  read_only={read_only()}
+                  on_editor_view={set_editor_view_ref}
+                />
+              </Show>
             </div>
-          </Show>
+
+            <Show when={!use_swap_mode()}>
+              <ResizeHandle
+                direction={split_dir() === "vertical" ? "vertical" : "horizontal"}
+                on_resize={handle_preview_resize}
+                on_drag_start={() => set_is_resizing(true)}
+                on_drag_end={() => set_is_resizing(false)}
+              />
+              <div
+                class={`preview-wrapper panel-wrapper panel-box ${split_dir() === "vertical" ? "preview-vertical-sized" : "preview-horizontal-sized"} ${!preview_visible() ? "panel-collapsed" : ""}`}
+                style={split_dir() === "vertical"
+                  ? { "--preview-size": preview_visible() ? `${preview_height()}px` : "0px" }
+                  : { "--preview-size": preview_visible() ? `${preview_width()}px` : "0px" }
+                }
+              >
+                <Preview />
+              </div>
+            </Show>
+
+            <Show when={use_swap_mode() && show_preview_in_narrow()}>
+              <div class="preview-wrapper panel-wrapper panel-box preview-fill">
+                <Preview />
+              </div>
+            </Show>
+          </div>
         </div>
-      </div>
 
       <AnimatedShow when={files_overlay()}>
         <div class="file-panel-wrapper overlay-mode panel-wrapper panel-box">
-          <FilePanel store={store} folder_sync={folder_sync} />
+          <FilePanel store={store} />
         </div>
       </AnimatedShow>
 
@@ -667,16 +707,15 @@ const App: Component = () => {
 
       <Show when={show_agent_panel()}>
         <AgentPanel
-          awareness={_collab_provider ? store.awareness() : null}
-          review_store={agent_review_store}
           on_accept={handle_accept_review}
           on_reject={handle_reject_review}
           on_clear_completed={() => agent_review_store.clear_completed()}
           on_close={() => set_show_agent_panel(false)}
         />
       </Show>
-      <Modal />
-    </div>
+        <Modal />
+      </div>
+    </AppContextProvider>
   );
 };
 

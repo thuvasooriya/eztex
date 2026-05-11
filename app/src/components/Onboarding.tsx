@@ -254,10 +254,8 @@ const Onboarding: Component<Props> = (props) => {
     if (!rect || !step) return { display: "none" };
     const pos = compute_tooltip_pos(rect, step.position_hint, TOOLTIP_W, TOOLTIP_H);
     return {
-      position: "fixed",
-      top: `${pos.top}px`,
-      left: `${pos.left}px`,
-      "z-index": "602",
+      "--tooltip-top": `${pos.top}px`,
+      "--tooltip-left": `${pos.left}px`,
     };
   }
 
@@ -266,12 +264,10 @@ const Onboarding: Component<Props> = (props) => {
     if (!rect) return { display: "none" };
     const pad = 4;
     return {
-      position: "fixed",
-      top: `${rect.top - pad}px`,
-      left: `${rect.left - pad}px`,
-      width: `${rect.width + pad * 2}px`,
-      height: `${rect.height + pad * 2}px`,
-      "z-index": "601",
+      "--highlight-top": `${rect.top - pad}px`,
+      "--highlight-left": `${rect.left - pad}px`,
+      "--highlight-width": `${rect.width + pad * 2}px`,
+      "--highlight-height": `${rect.height + pad * 2}px`,
     };
   }
 
@@ -296,9 +292,9 @@ const Onboarding: Component<Props> = (props) => {
       <Show when={phase() === "tour" && current_step()}>
         <div class={`onboard-tour-backdrop ${target_rect() ? "" : "dimmed"}`} onClick={finish} />
         <Show when={target_rect()}>
-          <div class="onboard-highlight" style={highlight_style()} />
+          <div class="onboard-highlight onboard-highlight-positioned" style={highlight_style()} />
         </Show>
-        <div class="onboard-tooltip" ref={tooltip_ref} style={tooltip_style()}>
+        <div class="onboard-tooltip onboard-tooltip-positioned" ref={tooltip_ref} style={tooltip_style()}>
           <div class="onboard-tooltip-header">
             <span class="onboard-tooltip-title">{current_step()!.title}</span>
             <span class="onboard-tooltip-progress">{active_index() + 1} / {active_count()}</span>
@@ -308,7 +304,7 @@ const Onboarding: Component<Props> = (props) => {
             <Show when={!is_first_step()}>
               <button class="onboard-btn small" onClick={prev}>Prev</button>
             </Show>
-            <div style={{ flex: "1" }} />
+            <div class="onboard-tooltip-spacer" />
             <Show when={is_last_step()} fallback={
               <button class="onboard-btn small primary" onClick={next}>Next</button>
             }>

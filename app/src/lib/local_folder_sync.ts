@@ -61,6 +61,7 @@ export interface LocalFolderSync {
   open_folder: () => Promise<boolean>;
   reconnect: () => Promise<boolean>;
   disconnect: () => void;
+  cleanup: () => void;
   sync_now: () => Promise<SyncResult>;
   sync_file: (path: string) => Promise<SyncResult>;
   resolve_conflict: (path: string, resolution: "eztex" | "disk") => Promise<void>;
@@ -330,6 +331,18 @@ export function create_local_folder_sync(store: ProjectStore): LocalFolderSync {
     }
   }
 
+  function teardown_runtime() {
+    if (idle_timer) {
+      clearTimeout(idle_timer);
+      idle_timer = null;
+    }
+    if (unsub_store) {
+      unsub_store();
+      unsub_store = null;
+    }
+    teardown_event_listeners();
+  }
+
   async function check_conflict(
     path: string,
     baseline_hash: string | undefined,
@@ -383,7 +396,7 @@ export function create_local_folder_sync(store: ProjectStore): LocalFolderSync {
       await store_folder_name(handle.name);
 
       // subscribe to store changes
-      if (unsub_store) unsub_store();
+      teardown_runtime();
       unsub_store = store.on_change(() => {
         track_dirty_files();
         reset_idle_timer();
@@ -435,7 +448,7 @@ export function create_local_folder_sync(store: ProjectStore): LocalFolderSync {
         error: null,
       });
 
-      if (unsub_store) unsub_store();
+      teardown_runtime();
       unsub_store = store.on_change(() => {
         track_dirty_files();
         reset_idle_timer();
@@ -451,11 +464,13 @@ export function create_local_folder_sync(store: ProjectStore): LocalFolderSync {
   }
 
   function disconnect() {
-    if (idle_timer) { clearTimeout(idle_timer); idle_timer = null; }
-    if (unsub_store) { unsub_store(); unsub_store = null; }
-    teardown_event_listeners();
-    clear_stored_handle();
+    teardown_runtime();
+    void clear_stored_handle();
     set_state({ ...EMPTY_STATE });
+  }
+
+  function cleanup() {
+    teardown_runtime();
   }
 
   async function sync_now(): Promise<SyncResult> {
@@ -689,6 +704,7 @@ export function create_local_folder_sync(store: ProjectStore): LocalFolderSync {
     open_folder,
     reconnect,
     disconnect,
+    cleanup,
     sync_now,
     sync_file,
     resolve_conflict,
@@ -703,4 +719,3 @@ export function create_local_folder_sync(store: ProjectStore): LocalFolderSync {
 function supports_folder_sync(): boolean {
   return typeof window !== "undefined" && typeof window.showDirectoryPicker === "function";
 }
-

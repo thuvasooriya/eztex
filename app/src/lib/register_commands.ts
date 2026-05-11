@@ -2,6 +2,7 @@
 // single source of truth for all actions, keybindings, and command metadata
 
 import { register_command, palette_open, set_palette_open, palette_filter, set_palette_filter, IS_MAC } from "./commands";
+import type { EditorView } from "@codemirror/view";
 import { worker_client } from "./worker_client";
 import type { ProjectStore } from "./project_store";
 import type { LocalFolderSync } from "./local_folder_sync";
@@ -12,10 +13,18 @@ import type { AgentReviewStore } from "./agent_review";
 import type { Accessor, Setter } from "solid-js";
 import { show_input_modal, show_confirm_modal, show_alert_modal } from "./modal_store";
 
-export type CommandDeps = {
+type ProjectCommandDeps = {
   store: ProjectStore;
   folder_sync: LocalFolderSync;
+};
+
+type CompileCommandDeps = {
   watch: WatchController;
+  show_logs: Accessor<boolean>;
+  set_show_logs: Setter<boolean>;
+};
+
+type LayoutCommandDeps = {
   files_visible: Accessor<boolean>;
   set_files_visible: Setter<boolean>;
   preview_visible: Accessor<boolean>;
@@ -23,28 +32,44 @@ export type CommandDeps = {
   split_dir: Accessor<"horizontal" | "vertical">;
   toggle_split: () => void;
   toggle_preview: () => void;
-  show_logs: Accessor<boolean>;
-  set_show_logs: Setter<boolean>;
   set_show_info_modal: Setter<boolean>;
   set_show_onboarding: Setter<boolean>;
-  // editor access for vim toggle and focus
-  get_editor_view: () => any | undefined;
+};
+
+type EditorCommandDeps = {
+  get_editor_view: () => EditorView | undefined;
   set_vim_enabled: Setter<boolean>;
   vim_enabled: Accessor<boolean>;
-  // file input triggers
+};
+
+type UploadCommandDeps = {
   trigger_file_upload: () => void;
   trigger_folder_upload: () => void;
   trigger_zip_upload: () => void;
-  // agent
+};
+
+type AgentCommandDeps = {
   agent_review_store: AgentReviewStore;
   set_show_agent_panel: Setter<boolean>;
   on_copy_agent_write_link: () => void;
 };
 
-let deps: CommandDeps | null = null;
+export type CommandDeps = {
+  project: ProjectCommandDeps;
+  compile: CompileCommandDeps;
+  layout: LayoutCommandDeps;
+  editor: EditorCommandDeps;
+  uploads: UploadCommandDeps;
+  agent: AgentCommandDeps;
+};
 
 export function init_commands(d: CommandDeps): void {
-  deps = d;
+  const project = d.project;
+  const compile = d.compile;
+  const layout = d.layout;
+  const editor = d.editor;
+  const uploads = d.uploads;
+  const agent = d.agent;
 
   // -- Compile --
 
@@ -55,10 +80,10 @@ export function init_commands(d: CommandDeps): void {
     keywords: ["build", "typeset", "latex", "pdf"],
     category: "Compile",
     keybinding: "Cmd+Enter",
-    when: () => Object.keys(deps!.store.files).length > 0,
+    when: () => Object.keys(project.store.files).length > 0,
     action: () => {
-      const files = { ...deps!.store.files };
-      worker_client.compile({ files, main: deps!.store.main_file(), mode: "full" });
+      const files = { ...project.store.files };
+      worker_client.compile({ files, main: project.store.main_file(), mode: "full" });
     },
   });
 
@@ -69,8 +94,8 @@ export function init_commands(d: CommandDeps): void {
     keywords: ["auto", "live", "recompile"],
     category: "Compile",
     keybinding: "Cmd+Shift+W",
-    when: () => Object.keys(deps!.store.files).length > 0,
-    action: () => deps!.watch.toggle(),
+    when: () => Object.keys(project.store.files).length > 0,
+    action: () => compile.watch.toggle(),
   });
 
   register_command({
@@ -92,7 +117,7 @@ export function init_commands(d: CommandDeps): void {
     keywords: ["output", "console", "errors"],
     category: "Compile",
     keybinding: "Cmd+Shift+L",
-    action: () => deps!.set_show_logs((v) => !v),
+    action: () => compile.set_show_logs((v) => !v),
   });
 
   register_command({
@@ -112,14 +137,14 @@ export function init_commands(d: CommandDeps): void {
     keywords: ["create", "add"],
     category: "File",
     action: () => {
-      const existing = deps!.store.file_names();
+      const existing = project.store.file_names();
       let name = "untitled.tex";
       if (existing.includes(name)) {
         let i = 1;
         while (existing.includes(`untitled-${i}.tex`)) i++;
         name = `untitled-${i}.tex`;
       }
-      deps!.store.add_file(name, "");
+      project.store.add_file(name, "");
     },
   });
 
@@ -129,7 +154,7 @@ export function init_commands(d: CommandDeps): void {
     description: "Upload files from your computer",
     keywords: ["import", "open"],
     category: "File",
-    action: () => deps!.trigger_file_upload(),
+    action: () => uploads.trigger_file_upload(),
   });
 
   register_command({
@@ -138,7 +163,7 @@ export function init_commands(d: CommandDeps): void {
     description: "Upload an entire folder",
     keywords: ["import", "directory"],
     category: "File",
-    action: () => deps!.trigger_folder_upload(),
+    action: () => uploads.trigger_folder_upload(),
   });
 
   register_command({
@@ -147,7 +172,7 @@ export function init_commands(d: CommandDeps): void {
     description: "Import a project from a ZIP archive",
     keywords: ["upload", "archive"],
     category: "File",
-    action: () => deps!.trigger_zip_upload(),
+    action: () => uploads.trigger_zip_upload(),
   });
 
   // -- Navigate --
@@ -159,7 +184,7 @@ export function init_commands(d: CommandDeps): void {
     keywords: ["open", "switch", "quick"],
     category: "Navigate",
     keybinding: "Cmd+P",
-    when: () => Object.keys(deps!.store.files).length > 0,
+    when: () => Object.keys(project.store.files).length > 0,
     action: () => {
       if (palette_open() && palette_filter().startsWith("> ")) {
         set_palette_open(false);
@@ -203,7 +228,7 @@ export function init_commands(d: CommandDeps): void {
       // jump to first diagnostic with a location
       const d = diags.find((d) => d.file && d.line);
       if (d && d.file && d.line) {
-        deps!.store.set_current_file(d.file);
+        project.store.set_current_file(d.file);
         worker_client.request_goto(d.file, d.line);
       }
     },
@@ -223,7 +248,7 @@ export function init_commands(d: CommandDeps): void {
       // jump to last diagnostic with a location
       const d = [...diags].reverse().find((d) => d.file && d.line);
       if (d && d.file && d.line) {
-        deps!.store.set_current_file(d.file);
+        project.store.set_current_file(d.file);
         worker_client.request_goto(d.file, d.line);
       }
     },
@@ -238,7 +263,7 @@ export function init_commands(d: CommandDeps): void {
     keywords: ["sidebar", "explorer", "tree"],
     category: "View",
     keybinding: "Cmd+B",
-    action: () => deps!.set_files_visible((v) => !v),
+    action: () => layout.set_files_visible((v) => !v),
   });
 
   register_command({
@@ -248,7 +273,7 @@ export function init_commands(d: CommandDeps): void {
     keywords: ["pdf", "output", "viewer"],
     category: "View",
     keybinding: "Cmd+Shift+E",
-    action: () => deps!.toggle_preview(),
+    action: () => layout.toggle_preview(),
   });
 
   register_command({
@@ -257,8 +282,8 @@ export function init_commands(d: CommandDeps): void {
     description: "Switch between side-by-side and stacked layout",
     keywords: ["horizontal", "vertical", "layout"],
     category: "View",
-    when: () => deps!.preview_visible(),
-    action: () => deps!.toggle_split(),
+    when: () => layout.preview_visible(),
+    action: () => layout.toggle_split(),
   });
 
   register_command({
@@ -268,7 +293,7 @@ export function init_commands(d: CommandDeps): void {
     keywords: ["cursor", "type"],
     category: "View",
     action: () => {
-      const view = deps!.get_editor_view();
+      const view = editor.get_editor_view();
       if (view) view.focus();
     },
   });
@@ -284,10 +309,10 @@ export function init_commands(d: CommandDeps): void {
     keybinding: "Cmd+Shift+.",
     when: () => worker_client.pdf_url() !== null,
     action: () => {
-      const view = deps!.get_editor_view();
+      const view = editor.get_editor_view();
       if (!view) return;
       const line = view.state.doc.lineAt(view.state.selection.main.head).number;
-      worker_client.sync_forward(deps!.store.current_file(), line);
+      worker_client.sync_forward(project.store.current_file(), line);
     },
   });
 
@@ -299,9 +324,9 @@ export function init_commands(d: CommandDeps): void {
     description: "Download the entire project as a ZIP file",
     keywords: ["save", "archive", "backup"],
     category: "Project",
-    when: () => Object.keys(deps!.store.files).length > 0,
+    when: () => Object.keys(project.store.files).length > 0,
     action: async () => {
-      const blob = await write_zip(deps!.store.files);
+      const blob = await write_zip(project.store.files);
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -321,8 +346,8 @@ export function init_commands(d: CommandDeps): void {
     when: () => worker_client.pdf_url() !== null,
     action: async () => {
       const ok = await worker_client.compile_and_wait({
-        files: { ...deps!.store.files },
-        main: deps!.store.main_file(),
+        files: { ...project.store.files },
+        main: project.store.main_file(),
         mode: "full",
       });
       if (!ok) return;
@@ -368,14 +393,14 @@ export function init_commands(d: CommandDeps): void {
     keywords: ["collab", "collaborate", "room", "invite"],
     category: "Project",
     action: async () => {
-      const pid = deps!.store.project_id();
+      const pid = project.store.project_id();
       if (!pid) return;
       const { create_room_links } = await import("./collab_share");
       const { get_project } = await import("./project_manager");
       const entry = await get_project(pid);
       const project_name = entry?.name ?? "Untitled Project";
       const links = await create_room_links(pid, project_name, window.location.origin);
-      deps!.store.set_room_id(links.room_id);
+      project.store.set_room_id(links.room_id);
       try {
         await navigator.clipboard.writeText(links.write_url);
         await show_alert_modal({
@@ -397,8 +422,8 @@ export function init_commands(d: CommandDeps): void {
     description: "Connect a local folder for file sync",
     keywords: ["sync", "directory", "filesystem"],
     category: "Project",
-    when: () => deps!.folder_sync.is_supported() && !deps!.folder_sync.state().active,
-    action: () => { deps!.folder_sync.open_folder(); },
+    when: () => project.folder_sync.is_supported() && !project.folder_sync.state().active,
+    action: () => { void project.folder_sync.open_folder(); },
   });
 
   register_command({
@@ -430,8 +455,8 @@ export function init_commands(d: CommandDeps): void {
     keywords: ["save", "filesystem"],
     category: "Project",
     keybinding: "Cmd+S",
-    when: () => deps!.folder_sync.state().active,
-    action: () => { deps!.folder_sync.sync_now(); },
+    when: () => project.folder_sync.state().active,
+    action: () => { void project.folder_sync.sync_now(); },
   });
 
   // -- Help --
@@ -442,7 +467,7 @@ export function init_commands(d: CommandDeps): void {
     description: "Show version and project info",
     keywords: ["info", "version"],
     category: "Help",
-    action: () => deps!.set_show_info_modal(true),
+    action: () => layout.set_show_info_modal(true),
   });
 
   register_command({
@@ -465,7 +490,7 @@ export function init_commands(d: CommandDeps): void {
     description: "Enable or disable Vim keybindings in the editor",
     keywords: ["vi", "modal", "emulation"],
     category: "Help",
-    action: () => deps!.set_vim_enabled((v) => !v),
+    action: () => editor.set_vim_enabled((v) => !v),
   });
 
   register_command({
@@ -474,7 +499,7 @@ export function init_commands(d: CommandDeps): void {
     description: "Show the onboarding tour",
     keywords: ["guide", "help", "tutorial"],
     category: "Help",
-    action: () => deps!.set_show_onboarding(true),
+    action: () => layout.set_show_onboarding(true),
   });
 
   register_command({
@@ -503,7 +528,7 @@ export function init_commands(d: CommandDeps): void {
     description: "Open the agent collaboration panel",
     keywords: ["agent", "collab", "review", "ai"],
     category: "Agent",
-    action: () => deps!.set_show_agent_panel(true),
+    action: () => agent.set_show_agent_panel(true),
   });
 
   register_command({
@@ -512,8 +537,8 @@ export function init_commands(d: CommandDeps): void {
     description: "Copy a WebSocket URL with write token for agent clients",
     keywords: ["agent", "token", "write", "link", "mcp"],
     category: "Agent",
-    when: () => !!deps!.store.room_id(),
-    action: () => deps!.on_copy_agent_write_link(),
+    when: () => !!project.store.room_id(),
+    action: () => agent.on_copy_agent_write_link(),
   });
 
   register_command({
@@ -522,11 +547,11 @@ export function init_commands(d: CommandDeps): void {
     description: "Accept the first pending agent review",
     keywords: ["agent", "review", "accept", "apply"],
     category: "Agent",
-    when: () => deps!.agent_review_store.pending().length > 0,
+    when: () => agent.agent_review_store.pending().length > 0,
     action: () => {
-      const pending = deps!.agent_review_store.pending();
+      const pending = agent.agent_review_store.pending();
       if (pending.length > 0) {
-        deps!.agent_review_store.accept(pending[0].id, deps!.store.ydoc());
+        agent.agent_review_store.accept(pending[0].id, project.store.ydoc());
       }
     },
   });
@@ -537,11 +562,11 @@ export function init_commands(d: CommandDeps): void {
     description: "Reject the first pending agent review",
     keywords: ["agent", "review", "reject", "discard"],
     category: "Agent",
-    when: () => deps!.agent_review_store.pending().length > 0,
+    when: () => agent.agent_review_store.pending().length > 0,
     action: () => {
-      const pending = deps!.agent_review_store.pending();
+      const pending = agent.agent_review_store.pending();
       if (pending.length > 0) {
-        deps!.agent_review_store.reject(pending[0].id);
+        agent.agent_review_store.reject(pending[0].id);
       }
     },
   });
@@ -552,7 +577,7 @@ export function init_commands(d: CommandDeps): void {
     description: "Remove accepted, rejected, and stale reviews",
     keywords: ["agent", "review", "clear", "clean"],
     category: "Agent",
-    when: () => deps!.agent_review_store.reviews().some((r) => r.status !== "pending"),
-    action: () => deps!.agent_review_store.clear_completed(),
+    when: () => agent.agent_review_store.reviews().some((review) => review.status !== "pending"),
+    action: () => agent.agent_review_store.clear_completed(),
   });
 }

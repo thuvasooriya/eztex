@@ -173,7 +173,7 @@ const Editor: Component<Props> = (props) => {
     return manager;
   }
 
-  const current_is_binary = () => is_binary(props.store.current_file());
+  const current_is_binary = createMemo(() => is_binary(props.store.current_file()));
 
   const image_mime = createMemo(() => {
     const name = props.store.current_file();
@@ -206,6 +206,7 @@ const Editor: Component<Props> = (props) => {
   });
 
   let sync_timer: ReturnType<typeof setTimeout> | undefined;
+  let goto_reset_timer: ReturnType<typeof setTimeout> | undefined;
   let suppress_forward_sync = false;
   const read_only_compartment = new Compartment();
 
@@ -356,12 +357,14 @@ const Editor: Component<Props> = (props) => {
       scrollIntoView: true,
     });
     view.focus();
-    setTimeout(() => { suppress_forward_sync = false; }, 400);
+    if (goto_reset_timer !== undefined) clearTimeout(goto_reset_timer);
+    goto_reset_timer = setTimeout(() => { suppress_forward_sync = false; }, 400);
     worker_client.clear_goto();
   });
 
   onCleanup(() => {
     if (sync_timer !== undefined) clearTimeout(sync_timer);
+    if (goto_reset_timer !== undefined) clearTimeout(goto_reset_timer);
     view?.destroy();
   });
 

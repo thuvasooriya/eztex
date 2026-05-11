@@ -61,8 +61,14 @@ function on_compile_done(cb: () => void): () => void {
 }
 
 // imperative ready callback -- used by App for auto-compile on load
-let _on_ready_cb: (() => void) | null = null;
-function on_ready(cb: () => void) { _on_ready_cb = cb; }
+const _on_ready_cbs: Array<() => void> = [];
+function on_ready(cb: () => void): () => void {
+  _on_ready_cbs.push(cb);
+  return () => {
+    const i = _on_ready_cbs.indexOf(cb);
+    if (i >= 0) _on_ready_cbs.splice(i, 1);
+  };
+}
 
 // detect ?debug=1 query param for debug mode passthrough to worker
 const _debug = typeof window !== "undefined" && new URLSearchParams(window.location.search).has("debug");
@@ -104,7 +110,7 @@ function handle_message(e: MessageEvent) {
         set_status_text("Ready");
         set_progress(100);
       });
-      _on_ready_cb?.();
+      for (const cb of _on_ready_cbs) cb();
       break;
     case "complete": {
       const pdf_data = data.pdf as Uint8Array | null;
@@ -218,6 +224,32 @@ function restore_synctex(parsed: PdfSyncObject) {
   set_synctex_data(parsed);
 }
 
+function destroy() {
+  worker?.terminate();
+  worker = null;
+  if (prev_pdf_url) URL.revokeObjectURL(prev_pdf_url);
+  prev_pdf_url = null;
+  _project_id = null;
+  _on_compile_done_cbs.length = 0;
+  _on_ready_cbs.length = 0;
+  batch(() => {
+    set_status("idle");
+    set_status_text("Initializing...");
+    set_progress(0);
+    set_logs([]);
+    set_pdf_url(null);
+    set_pdf_bytes(null);
+    set_ready(false);
+    set_compiling(false);
+    set_last_elapsed(null);
+    set_diagnostics([]);
+    set_synctex_data(null);
+    set_synctex_text(null);
+    set_sync_target(null);
+    set_goto_request(null);
+  });
+}
+
 // forward sync: editor cursor -> PDF highlight
 function sync_forward(file: string, line: number): void {
   const data = synctex_data();
@@ -257,6 +289,7 @@ export const worker_client = {
   restore_pdf_url,
   restore_pdf_bytes,
   restore_synctex,
+  destroy,
   request_goto,
   clear_goto: () => set_goto_request(null),
   sync_forward,

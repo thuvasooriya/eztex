@@ -227,7 +227,6 @@ export function create_collab_provider(opts: CollabProviderOptions): CollabProvi
     disconnect();
     opts.doc.off("update", doc_update_handler);
     opts.awareness.off("change", awareness_handler);
-    opts.awareness.destroy();
   }
 
   return {

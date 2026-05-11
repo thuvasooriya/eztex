@@ -1,4 +1,4 @@
-import { type Component } from "solid-js";
+import { type Component, Show } from "solid-js";
 import { worker_client } from "../lib/worker_client";
 
 const ProgressBar: Component = () => {
@@ -14,14 +14,15 @@ const ProgressBar: Component = () => {
       class="progress-bar-container"
       style={{ opacity: is_active() ? 1 : 0 }}
     >
-      {is_indeterminate() ? (
-        <div class="progress-bar-indeterminate" />
-      ) : (
+      <Show
+        when={!is_indeterminate()}
+        fallback={<div class="progress-bar-indeterminate" />}
+      >
         <div
           class="progress-bar-fill"
           style={{ width: `${progress()}%` }}
         />
-      )}
+      </Show>
     </div>
   );
 };

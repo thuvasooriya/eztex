@@ -3,6 +3,7 @@ import AnimatedShow from "./AnimatedShow";
 import { worker_client, type LogEntry } from "../lib/worker_client";
 import ProgressBar from "./ProgressBar";
 import { read_zip, write_zip } from "../lib/zip_utils";
+import { use_app_context } from "../lib/app_context";
 import type { ProjectStore } from "../lib/project_store";
 import { is_binary, is_text_ext } from "../lib/project_store";
 import type { ProjectFiles } from "../lib/project_store";
@@ -10,11 +11,8 @@ import { save_pdf, clear_bundle_cache, reset_all_persistence } from "../lib/proj
 import type { ProjectCatalogEntry } from "../lib/project_persist";
 import { list_projects, rename_project, delete_project, get_project_url, create_project, set_current_project, duplicate_project } from "../lib/project_manager";
 import { create_room_links } from "../lib/collab_share";
-import type { CollabStatus, CollabPermission } from "../lib/collab_provider";
-import type { LocalFolderSync, ConflictInfo } from "../lib/local_folder_sync";
+import type { ConflictInfo } from "../lib/local_folder_sync";
 import type { WatchController } from "../lib/watch_controller";
-import type { AgentReviewStore } from "../lib/agent_review";
-import type { Awareness } from "y-protocols/awareness";
 import logo_svg from "/logo.svg?raw";
 import { show_input_modal, show_confirm_modal, show_choice_modal, show_alert_modal } from "../lib/modal_store";
 
@@ -28,7 +26,6 @@ type Props = {
   preview_visible?: boolean;
   split_dir?: "horizontal" | "vertical";
   swap_mode?: boolean;
-  folder_sync?: LocalFolderSync;
   on_upload_conflicts?: (conflicts: ConflictInfo[]) => void;
   reconnect_folder?: string | null;
   on_reconnect?: () => void;
@@ -39,13 +36,7 @@ type Props = {
   show_info_modal: boolean;
   set_show_info_modal: Setter<boolean>;
   register_file_triggers?: (file_fn: () => void, folder_fn: () => void, zip_fn: () => void) => void;
-  collab_status?: CollabStatus;
-  collab_permission?: CollabPermission | null;
-  collab_peer_count?: number;
-  agent_review_store?: AgentReviewStore;
-  awareness?: Awareness | null;
   on_show_agent_panel?: () => void;
-  on_copy_agent_write_link?: () => void;
 };
 
 const Logo: Component = () => (
@@ -53,6 +44,11 @@ const Logo: Component = () => (
 );
 
 const Toolbar: Component<Props> = (props) => {
+  const app = use_app_context();
+  const folder_sync = () => app.folder_sync;
+  const collab = app.collab;
+  const agent_review_store = () => app.agent_review_store;
+
   let zip_input_ref: HTMLInputElement | undefined;
   let folder_input_ref: HTMLInputElement | undefined;
   let file_input_ref: HTMLInputElement | undefined;
@@ -80,6 +76,8 @@ const Toolbar: Component<Props> = (props) => {
   // cache state (moved from CachePill)
   const [cache_bytes, set_cache_bytes] = createSignal(0);
   const [clearing_cache, set_clearing_cache] = createSignal(false);
+  let estimate_opfs_timer: ReturnType<typeof setTimeout> | undefined;
+  let cleanup_compile_persist: (() => void) | undefined;
 
   function format_cache_size(bytes: number): string {
     if (bytes <= 0) return "0 B";
@@ -121,13 +119,36 @@ const Toolbar: Component<Props> = (props) => {
       () => folder_input_ref?.click(),
       () => zip_input_ref?.click(),
     );
+    cleanup_compile_persist = worker_client.on_compile_done(() => {
+      const url = worker_client.pdf_url();
+      if (!url) return;
+      fetch(url)
+        .then((r) => r.arrayBuffer())
+        .then((buf) => {
+          const bytes = new Uint8Array(buf);
+          save_pdf(bytes, props.store.project_id() || undefined).catch(() => {});
+          if (folder_sync().state().active) {
+            folder_sync().write_pdf(bytes).catch(() => {});
+          }
+        })
+        .catch(() => {});
+    });
+  });
+
+  onCleanup(() => {
+    cleanup_compile_persist?.();
+    if (estimate_opfs_timer !== undefined) clearTimeout(estimate_opfs_timer);
   });
 
   // re-estimate after compile finishes
   createEffect(() => {
     const s = worker_client.status();
+    if (estimate_opfs_timer !== undefined) {
+      clearTimeout(estimate_opfs_timer);
+      estimate_opfs_timer = undefined;
+    }
     if (s === "success" || s === "error") {
-      setTimeout(estimate_opfs, 300);
+      estimate_opfs_timer = setTimeout(estimate_opfs, 300);
     }
   });
 
@@ -381,23 +402,6 @@ const Toolbar: Component<Props> = (props) => {
 
   // watch controller is now created in App and passed via props
   const watch = props.watch;
-
-  // persist PDF to OPFS (and synced folder if active) after successful compile
-  worker_client.on_compile_done(() => {
-    const url = worker_client.pdf_url();
-    if (url) {
-      fetch(url)
-        .then((r) => r.arrayBuffer())
-        .then((buf) => {
-          const bytes = new Uint8Array(buf);
-          save_pdf(bytes, props.store.project_id() || undefined).catch(() => {});
-          if (props.folder_sync?.state().active) {
-            props.folder_sync.write_pdf(bytes).catch(() => {});
-          }
-        })
-        .catch(() => {});
-    }
-  });
 
   function handle_compile() {
     const files = { ...props.store.files };
@@ -745,8 +749,8 @@ const Toolbar: Component<Props> = (props) => {
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13.659 22H18a2 2 0 0 0 2-2V8a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 14 2H6a2 2 0 0 0-2 2v11.5"/><path d="M14 2v5a1 1 0 0 0 1 1h5"/><path d="M8 12v-1"/><path d="M8 18v-2"/><path d="M8 7V6"/><circle cx="8" cy="20" r="2"/></svg>
               Import Project
             </button>
-            <Show when={props.folder_sync?.is_supported() && !props.folder_sync?.state().active}>
-              <button class="upload-dropdown-item" onClick={() => { set_show_project_menu(false); props.folder_sync?.open_folder(); }}>
+            <Show when={folder_sync().is_supported() && !folder_sync().state().active}>
+              <button class="upload-dropdown-item" onClick={() => { set_show_project_menu(false); void folder_sync().open_folder(); }}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 20H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H20a2 2 0 0 1 2 2v.5"/><path d="M12 10v4h4"/><path d="m12 14 1.535-1.605a5 5 0 0 1 8 1.5"/><path d="M22 22v-4h-4"/><path d="m22 18-1.535 1.605a5 5 0 0 1-8-1.5"/></svg>
                 Open Folder
               </button>
@@ -873,8 +877,8 @@ const Toolbar: Component<Props> = (props) => {
       <div class="toolbar-right">
         <div class="upload-menu-wrapper" ref={share_btn_ref}>
           <button
-            class={`toolbar-toggle ${props.collab_status === "connected" ? "active" : ""}`}
-            title={props.collab_status === "connected" ? "Collaboration active" : "Share project"}
+            class={`toolbar-toggle ${collab.status() === "connected" ? "active" : ""}`}
+            title={collab.status() === "connected" ? "Collaboration active" : "Share project"}
             onClick={() => set_show_share_menu(v => !v)}
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -884,8 +888,8 @@ const Toolbar: Component<Props> = (props) => {
               <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
               <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
             </svg>
-            <Show when={props.collab_peer_count && props.collab_peer_count > 0}>
-              <span class="share-peer-badge">{props.collab_peer_count}</span>
+            <Show when={collab.peer_count() > 0}>
+              <span class="share-peer-badge">{collab.peer_count()}</span>
             </Show>
           </button>
           <AnimatedShow when={show_share_menu()}>
@@ -902,11 +906,11 @@ const Toolbar: Component<Props> = (props) => {
               </Show>
               <Show when={share_links() || props.store.room_id()}>
                 <div class="share-dropdown-status">
-                  <span class="share-status-dot" classList={{ connected: props.collab_status === "connected" }} />
+                  <span class="share-status-dot" classList={{ connected: collab.status() === "connected" }} />
                   <span class="share-status-text">
-                    {props.collab_status === "connected" ? "Connected" : props.collab_status === "connecting" ? "Connecting..." : "Disconnected"}
+                    {collab.status() === "connected" ? "Connected" : collab.status() === "connecting" ? "Connecting..." : "Disconnected"}
                   </span>
-                  <Show when={props.collab_permission === "read"}>
+                  <Show when={collab.permission() === "read"}>
                     <span class="share-permission-badge">Read-only</span>
                   </Show>
                 </div>
@@ -943,7 +947,7 @@ const Toolbar: Component<Props> = (props) => {
             </div>
           </AnimatedShow>
         </div>
-        <Show when={props.collab_status === "connected" && props.agent_review_store}>
+        <Show when={collab.status() === "connected"}>
           <button
             class="toolbar-toggle agent-indicator"
             title="Agent panel"
@@ -954,8 +958,8 @@ const Toolbar: Component<Props> = (props) => {
               <circle cx="9" cy="14" r="1" fill="currentColor"/>
               <circle cx="15" cy="14" r="1" fill="currentColor"/>
             </svg>
-            <Show when={props.agent_review_store && props.agent_review_store!.pending().length > 0}>
-              <span class="share-peer-badge agent-pending-badge">{props.agent_review_store!.pending().length}</span>
+            <Show when={agent_review_store().pending().length > 0}>
+              <span class="share-peer-badge agent-pending-badge">{agent_review_store().pending().length}</span>
             </Show>
           </button>
         </Show>

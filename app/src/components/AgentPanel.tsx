@@ -1,10 +1,9 @@
-import { type Component, For, Show, createSignal, createEffect } from "solid-js";
+import { type Component, For, Show, createSignal, createEffect, createMemo, onCleanup } from "solid-js";
 import type { Awareness } from "y-protocols/awareness";
-import type { AgentReviewStore, AgentReview } from "../lib/agent_review";
+import { use_app_context } from "../lib/app_context";
+import type { AgentReview } from "../lib/agent_review";
 
 type Props = {
-  awareness: Awareness | null;
-  review_store: AgentReviewStore;
   on_accept: (id: string) => void;
   on_reject: (id: string) => void;
   on_clear_completed: () => void;
@@ -107,11 +106,15 @@ function truncate(text: string, max: number): string {
 }
 
 const AgentPanel: Component<Props> = (props) => {
+  const app = use_app_context();
   const [agent_peers, set_agent_peers] = createSignal<PeerInfo[]>([]);
 
   createEffect(() => {
-    const aw = props.awareness;
-    if (!aw) return;
+    const aw = app.collab.awareness();
+    if (!aw) {
+      set_agent_peers([]);
+      return;
+    }
 
     function refresh() {
       set_agent_peers(get_agent_peers(aw));
@@ -119,12 +122,12 @@ const AgentPanel: Component<Props> = (props) => {
 
     refresh();
     aw.on("change", refresh);
-    return () => aw.off("change", refresh);
+    onCleanup(() => aw.off("change", refresh));
   });
 
-  const pending_reviews = () => props.review_store.pending();
-  const all_reviews = () => props.review_store.reviews();
-  const has_completed = () => all_reviews().some((r) => r.status !== "pending");
+  const pending_reviews = createMemo(() => app.agent_review_store.pending());
+  const all_reviews = createMemo(() => app.agent_review_store.reviews());
+  const has_completed = createMemo(() => all_reviews().some((review) => review.status !== "pending"));
 
   return (
     <div class="agent-panel-overlay" onClick={(e) => { if (e.target === e.currentTarget) props.on_close(); }}>

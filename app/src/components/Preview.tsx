@@ -47,15 +47,20 @@ const Preview: Component = () => {
   createEffect(() => {
     const url = worker_client.pdf_url();
     const bytes = worker_client.pdf_bytes();
-    if (url && !bytes) {
-      fetch(url)
-        .then((r) => r.arrayBuffer())
-        .then((buf) => {
-          const arr = new Uint8Array(buf);
-          worker_client.restore_pdf_bytes(arr);
-        })
-        .catch(() => {});
-    }
+    if (!url || bytes) return;
+
+    const controller = new AbortController();
+    fetch(url, { signal: controller.signal })
+      .then((r) => r.arrayBuffer())
+      .then((buf) => {
+        const arr = new Uint8Array(buf);
+        worker_client.restore_pdf_bytes(arr);
+      })
+      .catch((err: unknown) => {
+        if (err instanceof DOMException && err.name === "AbortError") return;
+      });
+
+    onCleanup(() => controller.abort());
   });
 
   onCleanup(() => {

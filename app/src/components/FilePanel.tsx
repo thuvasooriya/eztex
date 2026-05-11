@@ -1,9 +1,9 @@
 import { type Component, For, Show, createSignal, createEffect, onCleanup, type JSX } from "solid-js";
+import { use_app_context } from "../lib/app_context";
 import type { ProjectStore } from "../lib/project_store";
 import { is_binary } from "../lib/project_store";
 import { build_tree, auto_suffix, type TreeNode } from "../lib/file_tree";
 import { show_alert_modal } from "../lib/modal_store";
-import type { LocalFolderSync } from "../lib/local_folder_sync";
 import { worker_client } from "../lib/worker_client";
 import FolderSyncStatus from "./FolderSyncStatus";
 
@@ -22,10 +22,11 @@ function file_icon(name: string): string {
 
 type Props = {
   store: ProjectStore;
-  folder_sync?: LocalFolderSync;
 };
 
 const FilePanel: Component<Props> = (props) => {
+  const app = use_app_context();
+  const folder_sync = () => app.folder_sync;
   const [renaming, set_renaming] = createSignal<string | null>(null);
   const [rename_value, set_rename_value] = createSignal("");
   const [ctx_menu, set_ctx_menu] = createSignal<{ file: string; x: number; y: number } | null>(null);
@@ -252,7 +253,7 @@ const FilePanel: Component<Props> = (props) => {
     return (
       <div
         class={`file-item ${name === props.store.current_file() ? "active" : ""} ${dragging() === node.path ? "dragging" : ""}`}
-        style={{ "padding-left": `${8 + depth * 14}px` }}
+        style={{ "--tree-depth": String(depth) }}
         onClick={() => props.store.set_current_file(name)}
         onDblClick={() => start_rename(name)}
         draggable={true}
@@ -317,7 +318,7 @@ const FilePanel: Component<Props> = (props) => {
       <div>
         <div
           class={`file-item folder-item ${drop_target() === node.path ? "drop-target" : ""} ${dragging() === node.path ? "dragging" : ""}`}
-          style={{ "padding-left": `${8 + depth * 14}px` }}
+          style={{ "--tree-depth": String(depth) }}
           onClick={() => { if (renaming() !== node.path) toggle_folder(node.path); }}
           onDblClick={() => start_rename(node.path)}
           draggable={true}
@@ -346,18 +347,18 @@ const FilePanel: Component<Props> = (props) => {
                 if (e.key === "Escape") set_renaming(null);
               }}
             />
-          ) : (
-            <>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style={{ "flex-shrink": "0", color: "var(--fg-muted)" }}>
-                <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z" />
-              </svg>
-              <span class="file-name">{node.name}</span>
-              <span class="folder-chevron" style={{ "margin-left": "auto" }}>
-                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                  style={{ transform: is_open() ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 150ms" }}>
-                  <polyline points="9 6 15 12 9 18" />
+            ) : (
+              <>
+                <svg class="folder-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z" />
                 </svg>
-              </span>
+                <span class="file-name">{node.name}</span>
+                <span class="folder-chevron" classList={{ open: is_open() }}>
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                  >
+                    <polyline points="9 6 15 12 9 18" />
+                  </svg>
+                </span>
             </>
           )}
         </div>
@@ -405,11 +406,11 @@ const FilePanel: Component<Props> = (props) => {
         }
       }}
     >
-      <Show when={props.folder_sync?.state().active}>
+      <Show when={folder_sync().state().active}>
         <div class="folder-sync-panel-bar">
           <FolderSyncStatus
-            state={props.folder_sync!.state()}
-            on_disconnect={() => props.folder_sync?.disconnect()}
+            state={folder_sync().state()}
+            on_disconnect={() => folder_sync().disconnect()}
           />
         </div>
       </Show>

@@ -4,6 +4,7 @@
 import { type Component, Show, For, createEffect, createMemo, type JSX } from "solid-js";
 import { palette_open, set_palette_open, palette_filter, set_palette_filter, get_visible_commands, fuzzy_match, execute_command, IS_MAC } from "../lib/commands";
 import type { Command } from "../lib/commands";
+import type { ProjectStore } from "../lib/project_store";
 import { worker_client } from "../lib/worker_client";
 import { create_list_navigation } from "../lib/list_nav";
 import AnimatedShow from "./AnimatedShow";
@@ -42,12 +43,12 @@ function keybinding_tokens(kb: string): string[] {
 // file picker mode: palette_filter starts with "> "
 // goto line mode: palette_filter starts with ": "
 
-const CommandPalette: Component<{ store: any }> = (props) => {
+const CommandPalette: Component<{ store: ProjectStore }> = (props) => {
   let input_ref: HTMLInputElement | undefined;
   let list_ref: HTMLDivElement | undefined;
 
-  const is_file_mode = () => palette_filter().startsWith("> ");
-  const is_goto_mode = () => palette_filter().startsWith(": ");
+  const is_file_mode = createMemo(() => palette_filter().startsWith("> "));
+  const is_goto_mode = createMemo(() => palette_filter().startsWith(": "));
 
   const file_list = createMemo(() => {
     if (!is_file_mode()) return [];
