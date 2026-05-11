@@ -232,16 +232,8 @@ export fn ttbc_output_putc(handle: Handle, c: c_int) c_int {
     const world = get_world();
     const io = get_global_io();
     const slot = world.get_output(handle) orelse return -1;
-    const byte: [1]u8 = .{@intCast(c & 0xff)};
-    if (slot.is_gz) {
-        const buf = slot.gz_buf orelse return -1;
-        buf.append(std.heap.c_allocator, byte[0]) catch return -1;
-        return c;
-    }
-    var write_buf: [4096]u8 = undefined;
-    var writer = slot.file.writerStreaming(io, &write_buf);
-    writer.interface.writeAll(&byte) catch return -1;
-    writer.interface.flush() catch return -1;
+    const byte: u8 = @intCast(c & 0xff);
+    slot.writeByte(io, byte) catch return -1;
     return c;
 }
 
@@ -249,20 +241,15 @@ export fn ttbc_output_write(handle: Handle, data: [*]const u8, len: usize) usize
     const world = get_world();
     const io = get_global_io();
     const slot = world.get_output(handle) orelse return 0;
-    if (slot.is_gz) {
-        const buf = slot.gz_buf orelse return 0;
-        buf.appendSlice(std.heap.c_allocator, data[0..len]) catch return 0;
-        return len;
-    }
-    var write_buf: [4096]u8 = undefined;
-    var writer = slot.file.writerStreaming(io, &write_buf);
-    writer.interface.writeAll(data[0..len]) catch return 0;
-    writer.interface.flush() catch return 0;
+    slot.write(io, data[0..len]) catch return 0;
     return len;
 }
 
 export fn ttbc_output_flush(handle: Handle) c_int {
-    _ = handle;
+    const world = get_world();
+    const io = get_global_io();
+    const slot = world.get_output(handle) orelse return -1;
+    slot.flush(io) catch return -1;
     return 0;
 }
 
@@ -273,7 +260,7 @@ extern fn gzclose(gz: *anyopaque) c_int;
 export fn ttbc_output_close(handle: Handle) c_int {
     const world = get_world();
     const io = get_global_io();
-    const slot = world.get_output(handle) orelse return 0;
+    var slot = world.get_output(handle) orelse return 0;
     defer world.outputs[handle - 1] = null;
 
     if (slot.is_gz) {
@@ -326,6 +313,7 @@ export fn ttbc_output_close(handle: Handle) c_int {
     }
 
     if (!slot.is_stdout) {
+        slot.flush(io) catch {};
         slot.file.close(io);
     }
     return 0;

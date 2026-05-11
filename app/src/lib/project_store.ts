@@ -85,7 +85,7 @@ export function create_project_store() {
         new_files[path] = ytext?.toString() ?? "";
       }
     }
-    if (Object.keys(new_files).length === 0) {
+    if (Object.keys(new_files).length === 0 && !_pid) {
       new_files["main.tex"] = "";
     }
     set_files(reconcile(new_files));
@@ -460,15 +460,20 @@ export function create_project_store() {
 
   async function load_persisted_blobs(): Promise<void> {
     if (!_pid) return;
+    let loaded_any = false;
     for (const path of list_paths(yp)) {
       const fid = get_file_id(yp, path);
       if (!fid) continue;
       const hash = yp.blob_refs.get(fid) as string | undefined;
       if (hash && !binary_cache.has(path)) {
         const bytes = await load_persisted_blob(_pid, hash);
-        if (bytes) binary_cache.set(path, bytes);
+        if (bytes) {
+          binary_cache.set(path, bytes);
+          loaded_any = true;
+        }
       }
     }
+    if (loaded_any) refresh_facade();
   }
 
   function destroy() {

@@ -474,7 +474,7 @@ const Toolbar: Component<Props> = (props) => {
 
     // save snapshot with the imported files
     const { create_y_project_doc, encode_snapshot: enc_snap, get_or_create_text_file, create_binary_file_ref, set_project_metadata } = await import("../lib/y_project_doc");
-    const { save_ydoc_snapshot, save_blob, compute_hash } = await import("../lib/project_persist");
+    const { save_ydoc_snapshot, save_blob, compute_hash, save_project_manifest, load_catalog, save_catalog } = await import("../lib/project_persist");
     const yp = create_y_project_doc(id, "Imported Project");
     for (const [path, content] of Object.entries(incoming)) {
       if (content instanceof Uint8Array) {
@@ -487,7 +487,7 @@ const Toolbar: Component<Props> = (props) => {
     }
 
     // detect entry file
-    let detected_main = "main.tex";
+    let detected_main: string | undefined;
     const tex_files = Object.entries(incoming).filter(([name, content]) =>
       typeof content === "string" && name.endsWith(".tex")
     );
@@ -509,10 +509,34 @@ const Toolbar: Component<Props> = (props) => {
       if (choice) detected_main = choice;
     } else if (tex_files.length > 0) {
       detected_main = tex_files[0][0];
+    } else {
+      // no tex files, use first file
+      const first = Object.keys(incoming)[0];
+      detected_main = first || "main.tex";
     }
     set_project_metadata(yp, { main_file: detected_main });
 
     await save_ydoc_snapshot(id, enc_snap(yp.doc));
+
+    // update manifest and catalog with detected main_file
+    await save_project_manifest(id, {
+      version: 2,
+      id,
+      name: "Imported Project",
+      created_at: Date.now(),
+      updated_at: Date.now(),
+      main_file: detected_main ?? "main.tex",
+      ydoc_file: "ydoc.bin",
+      blobs_dir: "blobs",
+      outputs_dir: "outputs",
+    });
+    const cat = await load_catalog();
+    const entry = cat.projects.find(p => p.id === id);
+    if (entry) {
+      entry.main_file = detected_main ?? "main.tex";
+      await save_catalog(cat);
+    }
+
     yp.doc.destroy();
 
     window.location.href = get_project_url(id);

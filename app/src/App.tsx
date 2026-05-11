@@ -241,6 +241,7 @@ const App: Component = () => {
         const saved_main = meta.get("main_file") as string | undefined;
         if (saved_main) {
           store.set_main_file(saved_main);
+          store.set_current_file(saved_main);
         }
       }
     }
@@ -337,6 +338,11 @@ const App: Component = () => {
         worker_client.compile({ files, main: store.main_file(), mode: "preview" });
       }
     });
+    // if worker is already ready by now, trigger compile directly
+    if (worker_client.ready() && !pdf_restored) {
+      const files = { ...store.files };
+      worker_client.compile({ files, main: store.main_file(), mode: "preview" });
+    }
 
     let save_timer: ReturnType<typeof setTimeout> | undefined;
     store.on_change(() => {

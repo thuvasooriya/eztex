@@ -203,6 +203,9 @@ pub const OutputSlot = struct {
     // is gzip-compressed and written to `file` via gzdopen.
     is_gz: bool = false,
     gz_buf: ?*std.ArrayList(u8) = null,
+    // Write buffer for non-gz outputs. Accumulates data between flushes.
+    write_buf: [4096]u8 = undefined,
+    write_len: usize = 0,
 
     pub fn set_name(self: *OutputSlot, n: []const u8) void {
         const copy_len = @min(n.len, self.name.len);
@@ -214,14 +217,70 @@ pub const OutputSlot = struct {
         return self.name[0..self.name_len];
     }
 
+    // Append data to the write buffer. Flushes automatically when buffer is full.
+    // For stdout, also flushes on newline to provide progressive output.
+    pub fn write(self: *OutputSlot, io: Io, data: []const u8) Io.File.Writer.Error!void {
+        if (self.is_gz) {
+            const buf = self.gz_buf orelse return error.Unexpected;
+            buf.appendSlice(std.heap.c_allocator, data) catch return error.SystemResources;
+            return;
+        }
+
+        var src_idx: usize = 0;
+        while (src_idx < data.len) {
+            const avail = self.write_buf.len - self.write_len;
+            if (avail == 0) {
+                try self.flush(io);
+                continue;
+            }
+            const copy_len = @min(avail, data.len - src_idx);
+            @memcpy(self.write_buf[self.write_len..][0..copy_len], data[src_idx..][0..copy_len]);
+            self.write_len += copy_len;
+            src_idx += copy_len;
+
+            if (self.is_stdout) {
+                const written = self.write_buf[self.write_len - copy_len .. self.write_len];
+                if (std.mem.indexOfScalar(u8, written, '\n') != null) {
+                    try self.flush(io);
+                }
+            }
+        }
+    }
+
+    pub fn writeByte(self: *OutputSlot, io: Io, byte: u8) Io.File.Writer.Error!void {
+        if (self.is_gz) {
+            const buf = self.gz_buf orelse return error.Unexpected;
+            buf.append(std.heap.c_allocator, byte) catch return error.SystemResources;
+            return;
+        }
+
+        if (self.write_len >= self.write_buf.len) {
+            try self.flush(io);
+        }
+        self.write_buf[self.write_len] = byte;
+        self.write_len += 1;
+
+        if (self.is_stdout and byte == '\n') {
+            try self.flush(io);
+        }
+    }
+
+    pub fn flush(self: *OutputSlot, io: Io) Io.File.Writer.Error!void {
+        if (self.is_gz) return;
+        if (self.write_len == 0) return;
+        try self.file.writeStreamingAll(io, self.write_buf[0..self.write_len]);
+        self.write_len = 0;
+    }
+
     pub fn close(self: *OutputSlot, io: Io) void {
         if (self.is_gz) {
-            // Gzip output is flushed by Engine.zig before close; this only releases the buffer.
             if (self.gz_buf) |buf| {
                 buf.deinit(std.heap.c_allocator);
                 std.heap.c_allocator.destroy(buf);
                 self.gz_buf = null;
             }
+        } else {
+            self.flush(io) catch {};
         }
         if (!self.is_stdout) {
             self.file.close(io);

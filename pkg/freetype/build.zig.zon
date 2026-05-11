@@ -18,7 +18,7 @@
     },
     .dependencies = .{
         .freetype = .{
-            .url = "https://download.savannah.gnu.org/releases/freetype/freetype-2.14.1.tar.xz",
+            .url = "https://mirror.accum.se/mirror/gnu.org/savannah/freetype/freetype-2.14.1.tar.gz",
             .hash = "N-V-__8AAIT5KwGz955VFk9c5rWaksEC9xVOvGDyR5JBAXnB",
         },
         .libpng = .{
