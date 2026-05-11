@@ -402,8 +402,13 @@ const App: Component = () => {
       const has_handle = await folder_sync.has_stored_handle();
       if (has_handle) {
         const name = await folder_sync.get_stored_folder_name();
-        set_reconnect_folder_name(name ?? "folder");
-        set_show_reconnect(true);
+        const is_fresh = store.file_names().length <= 1;
+        if (is_fresh) {
+          await folder_sync.reconnect();
+        } else {
+          set_reconnect_folder_name(name ?? "folder");
+          set_show_reconnect(true);
+        }
       }
     }
 

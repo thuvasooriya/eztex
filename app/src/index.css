@@ -114,7 +114,6 @@ body {
   background: var(--bg-dark);
   flex-shrink: 0;
   gap: 8px;
-  z-index: 10;
   position: relative;
 }
 

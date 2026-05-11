@@ -59,6 +59,7 @@ export interface ConflictInfo {
 export interface LocalFolderSync {
   state: () => LocalSyncState;
   open_folder: () => Promise<boolean>;
+  pick_folder: () => Promise<string | null>;
   reconnect: () => Promise<boolean>;
   disconnect: () => void;
   cleanup: () => void;
@@ -411,6 +412,21 @@ export function create_local_folder_sync(store: ProjectStore): LocalFolderSync {
     }
   }
 
+  async function pick_folder(): Promise<string | null> {
+    if (!supports_folder_sync()) return null;
+    try {
+      const handle = await window.showDirectoryPicker!({
+        mode: "readwrite",
+        id: "eztex-project",
+      });
+      await store_handle(handle);
+      await store_folder_name(handle.name);
+      return handle.name;
+    } catch {
+      return null;
+    }
+  }
+
   async function reconnect(): Promise<boolean> {
     const handle = await load_handle();
     if (!handle) return false;
@@ -702,6 +718,7 @@ export function create_local_folder_sync(store: ProjectStore): LocalFolderSync {
   return {
     state,
     open_folder,
+    pick_folder,
     reconnect,
     disconnect,
     cleanup,

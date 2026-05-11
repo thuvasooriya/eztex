@@ -418,7 +418,6 @@ export async function save_pdf(bytes: Uint8Array, project_id?: ProjectId): Promi
 }
 
 export async function load_pdf(project_id?: ProjectId): Promise<Uint8Array | null> {
-  // try v2 first
   if (project_id) {
     try {
       const outputs = await get_outputs_dir(project_id);
@@ -426,9 +425,9 @@ export async function load_pdf(project_id?: ProjectId): Promise<Uint8Array | nul
       const file = await handle.getFile();
       const bytes = new Uint8Array(await file.arrayBuffer());
       if (bytes.length > 0) return bytes;
-    } catch { /* fallthrough */ }
+    } catch { /* no v2 pdf */ }
+    return null;
   }
-  // fallback to v1
   try {
     const dir = await get_project_dir();
     if (!dir) return null;
@@ -469,7 +468,8 @@ export async function load_synctex(project_id?: ProjectId): Promise<string | nul
       const file = await handle.getFile();
       const text = await file.text();
       if (text) return text;
-    } catch { /* fallthrough */ }
+    } catch { /* no v2 synctex */ }
+    return null;
   }
   try {
     const dir = await get_project_dir();

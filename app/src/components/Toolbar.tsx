@@ -749,8 +749,24 @@ const Toolbar: Component<Props> = (props) => {
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13.659 22H18a2 2 0 0 0 2-2V8a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 14 2H6a2 2 0 0 0-2 2v11.5"/><path d="M14 2v5a1 1 0 0 0 1 1h5"/><path d="M8 12v-1"/><path d="M8 18v-2"/><path d="M8 7V6"/><circle cx="8" cy="20" r="2"/></svg>
               Import Project
             </button>
-            <Show when={folder_sync().is_supported() && !folder_sync().state().active}>
-              <button class="upload-dropdown-item" onClick={() => { set_show_project_menu(false); void folder_sync().open_folder(); }}>
+            <Show when={folder_sync().is_supported()}>
+              <button class="upload-dropdown-item" onClick={async () => {
+                set_show_project_menu(false);
+                const confirmed = await show_confirm_modal({
+                  title: "Open Local Folder",
+                  message: "This will create a new project from the selected folder. The current project will remain unchanged.",
+                  confirm_label: "Continue",
+                });
+                if (!confirmed) return;
+                if (folder_sync().state().active) {
+                  folder_sync().disconnect();
+                }
+                const folder_name = await folder_sync().pick_folder();
+                if (!folder_name) return;
+                const id = await create_project(folder_name);
+                await set_current_project(id);
+                window.location.href = get_project_url(id);
+              }}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 20H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H20a2 2 0 0 1 2 2v.5"/><path d="M12 10v4h4"/><path d="m12 14 1.535-1.605a5 5 0 0 1 8 1.5"/><path d="M22 22v-4h-4"/><path d="m22 18-1.535 1.605a5 5 0 0 1-8-1.5"/></svg>
                 Open Folder
               </button>
