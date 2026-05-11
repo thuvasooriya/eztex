@@ -347,6 +347,27 @@ export function init_commands(d: CommandDeps): void {
   });
 
   register_command({
+    id: "project.share",
+    label: "Share Project",
+    description: "Create a collaboration room and copy share links",
+    keywords: ["collab", "collaborate", "room", "invite"],
+    category: "Project",
+    action: async () => {
+      const pid = deps!.store.project_id();
+      if (!pid) return;
+      const { create_room_links } = await import("./collab_share");
+      const links = await create_room_links(pid, "Untitled Project", window.location.origin);
+      deps!.store.set_room_id(links.room_id);
+      try {
+        await navigator.clipboard.writeText(links.write_url);
+        alert("Write link copied to clipboard!");
+      } catch {
+        alert(`Write link: ${links.write_url}`);
+      }
+    },
+  });
+
+  register_command({
     id: "project.open_folder",
     label: "Open Local Folder",
     description: "Connect a local folder for file sync",

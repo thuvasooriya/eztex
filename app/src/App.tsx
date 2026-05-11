@@ -15,6 +15,9 @@ import {
   create_fresh_project,
 } from "./lib/project_persist";
 import { get_project, set_current_project } from "./lib/project_manager";
+import { parse_collab_url, get_owned_room } from "./lib/collab_share";
+import { create_collab_provider, type CollabProvider, type CollabStatus, type CollabPermission } from "./lib/collab_provider";
+import { get_or_create_identity } from "./lib/identity";
 import { create_local_folder_sync, type ConflictInfo } from "./lib/local_folder_sync";
 import { create_watch_controller } from "./lib/watch_controller";
 import { get_all_commands, IS_MAC } from "./lib/commands";
@@ -82,6 +85,14 @@ const App: Component = () => {
 
   const [vim_enabled, set_vim_enabled] = createSignal(localStorage.getItem(VIM_ENABLED_KEY) === "true");
   createEffect(() => localStorage.setItem(VIM_ENABLED_KEY, String(vim_enabled())));
+
+  const [_collab_status, set_collab_status] = createSignal<CollabStatus>("idle");
+  const [collab_permission, set_collab_permission] = createSignal<CollabPermission | null>(null);
+  const [_collab_peer_count, set_collab_peer_count] = createSignal(0);
+  const [read_only, set_read_only] = createSignal(false);
+  createEffect(() => set_read_only(collab_permission() === "read"));
+
+  let _collab_provider: CollabProvider | null = null;
 
   let _editor_view: any = undefined;
   function set_editor_view_ref(v: any) { _editor_view = v; }
@@ -169,6 +180,8 @@ const App: Component = () => {
   onCleanup(() => {
     _cleanup_resize?.();
     _cleanup_keydown?.();
+    _collab_provider?.destroy();
+    _collab_provider = null;
   });
 
   onMount(async () => {
@@ -243,6 +256,40 @@ const App: Component = () => {
       if (parsed) {
         worker_client.restore_synctex(parsed);
       }
+    }
+
+    // initialize collaboration if room detected
+    const collab_url = parse_collab_url(new URL(window.location.href));
+    let room_id = store.room_id();
+    let token: string | null = null;
+
+    if (collab_url) {
+      room_id = collab_url.room_id;
+      token = collab_url.token;
+      store.set_room_id(room_id);
+    } else if (room_id) {
+      const owned = get_owned_room(room_id);
+      if (owned) {
+        token = await import("./lib/collab_share").then(m => m.create_share_token(owned.room_secret, room_id!, "w"));
+      }
+    }
+
+    if (room_id && token) {
+      const ws_url = `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/collab/ws/${room_id}`;
+      const identity = get_or_create_identity();
+      const provider = create_collab_provider({
+        room_id,
+        token,
+        doc: store.ydoc(),
+        awareness: store.awareness(),
+        identity,
+        ws_url,
+        on_status: set_collab_status,
+        on_permission: set_collab_permission,
+        on_peer_count: set_collab_peer_count,
+      });
+      _collab_provider = provider;
+      provider.connect();
     }
 
     set_project_ready(true);
@@ -427,6 +474,9 @@ const App: Component = () => {
           _trigger_folder_upload = folder_fn;
           _trigger_zip_upload = zip_fn;
         }}
+        collab_status={_collab_status()}
+        collab_permission={collab_permission()}
+        collab_peer_count={_collab_peer_count()}
       />
 
       <div class={workspace_class()}>
@@ -451,6 +501,7 @@ const App: Component = () => {
               <Editor
                 store={store}
                 vim_enabled={vim_enabled()}
+                read_only={read_only()}
                 on_editor_view={set_editor_view_ref}
               />
             </Show>

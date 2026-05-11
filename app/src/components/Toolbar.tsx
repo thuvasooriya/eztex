@@ -9,6 +9,8 @@ import type { ProjectFiles } from "../lib/project_store";
 import { save_pdf, clear_bundle_cache, reset_all_persistence } from "../lib/project_persist";
 import type { ProjectCatalogEntry } from "../lib/project_persist";
 import { list_projects, rename_project, delete_project, get_project_url, create_project } from "../lib/project_manager";
+import { create_room_links } from "../lib/collab_share";
+import type { CollabStatus, CollabPermission } from "../lib/collab_provider";
 import type { LocalFolderSync, ConflictInfo } from "../lib/local_folder_sync";
 import type { WatchController } from "../lib/watch_controller";
 import logo_svg from "/logo.svg?raw";
@@ -34,6 +36,9 @@ type Props = {
   show_info_modal: boolean;
   set_show_info_modal: Setter<boolean>;
   register_file_triggers?: (file_fn: () => void, folder_fn: () => void, zip_fn: () => void) => void;
+  collab_status?: CollabStatus;
+  collab_permission?: CollabPermission | null;
+  collab_peer_count?: number;
 };
 
 const Logo: Component = () => (
@@ -50,6 +55,8 @@ const Toolbar: Component<Props> = (props) => {
   const [show_upload_menu, set_show_upload_menu] = createSignal(false);
   const [show_download_menu, set_show_download_menu] = createSignal(false);
   const [show_project_menu, set_show_project_menu] = createSignal(false);
+  const [show_share_menu, set_show_share_menu] = createSignal(false);
+  const [share_links, set_share_links] = createSignal<{ write_url: string; read_url: string } | null>(null);
   const [projects, set_projects] = createSignal<ProjectCatalogEntry[]>([]);
   const [current_project_name, set_current_project_name] = createSignal("");
   // show_info_modal and show_logs are now received via props (lifted to App)
@@ -174,6 +181,41 @@ const Toolbar: Component<Props> = (props) => {
     document.addEventListener("click", handler);
     onCleanup(() => document.removeEventListener("click", handler));
   });
+
+  // close share menu on click outside
+  let share_btn_ref: HTMLDivElement | undefined;
+  createEffect(() => {
+    if (!show_share_menu()) return;
+    const handler = (e: MouseEvent) => {
+      if (share_btn_ref && !share_btn_ref.contains(e.target as Node)) {
+        set_show_share_menu(false);
+      }
+    };
+    document.addEventListener("click", handler);
+    onCleanup(() => document.removeEventListener("click", handler));
+  });
+
+  async function handle_create_room() {
+    const pid = props.store.project_id();
+    if (!pid) return;
+    const links = await create_room_links(pid, current_project_name(), window.location.origin);
+    set_share_links({ write_url: links.write_url, read_url: links.read_url });
+    props.store.set_room_id(links.room_id);
+  }
+
+  async function handle_copy_link(url: string) {
+    try {
+      await navigator.clipboard.writeText(url);
+    } catch {
+      // fallback
+      const a = document.createElement("a");
+      a.href = url;
+      a.textContent = url;
+      document.body.appendChild(a);
+      document.execCommand("copy");
+      a.remove();
+    }
+  }
 
   function handle_switch_project(id: string) {
     set_show_project_menu(false);
@@ -687,6 +729,78 @@ const Toolbar: Component<Props> = (props) => {
       </Show>
 
       <div class="toolbar-right">
+        <div class="upload-menu-wrapper" ref={share_btn_ref}>
+          <button
+            class={`toolbar-toggle ${props.collab_status === "connected" ? "active" : ""}`}
+            title={props.collab_status === "connected" ? "Collaboration active" : "Share project"}
+            onClick={() => set_show_share_menu(v => !v)}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="18" cy="5" r="3" />
+              <circle cx="6" cy="12" r="3" />
+              <circle cx="18" cy="19" r="3" />
+              <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
+              <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+            </svg>
+            <Show when={props.collab_peer_count && props.collab_peer_count > 0}>
+              <span class="share-peer-badge">{props.collab_peer_count}</span>
+            </Show>
+          </button>
+          <AnimatedShow when={show_share_menu()}>
+            <div class="upload-dropdown share-dropdown">
+              <Show when={!props.store.room_id() && !share_links()}>
+                <button class="upload-dropdown-item" onClick={handle_create_room}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="12" y1="8" x2="12" y2="16" />
+                    <line x1="8" y1="12" x2="16" y2="12" />
+                  </svg>
+                  Create Room
+                </button>
+              </Show>
+              <Show when={share_links() || props.store.room_id()}>
+                <div class="share-dropdown-status">
+                  <span class="share-status-dot" classList={{ connected: props.collab_status === "connected" }} />
+                  <span class="share-status-text">
+                    {props.collab_status === "connected" ? "Connected" : props.collab_status === "connecting" ? "Connecting..." : "Disconnected"}
+                  </span>
+                  <Show when={props.collab_permission === "read"}>
+                    <span class="share-permission-badge">Read-only</span>
+                  </Show>
+                </div>
+                <div class="upload-dropdown-divider" />
+                <button
+                  class="upload-dropdown-item"
+                  onClick={() => {
+                    const links = share_links();
+                    const url = links?.write_url ?? window.location.href;
+                    handle_copy_link(url);
+                  }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="9" y="9" width="13" height="13" rx="2" />
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                  </svg>
+                  Copy Write Link
+                </button>
+                <button
+                  class="upload-dropdown-item"
+                  onClick={() => {
+                    const links = share_links();
+                    const url = links?.read_url ?? window.location.href;
+                    handle_copy_link(url);
+                  }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                    <circle cx="12" cy="12" r="3" />
+                  </svg>
+                  Copy Read Link
+                </button>
+              </Show>
+            </div>
+          </AnimatedShow>
+        </div>
         <div class="compile-group" ref={compile_group_ref}>
           <AnimatedShow when={show_logs()}>
             <div class="click-interceptor" onMouseDown={dismiss_logs} />

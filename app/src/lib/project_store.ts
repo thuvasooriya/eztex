@@ -1,6 +1,7 @@
 import { createSignal } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
 import * as Y from "yjs";
+import { Awareness } from "y-protocols/awareness";
 import {
   bind_y_project_doc,
   create_file_id,
@@ -11,6 +12,7 @@ import {
   list_paths,
   rename_file_path,
   set_project_metadata,
+  get_project_metadata,
   apply_snapshot,
   create_binary_file_ref,
 } from "./y_project_doc";
@@ -43,6 +45,7 @@ export function create_project_store() {
   let pid: ProjectId = "";
   const ydoc = new Y.Doc();
   let yp = bind_y_project_doc(ydoc);
+  const awareness = new Awareness(ydoc);
   const binary_cache = new Map<string, Uint8Array>();
   const _dirty_blob_paths = new Set<string>();
 
@@ -469,7 +472,16 @@ export function create_project_store() {
       bc.close();
       bc = null;
     }
+    awareness.destroy();
     ydoc.destroy();
+  }
+
+  function room_id(): string | undefined {
+    return get_project_metadata(yp).room_id;
+  }
+
+  function set_room_id(rid: string | undefined) {
+    set_project_metadata(yp, { room_id: rid });
   }
 
   return {
@@ -495,6 +507,9 @@ export function create_project_store() {
     // new Yjs API
     project_id: () => pid,
     ydoc: () => ydoc,
+    awareness: () => awareness,
+    room_id,
+    set_room_id,
     get_ytext,
     snapshot_files,
     encode_ydoc_snapshot,

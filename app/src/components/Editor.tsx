@@ -22,6 +22,7 @@ import { worker_client } from "../lib/worker_client";
 type Props = {
   store: ProjectStore;
   vim_enabled: boolean;
+  read_only?: boolean;
   on_editor_view: (view: EditorView) => void;
 };
 
@@ -206,31 +207,37 @@ const Editor: Component<Props> = (props) => {
 
   let sync_timer: ReturnType<typeof setTimeout> | undefined;
   let suppress_forward_sync = false;
+  const read_only_compartment = new Compartment();
+
+  function base_extensions(ytext: Y.Text, undoManager: Y.UndoManager, readOnly: boolean): any[] {
+    return [
+      lineNumbers(),
+      highlightActiveLine(),
+      highlightSpecialChars(),
+      drawSelection(),
+      bracketMatching(),
+      indentOnInput(),
+      foldGutter(),
+      StreamLanguage.define(stex),
+      syntaxHighlighting(tokyo_night_highlight),
+      tokyo_night_theme,
+      yCollab(ytext, props.store.awareness(), { undoManager }),
+      keymap.of([...defaultKeymap, ...yUndoManagerKeymap, indentWithTab]),
+      vim_compartment.of([]),
+      read_only_compartment.of(readOnly ? [EditorState.readOnly.of(true), EditorView.editable.of(false)] : []),
+      EditorView.updateListener.of((update) => {
+        if (update.selectionSet || update.docChanged) {
+          schedule_forward_synctex(update);
+        }
+      }),
+      EditorView.lineWrapping,
+    ];
+  }
 
   function create_editor_state(ytext: Y.Text, undoManager: Y.UndoManager): EditorState {
     return EditorState.create({
       doc: ytext.toString(),
-      extensions: [
-        lineNumbers(),
-        highlightActiveLine(),
-        highlightSpecialChars(),
-        drawSelection(),
-        bracketMatching(),
-        indentOnInput(),
-        foldGutter(),
-        StreamLanguage.define(stex),
-        syntaxHighlighting(tokyo_night_highlight),
-        tokyo_night_theme,
-        yCollab(ytext, null, { undoManager }),
-        keymap.of([...defaultKeymap, ...yUndoManagerKeymap, indentWithTab]),
-        vim_compartment.of([]),
-        EditorView.updateListener.of((update) => {
-          if (update.selectionSet || update.docChanged) {
-            schedule_forward_synctex(update);
-          }
-        }),
-        EditorView.lineWrapping,
-      ],
+      extensions: base_extensions(ytext, undoManager, props.read_only ?? false),
     });
   }
 
@@ -279,6 +286,17 @@ const Editor: Component<Props> = (props) => {
         } else {
           view.dispatch({ effects: vim_compartment.reconfigure([]) });
         }
+      },
+    ),
+  );
+
+  createEffect(
+    on(
+      () => props.read_only,
+      (readOnly) => {
+        if (!view) return;
+        const extensions = readOnly ? [EditorState.readOnly.of(true), EditorView.editable.of(false)] : [];
+        view.dispatch({ effects: read_only_compartment.reconfigure(extensions) });
       },
     ),
   );

@@ -1,13 +1,17 @@
 /**
- * CORS Proxy for ITAR Bundle Server
+ * CORS Proxy for ITAR Bundle Server + Collaboration Room Authority
  *
  * Routes:
  *   GET /               -- health check
  *   GET /bundle         -- R2 primary, Tectonic fallback (2.8GB tar, Range requests)
  *   GET /index.gz       -- R2 primary, Tectonic fallback (1.2MB gzipped index)
  *   GET /formats/*      -- R2 only (23MB .fmt files)
+ *   GET /collab/health  -- collab health check
+ *   GET /collab/ws/*    -- WebSocket upgrade to Durable Object room
  *   OPTIONS *           -- CORS preflight
  */
+
+import { CollabRoom } from './collab_room.js';
 
 // upstream Tectonic bundle (fallback origin)
 const TECTONIC_BUNDLE_URL = 'https://relay.fullyjustified.net/default_bundle_v33.tar';
@@ -38,14 +42,36 @@ export default {
       return handleCORS(request);
     }
 
+    const path = url.pathname;
+
+    // collaboration routes
+    if (path === '/collab/health') {
+      return new Response(JSON.stringify({ status: 'ok', collab: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...corsHeaders(request) },
+      });
+    }
+
+    if (path.startsWith('/collab/ws/')) {
+      const room_id = path.slice('/collab/ws/'.length);
+      if (!room_id) {
+        return new Response('Room ID required', { status: 400 });
+      }
+      const upgrade = request.headers.get('Upgrade');
+      if (upgrade !== 'websocket') {
+        return new Response('Expected WebSocket', { status: 426 });
+      }
+      const id = env.COLLAB_ROOM.idFromName(room_id);
+      const room = env.COLLAB_ROOM.get(id);
+      return room.fetch(request);
+    }
+
     if (request.method !== 'GET' && request.method !== 'HEAD') {
       return new Response('Method not allowed', {
         status: 405,
         headers: { 'Cache-Control': 'no-store', ...corsHeaders(request) },
       });
     }
-
-    const path = url.pathname;
 
     if (path === '/' || path === '/health') {
       return new Response(JSON.stringify({
