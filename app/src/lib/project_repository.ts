@@ -26,6 +26,19 @@ export interface LoadedProject {
 const ROOT_DIR = "eztex-projects";
 const CACHE_DIR = "eztex-cache";
 
+async function write_file_bytes(handle: FileSystemFileHandle, bytes: Uint8Array | FileSystemWriteChunkType): Promise<void> {
+  const writable = await handle.createWritable();
+  try {
+    await writable.write(bytes as FileSystemWriteChunkType);
+  } finally {
+    try {
+      await writable.close();
+    } catch {
+      // ignore close errors after a failed write
+    }
+  }
+}
+
 async function get_root_dir(): Promise<FileSystemDirectoryHandle> {
   const root = await navigator.storage.getDirectory();
   return await root.getDirectoryHandle(ROOT_DIR, { create: true });
@@ -99,9 +112,7 @@ export class ProjectRepository {
   async save_snapshot(project_id: ProjectId, snapshot: Uint8Array): Promise<void> {
     const dir = await this.get_project_dir(project_id);
     const handle = await dir.getFileHandle("ydoc.bin", { create: true });
-    const writable = await handle.createWritable();
-    await writable.write(snapshot);
-    await writable.close();
+    await write_file_bytes(handle, snapshot);
   }
 
   async delete_project(project_id: ProjectId): Promise<void> {
@@ -177,9 +188,7 @@ export class ProjectRepository {
     const dir = await this.get_project_dir(project_id);
     const blobs_dir = await dir.getDirectoryHandle("blobs", { create: true });
     const handle = await blobs_dir.getFileHandle(hash, { create: true });
-    const writable = await handle.createWritable();
-    await writable.write(bytes);
-    await writable.close();
+    await write_file_bytes(handle, bytes);
   }
 
   async load_blob(project_id: ProjectId, hash: string): Promise<Uint8Array | null> {
@@ -198,9 +207,7 @@ export class ProjectRepository {
     try {
       const outputs = await get_outputs_dir(project_id);
       const handle = await outputs.getFileHandle("output.pdf", { create: true });
-      const writable = await handle.createWritable();
-      await writable.write(bytes);
-      await writable.close();
+      await write_file_bytes(handle, bytes);
     } catch {
       // graceful degradation
     }
@@ -221,9 +228,7 @@ export class ProjectRepository {
     try {
       const outputs = await get_outputs_dir(project_id);
       const handle = await outputs.getFileHandle("output.synctex", { create: true });
-      const writable = await handle.createWritable();
-      await writable.write(new TextEncoder().encode(text));
-      await writable.close();
+      await write_file_bytes(handle, new TextEncoder().encode(text));
     } catch {}
   }
 
@@ -268,9 +273,7 @@ export class ProjectRepository {
     if (snapshot) {
       const new_dir = await this.get_project_dir(new_id);
       const handle = await new_dir.getFileHandle("ydoc.bin", { create: true });
-      const writable = await handle.createWritable();
-      await writable.write(snapshot);
-      await writable.close();
+      await write_file_bytes(handle, snapshot);
     }
 
     try {
@@ -283,9 +286,7 @@ export class ProjectRepository {
         const file = await (blob_handle as FileSystemFileHandle).getFile();
         const bytes = new Uint8Array(await file.arrayBuffer());
         const wh = await new_blobs.getFileHandle(blob_name, { create: true });
-        const w = await wh.createWritable();
-        await w.write(bytes);
-        await w.close();
+        await write_file_bytes(wh, bytes);
       }
     } catch {}
 
@@ -327,12 +328,58 @@ export class ProjectRepository {
   }
 }
 
+function is_not_found_error(err: unknown): boolean {
+  return err instanceof DOMException && err.name === "NotFoundError";
+}
+
+function is_modification_blocked_error(err: unknown): boolean {
+  return err instanceof DOMException
+    && (err.name === "NoModificationAllowedError" || err.message.includes("modifications are not allowed"));
+}
+
+async function remove_directory_contents(dir: FileSystemDirectoryHandle): Promise<void> {
+  for await (const [name, handle] of (dir as any).entries()) {
+    try {
+      await dir.removeEntry(name, { recursive: true });
+    } catch (err) {
+      if (is_not_found_error(err)) continue;
+      if (handle.kind === "directory") {
+        try {
+          await remove_directory_contents(handle as FileSystemDirectoryHandle);
+          await dir.removeEntry(name, { recursive: true });
+        } catch {
+          // A locked child should not prevent reset from clearing other entries.
+        }
+        continue;
+      }
+      // A locked file should not prevent reset from clearing other entries.
+    }
+  }
+}
+
 async function remove_opfs_entry(name: string): Promise<void> {
+  const root = await navigator.storage.getDirectory();
   try {
-    const root = await navigator.storage.getDirectory();
+    await root.removeEntry(name, { recursive: true });
+    return;
+  } catch (err) {
+    if (is_not_found_error(err)) return;
+    if (!is_modification_blocked_error(err)) throw err;
+  }
+
+  let dir: FileSystemDirectoryHandle;
+  try {
+    dir = await root.getDirectoryHandle(name);
+  } catch (err) {
+    if (is_not_found_error(err)) return;
+    throw err;
+  }
+
+  await remove_directory_contents(dir);
+  try {
     await root.removeEntry(name, { recursive: true });
   } catch (err) {
-    if (err instanceof DOMException && err.name === "NotFoundError") return;
+    if (is_not_found_error(err) || is_modification_blocked_error(err)) return;
     throw err;
   }
 }

@@ -46,6 +46,8 @@ export function create_collab_provider(opts: CollabProviderOptions): CollabProvi
   let reconnect_timer: ReturnType<typeof setTimeout> | null = null;
   let presence_timer: ReturnType<typeof setInterval> | null = null;
   let destroyed = false;
+  let create_pending = false;
+  let terminal_error = false;
 
   function touch_presence() {
     opts.awareness.setLocalStateField("last_active_at", Date.now());
@@ -77,39 +79,36 @@ export function create_collab_provider(opts: CollabProviderOptions): CollabProvi
     }
   }
 
+  function build_join_msg(): string {
+    return JSON.stringify({
+      type: "join",
+      room_id: opts.room_id,
+      token: opts.token,
+      peer_id: opts.identity.user_id,
+      identity: {
+        user_id: opts.identity.user_id,
+        display_name: opts.identity.display_name,
+        color_hue: opts.identity.color_hue,
+        color: opts.identity.color,
+      },
+    });
+  }
+
   function connect() {
     if (destroyed || ws) return;
+    terminal_error = false;
     set_status("connecting");
 
-    ws = new WebSocket(opts.ws_url);
-    ws.binaryType = "arraybuffer";
+    const join_msg = build_join_msg();
 
-    ws.onopen = () => {
-      reconnect_attempt = 0;
-      const is_owner = !!opts.room_secret && opts.token.startsWith("w.");
-      if (is_owner) {
-        const create_msg: Record<string, unknown> = {
-          type: "create",
-          room_id: opts.room_id,
-          room_secret: opts.room_secret,
-          initial_state: base64url_encode(Y.encodeStateAsUpdate(opts.doc)),
-          peer_id: opts.identity.user_id,
-          identity: {
-            user_id: opts.identity.user_id,
-            display_name: opts.identity.display_name,
-            color_hue: opts.identity.color_hue,
-            color: opts.identity.color,
-          },
-        };
-        if (opts.precomputed_blobs) {
-          create_msg.blobs = opts.precomputed_blobs;
-        }
-        ws!.send(JSON.stringify(create_msg));
-      }
-      ws!.send(JSON.stringify({
-        type: "join",
+    let create_msg: string | null = null;
+    const is_owner = !!opts.room_secret && opts.token.startsWith("w.");
+    if (is_owner) {
+      const msg: Record<string, unknown> = {
+        type: "create",
         room_id: opts.room_id,
-        token: opts.token,
+        room_secret: opts.room_secret,
+        initial_state: base64url_encode(Y.encodeStateAsUpdate(opts.doc)),
         peer_id: opts.identity.user_id,
         identity: {
           user_id: opts.identity.user_id,
@@ -117,7 +116,24 @@ export function create_collab_provider(opts: CollabProviderOptions): CollabProvi
           color_hue: opts.identity.color_hue,
           color: opts.identity.color,
         },
-      }));
+      };
+      if (opts.precomputed_blobs) {
+        msg.blobs = opts.precomputed_blobs;
+      }
+      create_msg = JSON.stringify(msg);
+    }
+
+    ws = new WebSocket(opts.ws_url);
+    ws.binaryType = "arraybuffer";
+
+    ws.onopen = () => {
+      reconnect_attempt = 0;
+      if (create_msg) {
+        create_pending = true;
+        ws!.send(create_msg);
+        return;
+      }
+      ws!.send(join_msg);
     };
 
     ws.onmessage = (e) => {
@@ -129,9 +145,17 @@ export function create_collab_provider(opts: CollabProviderOptions): CollabProvi
     };
 
     ws.onclose = (e) => {
+      const was_creating = create_pending;
       ws = null;
+      create_pending = false;
       if (destroyed) return;
-      if (e.code === 4400 && status === "error") return;
+      if (terminal_error) return;
+      if (was_creating) {
+        terminal_error = true;
+        set_status("error");
+        opts.on_error?.(`Room creation connection closed (${e.code})`);
+        return;
+      }
       if (e.code === 4410) {
         set_status("deleted");
         return;
@@ -177,9 +201,13 @@ export function create_collab_provider(opts: CollabProviderOptions): CollabProvi
       set_status("deleted");
       ws?.close(4410, "Room deleted");
     } else if (msg.type === "created") {
-      // wait for the follow-up join response before starting sync
+      if (create_pending && ws?.readyState === WebSocket.OPEN) {
+        create_pending = false;
+        ws.send(build_join_msg());
+      }
     } else if (msg.type === "error") {
       if (msg.code === "create_failed") {
+        terminal_error = true;
         set_status("error");
         opts.on_error?.(msg.message);
         ws?.close(4400, "Create failed");

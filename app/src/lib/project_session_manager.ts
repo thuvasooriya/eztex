@@ -19,6 +19,9 @@ import { get_collab_ws_url } from "./collab_config";
 
 export type CloseReason = "switch" | "tab-close" | "delete";
 
+const MAX_CREATE_BLOB_ENCODED_BYTES = 768 * 1024;
+const MAX_CREATE_BLOBS_TOTAL_ENCODED_BYTES = 768 * 1024;
+
 export class ProjectSessionManager {
   private current_session: ProjectSession | null = null;
   private repo: ProjectRepository;
@@ -154,9 +157,7 @@ export class ProjectSessionManager {
     }
 
     const room = await this.room_registry.get_by_project_id(project_id);
-    if (room) {
-      store.set_room_id(room.room_id);
-    }
+    store.set_room_id(room?.room_id);
 
     const session = this._create_session({
       project_id,
@@ -255,7 +256,10 @@ export class ProjectSessionManager {
     const room_secret = room.room_secret!;
     const write_token = await create_share_token(room_secret, room_id, "w");
 
-    const precomputed_blobs = await store.export_blobs();
+    const precomputed_blobs = await store.export_blobs({
+      max_blob_encoded_bytes: MAX_CREATE_BLOB_ENCODED_BYTES,
+      max_total_encoded_bytes: MAX_CREATE_BLOBS_TOTAL_ENCODED_BYTES,
+    });
 
     const collab_provider = create_collab_provider({
       room_id,
@@ -306,6 +310,7 @@ export class ProjectSessionManager {
     if (session.collab_provider) {
       session.collab_provider.destroy();
     }
+    session.store.set_room_id(undefined);
 
     if (session.folder_sync) {
       session.folder_sync.cleanup();

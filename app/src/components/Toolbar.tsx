@@ -45,6 +45,7 @@ type Props = {
   on_show_agent_panel?: () => void;
   on_switch_project?: (id: string) => Promise<void>;
   on_delete_project?: (id: string) => Promise<void>;
+  on_before_reset_all?: () => Promise<void>;
   get_folder_sync?: () => import("../lib/local_folder_sync").LocalFolderSync | null;
 };
 
@@ -371,6 +372,7 @@ const Toolbar: Component<Props> = (props) => {
     set_show_info_modal(false);
     try {
       worker_client.clear_cache();
+      await props.on_before_reset_all?.();
       await reset_all_persistence();
       const url = new URL("/", window.location.origin);
       window.location.assign(url.toString());

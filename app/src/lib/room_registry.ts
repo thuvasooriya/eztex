@@ -79,7 +79,9 @@ export class RoomRegistry {
 
   async get_by_project_id(project_id: string): Promise<RoomRecord | null> {
     const all = await get_all<RoomRecord>("rooms");
-    return all.find((r) => r.project_id === project_id) ?? null;
+    const rooms = all.filter((r) => r.project_id === project_id);
+    rooms.sort((a, b) => b.updated_at - a.updated_at || b.created_at - a.created_at);
+    return rooms[0] ?? null;
   }
 
   async update_project_binding(room_id: string, project_id: string): Promise<void> {
@@ -95,9 +97,11 @@ export class RoomRegistry {
   }
 
   async delete_by_project_id(project_id: string): Promise<void> {
-    const record = await this.get_by_project_id(project_id);
-    if (record) {
-      await remove("rooms", record.room_id);
+    const all = await get_all<RoomRecord>("rooms");
+    for (const record of all) {
+      if (record.project_id === project_id) {
+        await remove("rooms", record.room_id);
+      }
     }
   }
 

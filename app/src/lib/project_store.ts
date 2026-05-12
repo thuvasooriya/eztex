@@ -203,7 +203,12 @@ export function create_project_store() {
 
     _pid = id;
     snapshot_expected = false;
+    binary_cache.clear();
+    _dirty_blob_paths.clear();
     set_project_id_signal(id);
+    set_room_id_signal(undefined);
+    _set_main_file_raw("main.tex");
+    set_current_file("main.tex");
     ydoc = external_doc;
     yp = bind_y_project_doc(ydoc);
     awareness = new Awareness(ydoc);
@@ -584,8 +589,9 @@ export function create_project_store() {
     if (loaded_any) refresh_facade();
   }
 
-  async function export_blobs(): Promise<Record<string, string>> {
+  async function export_blobs(options?: { max_blob_encoded_bytes?: number; max_total_encoded_bytes?: number }): Promise<Record<string, string>> {
     const result: Record<string, string> = {};
+    let total_encoded_bytes = 0;
     for (const path of list_paths(yp)) {
       const fid = get_file_id(yp, path);
       if (!fid) continue;
@@ -601,7 +607,18 @@ export function create_project_store() {
         if (bytes) binary_cache.set(path, bytes);
       }
       if (bytes) {
-        result[hash] = base64url_encode(bytes);
+        const encoded = base64url_encode(bytes);
+        if (options?.max_blob_encoded_bytes !== undefined && encoded.length > options.max_blob_encoded_bytes) {
+          continue;
+        }
+        if (
+          options?.max_total_encoded_bytes !== undefined
+          && total_encoded_bytes + encoded.length > options.max_total_encoded_bytes
+        ) {
+          continue;
+        }
+        result[hash] = encoded;
+        total_encoded_bytes += encoded.length;
       }
     }
     return result;

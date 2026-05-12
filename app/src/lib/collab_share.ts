@@ -79,6 +79,19 @@ export async function create_room_links(
   project_id: string,
   project_name: string,
 ): Promise<CreatedRoomLinks> {
+  const existing = await registry.get_by_project_id(project_id);
+  if (existing?.role === "owner" && existing.room_secret) {
+    const write_token = await create_share_token(existing.room_secret, existing.room_id, "w");
+    const read_token = await create_share_token(existing.room_secret, existing.room_id, "r");
+    const base_url = get_share_room_url(existing.room_id);
+    return {
+      room_id: existing.room_id,
+      room_secret_b64: existing.room_secret,
+      write_url: `${base_url}#${write_token}`,
+      read_url: `${base_url}#${read_token}`,
+    };
+  }
+
   const room_id = create_room_id();
   const room_secret = create_room_secret();
   const room_secret_b64 = base64url_encode(room_secret);

@@ -39,6 +39,8 @@ import { load_settings, set_setting, type AppSettings } from "./lib/settings_sto
 const NARROW_BREAKPOINT = 900;
 const TOO_NARROW_BREAKPOINT = 600;
 const PREVIEW_WIDTH_KEY = "eztex_preview_width";
+const MAX_CREATE_BLOB_ENCODED_BYTES = 768 * 1024;
+const MAX_CREATE_BLOBS_TOTAL_ENCODED_BYTES = 768 * 1024;
 
 function get_initial_preview_width(): number {
   const stored = localStorage.getItem(PREVIEW_WIDTH_KEY);
@@ -203,6 +205,14 @@ const App: Component = () => {
       };
     }
 
+    const room = await session_manager.get_room_registry().get_by_room_id(room_id);
+    if (room?.role === "guest" && room.invite_token) {
+      return {
+        token: room.invite_token,
+        room_secret: null,
+      };
+    }
+
     const owned = await get_owned_room(session_manager.get_room_registry(), room_id);
     if (!owned) return null;
 
@@ -241,6 +251,15 @@ const App: Component = () => {
 
   function get_current_folder_sync() {
     return session_manager.current()?.folder_sync ?? null;
+  }
+
+  function clear_collab_state() {
+    set_collab_provider(null);
+    set_collab_room_id(null);
+    set_collab_status("idle");
+    set_collab_permission(null);
+    set_collab_peer_count(0);
+    set_collab_ready(false);
   }
 
   init_commands({
@@ -333,8 +352,7 @@ const App: Component = () => {
     cleanup_keydown?.();
     cleanup_pagehide?.();
     collab_provider()?.destroy();
-    set_collab_provider(null);
-    set_collab_ready(false);
+    clear_collab_state();
     store.destroy();
     worker_client.destroy();
   });
@@ -598,10 +616,8 @@ const App: Component = () => {
     if (!room_id) {
       if (current_provider) {
         current_provider.destroy();
-        set_collab_provider(null);
-        set_collab_room_id(null);
-        set_collab_ready(false);
       }
+      clear_collab_state();
       return;
     }
 
@@ -609,8 +625,7 @@ const App: Component = () => {
 
     if (current_provider && active_room_id && active_room_id !== room_id) {
       current_provider.destroy();
-      set_collab_provider(null);
-      set_collab_room_id(null);
+      clear_collab_state();
     }
 
     let cancelled = false;
@@ -618,12 +633,15 @@ const App: Component = () => {
       if (cancelled || !auth) return;
 
       collab_provider()?.destroy();
-      set_collab_provider(null);
+      clear_collab_state();
 
       const is_owner = !!auth.room_secret && auth.token.startsWith("w.");
       let precomputed_blobs: Record<string, string> | undefined;
       if (is_owner) {
-        precomputed_blobs = await store.export_blobs();
+        precomputed_blobs = await store.export_blobs({
+          max_blob_encoded_bytes: MAX_CREATE_BLOB_ENCODED_BYTES,
+          max_total_encoded_bytes: MAX_CREATE_BLOBS_TOTAL_ENCODED_BYTES,
+        });
       }
 
       const provider = create_collab_provider({
@@ -722,9 +740,7 @@ const App: Component = () => {
     const current_provider = collab_provider();
     if (current_provider) {
       current_provider.destroy();
-      set_collab_provider(null);
-      set_collab_room_id(null);
-      set_collab_ready(false);
+      clear_collab_state();
     }
 
     await setup_after_session(session, false);
@@ -741,6 +757,13 @@ const App: Component = () => {
 
   async function handle_delete_project(id: string) {
     await session_manager.delete_project(id);
+  }
+
+  async function handle_before_reset_all() {
+    await session_manager.close_current("delete");
+    clear_collab_state();
+    store.destroy();
+    worker_client.destroy();
   }
 
   async function handle_copy_agent_write_link() {
@@ -813,6 +836,7 @@ const App: Component = () => {
           on_show_agent_panel={() => set_show_agent_panel(true)}
           on_switch_project={handle_switch_project}
           on_delete_project={handle_delete_project}
+          on_before_reset_all={handle_before_reset_all}
           get_folder_sync={get_current_folder_sync}
         />
 

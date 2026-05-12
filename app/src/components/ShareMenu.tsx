@@ -57,7 +57,7 @@ const ShareMenu: Component<Props> = (props) => {
   const repo = new ProjectRepository();
   const [creating_room, set_creating_room] = createSignal(false);
   const [copied_link, set_copied_link] = createSignal<string | null>(null);
-  const [share_links, set_share_links] = createSignal<{ write_url: string; read_url: string } | null>(null);
+  const [share_links, set_share_links] = createSignal<{ room_id: string; write_url: string; read_url: string } | null>(null);
   const [exportable_room_count, set_exportable_room_count] = createSignal(0);
   const [current_owned_room, set_current_owned_room] = createSignal<OwnedRoom | null>(null);
   let rooms_backup_input_ref: HTMLInputElement | undefined;
@@ -85,6 +85,10 @@ const ShareMenu: Component<Props> = (props) => {
 
   createEffect(() => {
     const room_id = props.store.room_id();
+    const links = share_links();
+    if (links && links.room_id !== room_id) {
+      set_share_links(null);
+    }
     if (!room_id) {
       set_current_owned_room(null);
       return;
@@ -110,7 +114,7 @@ const ShareMenu: Component<Props> = (props) => {
       const project = await repo.get_project(pid);
       const links = await create_room_links(props.room_registry, pid, project?.name ?? "Untitled Project");
       await bind_project_to_room(props.room_registry, pid, links.room_id);
-      set_share_links({ write_url: links.write_url, read_url: links.read_url });
+      set_share_links({ room_id: links.room_id, write_url: links.write_url, read_url: links.read_url });
       props.store.set_room_id(links.room_id);
       await refresh_exportable_room_count();
     } finally {
@@ -160,7 +164,8 @@ const ShareMenu: Component<Props> = (props) => {
 
   async function handle_copy_write_share_link() {
     const room_id = props.store.room_id();
-    const links = share_links() ?? (room_id ? await get_owned_room_links(props.room_registry, room_id) : null);
+    const local_links = share_links();
+    const links = local_links?.room_id === room_id ? local_links : room_id ? await get_owned_room_links(props.room_registry, room_id) : null;
     if (links) {
       await handle_copy_link(links.write_url);
       flash_copied("write");
@@ -171,7 +176,8 @@ const ShareMenu: Component<Props> = (props) => {
 
   async function handle_copy_read_share_link() {
     const room_id = props.store.room_id();
-    const links = share_links() ?? (room_id ? await get_owned_room_links(props.room_registry, room_id) : null);
+    const local_links = share_links();
+    const links = local_links?.room_id === room_id ? local_links : room_id ? await get_owned_room_links(props.room_registry, room_id) : null;
     const url = links?.read_url ?? window.location.href;
     await handle_copy_link(url);
     flash_copied("read");
@@ -233,7 +239,7 @@ const ShareMenu: Component<Props> = (props) => {
               </Show>
             </div>
             <div class="upload-dropdown-divider" role="separator" />
-            <Show when={share_links() || current_owned_room()}>
+            <Show when={(share_links()?.room_id === props.store.room_id() && share_links()) || current_owned_room()}>
               <button
                 class="upload-dropdown-item"
                 role="menuitem"

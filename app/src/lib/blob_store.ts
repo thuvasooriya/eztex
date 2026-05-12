@@ -18,8 +18,15 @@ export class BlobStore {
     const hash = await compute_hash(bytes);
     const handle = await this.blobs_dir.getFileHandle(hash, { create: true });
     const writable = await handle.createWritable();
-    await writable.write(bytes);
-    await writable.close();
+    try {
+      await writable.write(bytes);
+    } finally {
+      try {
+        await writable.close();
+      } catch {
+        // ignore close errors after a failed write
+      }
+    }
     return { hash, size: bytes.length };
   }
 
