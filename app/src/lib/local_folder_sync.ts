@@ -4,6 +4,7 @@
 import { createSignal } from "solid-js";
 import type { ProjectStore, FileContent, ProjectFiles } from "./project_store";
 import { is_binary } from "./project_store";
+import type { FolderHandleRegistry } from "./folder_handle_registry";
 
 // --- constants ---
 
@@ -26,8 +27,6 @@ const SYNC_EXTS = new Set([
   "pdf", "eps", "ps",
 ]);
 
-const DB_NAME = "eztex-folder-sync";
-const STORE_NAME = "handles";
 const IDLE_TIMEOUT_MS = 30_000;
 
 // --- types ---
@@ -126,7 +125,7 @@ async function write_file(dir: FileSystemDirectoryHandle, path: string, content:
   const file_handle = await current.getFileHandle(parts[parts.length - 1], { create: true });
   const writable = await file_handle.createWritable();
   if (content instanceof Uint8Array) {
-    await writable.write(content as unknown as ArrayBuffer);
+    await writable.write(content);
   } else {
     await writable.write(content);
   }
@@ -164,85 +163,6 @@ async function read_file(dir: FileSystemDirectoryHandle, path: string): Promise<
   return await file.text();
 }
 
-// --- IndexedDB handle persistence ---
-
-function open_db(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, 1);
-    req.onupgradeneeded = () => {
-      req.result.createObjectStore(STORE_NAME);
-    };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
-
-function tx_complete(tx: IDBTransaction): Promise<void> {
-  return new Promise((resolve, reject) => {
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
-}
-
-async function store_handle(handle: FileSystemDirectoryHandle): Promise<void> {
-  const db = await open_db();
-  const tx = db.transaction(STORE_NAME, "readwrite");
-  tx.objectStore(STORE_NAME).put(handle, "project-dir");
-  await tx_complete(tx);
-  db.close();
-}
-
-async function store_folder_name(name: string): Promise<void> {
-  const db = await open_db();
-  const tx = db.transaction(STORE_NAME, "readwrite");
-  tx.objectStore(STORE_NAME).put(name, "folder-name");
-  await tx_complete(tx);
-  db.close();
-}
-
-async function load_handle(): Promise<FileSystemDirectoryHandle | null> {
-  try {
-    const db = await open_db();
-    const tx = db.transaction(STORE_NAME, "readonly");
-    const store = tx.objectStore(STORE_NAME);
-    return await new Promise((resolve) => {
-      const req = store.get("project-dir");
-      req.onsuccess = () => resolve(req.result ?? null);
-      req.onerror = () => resolve(null);
-    });
-  } catch {
-    return null;
-  }
-}
-
-async function load_folder_name(): Promise<string | null> {
-  try {
-    const db = await open_db();
-    const tx = db.transaction(STORE_NAME, "readonly");
-    const store = tx.objectStore(STORE_NAME);
-    return await new Promise((resolve) => {
-      const req = store.get("folder-name");
-      req.onsuccess = () => resolve(req.result ?? null);
-      req.onerror = () => resolve(null);
-    });
-  } catch {
-    return null;
-  }
-}
-
-async function clear_stored_handle(): Promise<void> {
-  try {
-    const db = await open_db();
-    const tx = db.transaction(STORE_NAME, "readwrite");
-    tx.objectStore(STORE_NAME).delete("project-dir");
-    tx.objectStore(STORE_NAME).delete("folder-name");
-    await tx_complete(tx);
-    db.close();
-  } catch {
-    // ignore
-  }
-}
-
 // --- main factory ---
 
 const EMPTY_STATE: LocalSyncState = {
@@ -256,7 +176,7 @@ const EMPTY_STATE: LocalSyncState = {
   error: null,
 };
 
-export function create_local_folder_sync(store: ProjectStore): LocalFolderSync {
+export function create_local_folder_sync(store: ProjectStore, project_id: string, folder_registry?: FolderHandleRegistry): LocalFolderSync {
   const [state, set_state] = createSignal<LocalSyncState>({ ...EMPTY_STATE });
 
   let unsub_store: (() => void) | null = null;
@@ -393,8 +313,9 @@ export function create_local_folder_sync(store: ProjectStore): LocalFolderSync {
         error: null,
       });
 
-      await store_handle(handle);
-      await store_folder_name(handle.name);
+      if (folder_registry) {
+        await folder_registry.set_handle(project_id, handle, handle.name);
+      }
 
       // subscribe to store changes
       teardown_runtime();
@@ -419,8 +340,9 @@ export function create_local_folder_sync(store: ProjectStore): LocalFolderSync {
         mode: "readwrite",
         id: "eztex-project",
       });
-      await store_handle(handle);
-      await store_folder_name(handle.name);
+      if (folder_registry) {
+        await folder_registry.set_handle(project_id, handle, handle.name);
+      }
       return handle.name;
     } catch {
       return null;
@@ -428,14 +350,18 @@ export function create_local_folder_sync(store: ProjectStore): LocalFolderSync {
   }
 
   async function reconnect(): Promise<boolean> {
-    const handle = await load_handle();
+    let handle: FileSystemDirectoryHandle | null = null;
+    if (folder_registry) {
+      const record = await folder_registry.get_handle(project_id);
+      handle = record?.handle ?? null;
+    }
     if (!handle) return false;
 
     try {
       // request permission
       const perm = await (handle as any).requestPermission({ mode: "readwrite" });
       if (perm !== "granted") {
-        await clear_stored_handle();
+        if (folder_registry) await folder_registry.clear_handle(project_id);
         return false;
       }
 
@@ -473,7 +399,7 @@ export function create_local_folder_sync(store: ProjectStore): LocalFolderSync {
       setup_event_listeners();
       return true;
     } catch (err) {
-      await clear_stored_handle();
+      if (folder_registry) await folder_registry.clear_handle(project_id);
       set_state(prev => ({ ...prev, error: `Reconnect failed: ${err}` }));
       return false;
     }
@@ -481,7 +407,7 @@ export function create_local_folder_sync(store: ProjectStore): LocalFolderSync {
 
   function disconnect() {
     teardown_runtime();
-    void clear_stored_handle();
+    if (folder_registry) void folder_registry.clear_handle(project_id);
     set_state({ ...EMPTY_STATE });
   }
 
@@ -695,12 +621,14 @@ export function create_local_folder_sync(store: ProjectStore): LocalFolderSync {
   }
 
   async function has_stored_handle(): Promise<boolean> {
-    const h = await load_handle();
-    return h !== null;
+    if (!folder_registry) return false;
+    return folder_registry.has_handle(project_id);
   }
 
   async function get_stored_folder_name(): Promise<string | null> {
-    return load_folder_name();
+    if (!folder_registry) return null;
+    const record = await folder_registry.get_handle(project_id);
+    return record?.folder_name ?? null;
   }
 
   // write compiled PDF to synced folder (derived from main file name)

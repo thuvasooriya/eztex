@@ -12,15 +12,18 @@ import {
   list_paths,
   rename_file_path,
   set_project_metadata,
-  get_project_metadata,
   apply_snapshot,
   create_binary_file_ref,
 } from "./y_project_doc";
 import type { ProjectId, FileId } from "./y_project_doc";
-import { compute_hash, save_blob as persist_blob, load_blob as load_persisted_blob } from "./project_persist";
+import { compute_hash, base64url_encode, base64url_decode } from "./crypto_utils";
+import type { BlobStore } from "./blob_store";
+import type { ProjectBroadcast } from "./project_broadcast";
 
 export type FileContent = string | Uint8Array;
 export type ProjectFiles = Record<string, FileContent>;
+
+
 
 const BINARY_EXTS = new Set([
   "png", "jpg", "jpeg", "gif", "bmp", "svg", "ico", "webp",
@@ -43,12 +46,16 @@ const ORIGIN_LOAD = "eztex:load";
 
 export function create_project_store() {
   let _pid: ProjectId = "";
+  let snapshot_expected = false;
   const [project_id_signal, set_project_id_signal] = createSignal<ProjectId>("");
-  const ydoc = new Y.Doc();
+  let ydoc = new Y.Doc();
   let yp = bind_y_project_doc(ydoc);
-  const awareness = new Awareness(ydoc);
+  let awareness = new Awareness(ydoc);
   const binary_cache = new Map<string, Uint8Array>();
   const _dirty_blob_paths = new Set<string>();
+  let _blob_store: BlobStore | null = null;
+  let _broadcast: ProjectBroadcast | null = null;
+  let _owns_doc = true;
 
   const [files, set_files] = createStore<ProjectFiles>({ "main.tex": "" });
   const [current_file, set_current_file] = createSignal("main.tex");
@@ -67,9 +74,7 @@ export function create_project_store() {
   }
   function _notify() { for (const cb of _on_change_cbs) cb(); }
 
-  // BroadcastChannel state
-  let bc: BroadcastChannel | null = null;
-  const sender_id = crypto.randomUUID();
+  let _update_handler: ((update: Uint8Array, origin: unknown) => void) | null = null;
 
   function refresh_facade() {
     const new_files: ProjectFiles = {};
@@ -85,7 +90,7 @@ export function create_project_store() {
         new_files[path] = ytext?.toString() ?? "";
       }
     }
-    if (Object.keys(new_files).length === 0 && !_pid) {
+    if (Object.keys(new_files).length === 0 && !_pid && !snapshot_expected) {
       new_files["main.tex"] = "";
     }
     set_files(reconcile(new_files));
@@ -94,51 +99,124 @@ export function create_project_store() {
   }
 
   function broadcast_update(update: Uint8Array) {
-    if (!bc || !_pid) return;
-    bc.postMessage({ type: "sync", sender_id, project_id: _pid, update });
+    if (_broadcast) {
+      _broadcast.send_yjs_update(update);
+    }
   }
 
-  ydoc.on("update", (update: Uint8Array, origin: unknown) => {
-    if (origin === ORIGIN_LOAD && !bc) {
-      // skip facade refresh during initial load before init
-      return;
+  function setup_update_handler() {
+    if (_update_handler) {
+      ydoc.off("update", _update_handler);
     }
-    refresh_facade();
-    if (origin !== ORIGIN_REMOTE_BC && origin !== ORIGIN_LOAD) {
-      broadcast_update(update);
-    }
-  });
-
-  function init(id: ProjectId) {
-    _pid = id;
-    set_project_id_signal(id);
-    const channel_name = `eztex:yjs:${_pid}`;
-    bc = new BroadcastChannel(channel_name);
-
-    bc.onmessage = (e: MessageEvent) => {
-      const msg = e.data;
-      if (!msg || msg.sender_id === sender_id) return;
-      if (msg.project_id !== _pid) return;
-
-      if (msg.type === "sync") {
-        Y.applyUpdate(ydoc, msg.update, ORIGIN_REMOTE_BC);
-      } else if (msg.type === "hello") {
-        const state = Y.encodeStateAsUpdate(ydoc);
-        bc!.postMessage({ type: "state-response", sender_id, project_id: _pid, update: state });
-      } else if (msg.type === "state-request") {
-        const state = Y.encodeStateAsUpdate(ydoc);
-        bc!.postMessage({ type: "state-response", sender_id, project_id: _pid, update: state });
-      } else if (msg.type === "state-response") {
-        Y.applyUpdate(ydoc, msg.update, ORIGIN_REMOTE_BC);
+    _update_handler = (update: Uint8Array, origin: unknown) => {
+      if (origin === ORIGIN_LOAD && !_broadcast) {
+        return;
+      }
+      refresh_facade();
+      if (origin !== ORIGIN_REMOTE_BC && origin !== ORIGIN_LOAD) {
+        broadcast_update(update);
       }
     };
+    ydoc.on("update", _update_handler);
+  }
 
-    bc.postMessage({ type: "hello", sender_id, project_id: _pid });
-    bc.postMessage({ type: "state-request", sender_id, project_id: _pid });
+  setup_update_handler();
+
+  function broadcast_blob_available(hash: string) {
+    if (_broadcast) {
+      _broadcast.send_blob_available(hash);
+    }
+  }
+
+  function broadcast_blob_request(hash: string) {
+    if (_broadcast) {
+      _broadcast.send_blob_request(hash);
+    }
+  }
+
+  function broadcast_blob_response(hash: string, bytes: Uint8Array) {
+    if (_broadcast) {
+      _broadcast.send_blob_response(hash, bytes);
+    }
+  }
+
+  async function handle_blob_available(hash: string | undefined) {
+    if (!hash) return;
+    const found = binary_cache.has(hash) || await (_blob_store?.has(hash) ?? Promise.resolve(false));
+    if (!found) {
+      broadcast_blob_request(hash);
+    }
+  }
+
+  async function handle_blob_request(hash: string | undefined) {
+    if (!hash) return;
+    let bytes: Uint8Array | null = null;
+    if (_blob_store) {
+      bytes = await _blob_store.get(hash);
+    }
+    if (!bytes) {
+      for (const [, cached] of binary_cache) {
+        if (cached instanceof Uint8Array) {
+          try {
+            const h = await compute_hash(cached);
+            if (h === hash) { bytes = cached; break; }
+          } catch { /* skip */ }
+        }
+      }
+    }
+    if (bytes) {
+      broadcast_blob_response(hash, bytes);
+    }
+  }
+
+  async function handle_blob_response(hash: string | undefined, bytes: Uint8Array | undefined) {
+    if (!hash || !bytes) return;
+    if (_blob_store) {
+      await _blob_store.put(bytes);
+    }
+    let updated = false;
+    for (const path of list_paths(yp)) {
+      const fid = get_file_id(yp, path);
+      if (!fid) continue;
+      const ref_hash = yp.blob_refs.get(fid) as string | undefined;
+      if (ref_hash === hash) {
+        binary_cache.set(path, bytes);
+        updated = true;
+      }
+    }
+    if (updated) refresh_facade();
+  }
+
+  function init_with_doc(
+    id: ProjectId,
+    external_doc: Y.Doc,
+    blob_store: BlobStore,
+    broadcast: ProjectBroadcast,
+  ) {
+    if (_update_handler) {
+      ydoc.off("update", _update_handler);
+    }
+
+    if (_owns_doc) {
+      awareness.destroy();
+    }
+
+    _pid = id;
+    snapshot_expected = false;
+    set_project_id_signal(id);
+    ydoc = external_doc;
+    yp = bind_y_project_doc(ydoc);
+    awareness = new Awareness(ydoc);
+    _blob_store = blob_store;
+    _broadcast = broadcast;
+    _owns_doc = false;
+
+    setup_update_handler();
+    refresh_facade();
   }
 
   function file_names(): string[] {
-    revision(); // track ydoc changes for solidjs reactivity
+    revision();
     const mf = main_file();
     return list_paths(yp).sort((a, b) => {
       if (a === mf) return -1;
@@ -167,12 +245,14 @@ export function create_project_store() {
           yp.file_meta.set(new_fid, meta_map);
         }, ORIGIN_LOCAL);
       }
+      compute_hash(content).then((hash) => {
+        broadcast_blob_available(hash);
+      }).catch(() => {});
     } else {
       get_or_create_text_file(yp, name, content);
     }
     set_current_file(name);
-    if (!bc) {
-      // before init, manually refresh since update handler skips
+    if (!_broadcast) {
       refresh_facade();
     }
   }
@@ -186,7 +266,7 @@ export function create_project_store() {
     if (current_file() === name) {
       set_current_file(main_file());
     }
-    if (!bc) refresh_facade();
+    if (!_broadcast) refresh_facade();
   }
 
   function rename_file(old_name: string, new_name: string) {
@@ -200,12 +280,16 @@ export function create_project_store() {
     if (bin) {
       binary_cache.delete(old_name);
       binary_cache.set(new_name, bin);
+      if (_dirty_blob_paths.has(old_name)) {
+        _dirty_blob_paths.delete(old_name);
+        _dirty_blob_paths.add(new_name);
+      }
     }
     if (current_file() === old_name) set_current_file(new_name);
     if (main_file() === old_name) {
-      _set_main_file_raw(new_name);
+      set_main_file(new_name);
     }
-    if (!bc) refresh_facade();
+    if (!_broadcast) refresh_facade();
   }
 
   function update_content(name: string, content: FileContent) {
@@ -234,7 +318,10 @@ export function create_project_store() {
           yp.file_meta.set(new_fid, meta_map);
         }, ORIGIN_LOCAL);
       }
-      if (!bc) refresh_facade();
+      compute_hash(content).then((hash) => {
+        broadcast_blob_available(hash);
+      }).catch(() => {});
+      if (!_broadcast) refresh_facade();
     } else {
       const fid = get_file_id(yp, name);
       if (fid) {
@@ -248,7 +335,7 @@ export function create_project_store() {
       } else {
         get_or_create_text_file(yp, name, content);
       }
-      if (!bc) refresh_facade();
+      if (!_broadcast) refresh_facade();
     }
   }
 
@@ -282,12 +369,14 @@ export function create_project_store() {
         const fid = yp.paths.get(path) as FileId;
         yp.paths.delete(path);
         yp.file_meta.delete(fid);
+        yp.texts.delete(fid);
+        yp.blob_refs.delete(fid);
       }
       get_or_create_text_file(yp, "main.tex", default_content);
     }, ORIGIN_LOCAL);
     _set_main_file_raw("main.tex");
     set_current_file("main.tex");
-    if (!bc) refresh_facade();
+    if (!_broadcast) refresh_facade();
   }
 
   function load_files(new_files: ProjectFiles) {
@@ -297,6 +386,8 @@ export function create_project_store() {
         const fid = yp.paths.get(path) as FileId;
         yp.paths.delete(path);
         yp.file_meta.delete(fid);
+        yp.texts.delete(fid);
+        yp.blob_refs.delete(fid);
       }
       for (const [path, content] of Object.entries(new_files)) {
         const fid = create_file_id();
@@ -341,7 +432,7 @@ export function create_project_store() {
     _set_main_file_raw(detected);
     set_project_metadata(yp, { main_file: detected });
     set_current_file(detected);
-    if (!bc) refresh_facade();
+    if (!_broadcast) refresh_facade();
   }
 
   function merge_files(new_files: ProjectFiles) {
@@ -384,7 +475,7 @@ export function create_project_store() {
         }
       }
     }, ORIGIN_LOCAL);
-    if (!bc) refresh_facade();
+    if (!_broadcast) refresh_facade();
   }
 
   async function init_from_template(): Promise<void> {
@@ -443,18 +534,32 @@ export function create_project_store() {
 
   function apply_ydoc_snapshot(bytes: Uint8Array) {
     apply_snapshot(ydoc, bytes, ORIGIN_LOAD);
+    snapshot_expected = false;
+  }
+
+  function clear_snapshot_expected() {
+    snapshot_expected = false;
   }
 
   async function flush_dirty_blobs(): Promise<void> {
     if (!_pid || _dirty_blob_paths.size === 0) return;
     const paths = Array.from(_dirty_blob_paths);
-    _dirty_blob_paths.clear();
     for (const path of paths) {
       const bytes = binary_cache.get(path);
-      if (!bytes) continue;
-      const hash = await compute_hash(bytes);
-      create_binary_file_ref(yp, path, hash, bytes.length);
-      await persist_blob(_pid, hash, bytes);
+      if (!bytes) {
+        continue;
+      }
+      try {
+        const hash = await compute_hash(bytes);
+        create_binary_file_ref(yp, path, hash, bytes.length);
+        if (_blob_store) {
+          await _blob_store.put(bytes);
+        }
+        broadcast_blob_available(hash);
+        _dirty_blob_paths.delete(path);
+      } catch {
+        // Leave path in _dirty_blob_paths so retry can pick it up
+      }
     }
   }
 
@@ -466,7 +571,10 @@ export function create_project_store() {
       if (!fid) continue;
       const hash = yp.blob_refs.get(fid) as string | undefined;
       if (hash && !binary_cache.has(path)) {
-        const bytes = await load_persisted_blob(_pid, hash);
+        let bytes: Uint8Array | null = null;
+        if (_blob_store) {
+          bytes = await _blob_store.get(hash);
+        }
         if (bytes) {
           binary_cache.set(path, bytes);
           loaded_any = true;
@@ -476,26 +584,82 @@ export function create_project_store() {
     if (loaded_any) refresh_facade();
   }
 
-  function destroy() {
-    if (bc) {
-      bc.close();
-      bc = null;
+  async function export_blobs(): Promise<Record<string, string>> {
+    const result: Record<string, string> = {};
+    for (const path of list_paths(yp)) {
+      const fid = get_file_id(yp, path);
+      if (!fid) continue;
+      const meta = yp.file_meta.get(fid) as Y.Map<unknown> | undefined;
+      const kind = meta?.get("kind") as string | undefined;
+      if (kind !== "binary") continue;
+      const hash = yp.blob_refs.get(fid) as string | undefined;
+      if (!hash) continue;
+
+      let bytes = binary_cache.get(path);
+      if (!bytes && _blob_store) {
+        bytes = (await _blob_store.get(hash)) ?? undefined;
+        if (bytes) binary_cache.set(path, bytes);
+      }
+      if (bytes) {
+        result[hash] = base64url_encode(bytes);
+      }
     }
-    awareness.destroy();
-    ydoc.destroy();
+    return result;
   }
 
+  async function import_blobs(blobs: Record<string, string>): Promise<void> {
+    for (const [hash, b64] of Object.entries(blobs)) {
+      try {
+        const bytes = base64url_decode(b64);
+        if (_blob_store) {
+          await _blob_store.put(bytes);
+        }
+        for (const path of list_paths(yp)) {
+          const fid = get_file_id(yp, path);
+          if (!fid) continue;
+          const blob_hash = yp.blob_refs.get(fid) as string | undefined;
+          if (blob_hash === hash) {
+            binary_cache.set(path, bytes);
+          }
+        }
+      } catch {
+        // skip invalid blobs
+      }
+    }
+    refresh_facade();
+  }
+
+  function destroy() {
+    if (_update_handler && ydoc) {
+      ydoc.off("update", _update_handler);
+      _update_handler = null;
+    }
+    if (_broadcast) {
+      _broadcast.close();
+    }
+    _broadcast = null;
+    _blob_store = null;
+    awareness.destroy();
+    if (_owns_doc) {
+      ydoc.destroy();
+    }
+  }
+
+  const [room_id_signal, set_room_id_signal] = createSignal<string | undefined>(undefined);
+
   function room_id(): string | undefined {
-    revision();
-    return get_project_metadata(yp).room_id;
+    return room_id_signal();
+  }
+
+  function dirty_blob_count(): number {
+    return _dirty_blob_paths.size;
   }
 
   function set_room_id(rid: string | undefined) {
-    set_project_metadata(yp, { room_id: rid });
+    set_room_id_signal(rid);
   }
 
   return {
-    // compatibility facade -- not source of truth for text content
     files,
     current_file,
     set_current_file,
@@ -514,20 +678,26 @@ export function create_project_store() {
     merge_files,
     on_change,
     init_from_template,
-    // new Yjs API
     project_id: project_id_signal,
     ydoc: () => ydoc,
     awareness: () => awareness,
     room_id,
     set_room_id,
+    dirty_blob_count,
     get_ytext,
     snapshot_files,
     encode_ydoc_snapshot,
     apply_ydoc_snapshot,
+    clear_snapshot_expected,
     flush_dirty_blobs,
     load_persisted_blobs,
-    init,
+    export_blobs,
+    import_blobs,
+    init_with_doc,
     destroy,
+    handle_blob_available,
+    handle_blob_request,
+    handle_blob_response,
   };
 }
 

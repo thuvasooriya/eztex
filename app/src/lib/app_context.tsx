@@ -1,4 +1,4 @@
-import { createContext, useContext, type Accessor, type ParentProps } from "solid-js";
+import { createContext, useContext, type Accessor, type JSX } from "solid-js";
 import type { Awareness } from "y-protocols/awareness";
 import type { AgentReviewStore } from "./agent_review";
 import type { CollabPermission, CollabStatus } from "./collab_provider";
@@ -12,14 +12,14 @@ export type AppCollabContext = {
 };
 
 export type AppContextValue = {
-  folder_sync: LocalFolderSync;
+  get_folder_sync: () => LocalFolderSync | null;
   collab: AppCollabContext;
   agent_review_store: AgentReviewStore;
 };
 
 const AppContext = createContext<AppContextValue>();
 
-export function AppContextProvider(props: ParentProps<{ value: AppContextValue }>) {
+export function AppContextProvider(props: { value: AppContextValue; children: JSX.Element }) {
   return <AppContext.Provider value={props.value}>{props.children}</AppContext.Provider>;
 }
 

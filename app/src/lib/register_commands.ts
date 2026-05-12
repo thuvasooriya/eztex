@@ -7,19 +7,22 @@ import { worker_client } from "./worker_client";
 import type { ProjectStore } from "./project_store";
 import type { LocalFolderSync } from "./local_folder_sync";
 import { write_zip } from "./zip_utils";
-import { clear_bundle_cache, reset_all_persistence } from "./project_persist";
-import type { WatchController } from "./watch_controller";
+import { clear_bundle_cache, reset_all_persistence } from "./project_repository";
+import type { CompileScheduler } from "./compile_scheduler";
 import type { AgentReviewStore } from "./agent_review";
+import type { RoomRegistry } from "./room_registry";
 import type { Accessor, Setter } from "solid-js";
 import { show_input_modal, show_confirm_modal, show_alert_modal } from "./modal_store";
 
 type ProjectCommandDeps = {
   store: ProjectStore;
   folder_sync: LocalFolderSync;
+  room_registry: RoomRegistry;
+  on_switch_project?: (id: string) => Promise<void>;
 };
 
 type CompileCommandDeps = {
-  watch: WatchController;
+  watch: CompileScheduler;
   show_logs: Accessor<boolean>;
   set_show_logs: Setter<boolean>;
 };
@@ -101,12 +104,17 @@ export function init_commands(d: CommandDeps): void {
   register_command({
     id: "compile.clear_cache",
     label: "Clear Compile Cache",
-    description: "Delete cached WASM bundles from OPFS",
+    description: "Clear cached bundles, format files, and compiled outputs. Projects and room data are preserved.",
     keywords: ["reset", "storage"],
     category: "Compile",
-    action: () => {
-      worker_client.clear_cache();
-      clear_bundle_cache().catch(() => {});
+    action: async () => {
+      try {
+        worker_client.clear_cache();
+        await clear_bundle_cache();
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to clear cached files.";
+        await show_alert_modal({ title: "Clear Cache Failed", message });
+      }
     },
   });
 
@@ -368,8 +376,9 @@ export function init_commands(d: CommandDeps): void {
     keywords: ["create", "blank"],
     category: "Project",
     action: async () => {
-      const { list_projects } = await import("./project_manager");
-      const projects = await list_projects();
+      const { ProjectRepository } = await import("./project_repository");
+      const repo = new ProjectRepository();
+      const projects = await repo.list_projects();
       const default_name = projects.length === 0 ? "Demo Project" : "Untitled Project";
       const name = await show_input_modal({
         title: "New Project",
@@ -378,11 +387,15 @@ export function init_commands(d: CommandDeps): void {
         default_value: default_name,
       });
       if (name === null) return;
-      const { create_project } = await import("./project_manager");
-      const { get_project_url, set_current_project } = await import("./project_manager");
-      const id = await create_project(name || undefined);
-      await set_current_project(id);
-      window.location.href = get_project_url(id);
+      const record = await repo.create_project(name || undefined);
+      if (project.on_switch_project) {
+        await project.on_switch_project(record.id);
+      } else {
+        await repo.set_current_project(record.id);
+        const url = new URL(window.location.href);
+        url.searchParams.set("project", record.id);
+        window.location.href = url.pathname + url.search;
+      }
     },
   });
 
@@ -395,12 +408,13 @@ export function init_commands(d: CommandDeps): void {
     action: async () => {
       const pid = project.store.project_id();
       if (!pid) return;
-      const { create_room_links } = await import("./collab_share");
-      const { get_project } = await import("./project_manager");
-      const entry = await get_project(pid);
+      const { bind_project_to_room, create_room_links } = await import("./collab_share");
+      const { ProjectRepository } = await import("./project_repository");
+      const repo = new ProjectRepository();
+      const entry = await repo.get_project(pid);
       const project_name = entry?.name ?? "Untitled Project";
-      const links = await create_room_links(pid, project_name);
-      project.store.set_room_id(links.room_id);
+      const links = await create_room_links(project.room_registry, pid, project_name);
+      await bind_project_to_room(project.room_registry, pid, links.room_id);
       try {
         await navigator.clipboard.writeText(links.write_url);
         await show_alert_modal({
@@ -429,20 +443,26 @@ export function init_commands(d: CommandDeps): void {
   register_command({
     id: "project.reset",
     label: "Reset Everything",
-    description: "Delete all project files and cached bundles",
+    description: "Delete all projects, room data, cached files, and settings",
     keywords: ["clear", "destroy", "wipe"],
     category: "Project",
     action: async () => {
       const confirmed = await show_confirm_modal({
         title: "Reset Everything",
-        message: "This will delete all project files and cached bundles. This cannot be undone.",
+        message: "Delete all projects, room data, cached files, and settings. This is irreversible.",
         confirm_label: "Reset",
         danger: true,
       });
       if (!confirmed) return;
-      worker_client.clear_cache();
-      await reset_all_persistence();
-      window.location.reload();
+      try {
+        worker_client.clear_cache();
+        await reset_all_persistence();
+        const url = new URL("/", window.location.origin);
+        window.location.assign(url.toString());
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to reset local data.";
+        await show_alert_modal({ title: "Reset Failed", message });
+      }
     },
   });
 
@@ -537,7 +557,7 @@ export function init_commands(d: CommandDeps): void {
     description: "Copy a WebSocket URL with write token for agent clients",
     keywords: ["agent", "token", "write", "link", "mcp"],
     category: "Agent",
-    when: () => !!project.store.room_id(),
+    when: () => !!project.store.project_id(),
     action: () => agent.on_copy_agent_write_link(),
   });
 

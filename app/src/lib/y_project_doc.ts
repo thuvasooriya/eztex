@@ -8,7 +8,6 @@ export type FileKind = "text" | "binary";
 
 export interface ProjectMetadata {
   id: ProjectId;
-  room_id?: RoomId;
   name: string;
   created_at: number;
   updated_at: number;
@@ -78,7 +77,6 @@ export function get_project_metadata(yp: YProjectDoc): ProjectMetadata {
   const m = yp.meta;
   return {
     id: (m.get("id") as string) ?? "",
-    room_id: m.get("room_id") as string | undefined,
     name: (m.get("name") as string) ?? "Untitled Project",
     created_at: (m.get("created_at") as number) ?? 0,
     updated_at: (m.get("updated_at") as number) ?? 0,
@@ -90,7 +88,6 @@ export function set_project_metadata(yp: YProjectDoc, patch: Partial<ProjectMeta
   yp.doc.transact(() => {
     const m = yp.meta;
     if (patch.id !== undefined) m.set("id", patch.id);
-    if (patch.room_id !== undefined) m.set("room_id", patch.room_id);
     if (patch.name !== undefined) m.set("name", patch.name);
     if (patch.created_at !== undefined) m.set("created_at", patch.created_at);
     if (patch.updated_at !== undefined) m.set("updated_at", patch.updated_at);
@@ -192,6 +189,8 @@ export function delete_file_entry(yp: YProjectDoc, path: string): boolean {
   yp.doc.transact(() => {
     yp.paths.delete(path);
     yp.file_meta.delete(fid!);
+    yp.texts.delete(fid);
+    yp.blob_refs.delete(fid);
     yp.meta.set("updated_at", Date.now());
   });
   return true;

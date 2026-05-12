@@ -21,6 +21,9 @@ test:
 app-dev: build-wasm
     cd app && bun dev
 
+worker-dev:
+    cd worker && bunx wrangler dev
+
 app-build: build-wasm
     cd app && bun run build
 

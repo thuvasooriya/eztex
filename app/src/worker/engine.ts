@@ -522,6 +522,7 @@ async function download_format(): Promise<boolean> {
       }
       const total = Number(resp.headers.get("content-length") ?? "0");
       if (!resp.body || total <= 0) {
+        send_status("Downloading format", "loading");
         data = new Uint8Array(await resp.arrayBuffer());
       } else {
         const reader = resp.body.getReader();

@@ -16,6 +16,7 @@ import type { TextPatch } from "./agent_review";
 import type { AgentWriteResult } from "./agent_review";
 import type { AgentIdentity } from "./agent_identity";
 import type { ProjectFiles } from "./project_store";
+import { base64url_decode } from "./crypto_utils";
 
 export type AgentMode = "direct" | "review";
 export type AgentStatus =
@@ -79,12 +80,6 @@ export function create_agent_collaborator(opts: AgentCollaboratorOptions): Agent
 
   function set_status(s: AgentStatus) {
     opts.on_status?.(s);
-  }
-
-  function base64url_decode(str: string): Uint8Array {
-    const pad = (4 - (str.length % 4)) % 4;
-    str = str.replace(/\-/g, "+").replace(/\_/g, "/") + "=".repeat(pad);
-    return new Uint8Array(atob(str).split("").map((c) => c.charCodeAt(0)));
   }
 
   awareness.setLocalStateField("user", {

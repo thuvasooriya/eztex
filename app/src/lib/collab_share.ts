@@ -1,6 +1,16 @@
 import { get_share_room_url } from "./collab_config";
+import type { RoomRegistry, RoomRecord } from "./room_registry";
+import { base64url_encode, base64url_decode } from "./crypto_utils";
 
-const OWNED_ROOMS_KEY = "eztex_owned_rooms";
+function room_record_to_owned_room(record: RoomRecord): OwnedRoom {
+  return {
+    room_id: record.room_id,
+    project_id: record.project_id,
+    room_secret: record.room_secret ?? "",
+    created_at: record.created_at,
+    name: record.name ?? "Shared Project",
+  };
+}
 
 export type OwnedRoom = {
   room_id: string;
@@ -25,15 +35,9 @@ export type OwnedRoomLinks = {
   read_url: string;
 };
 
-function base64url_encode(bytes: Uint8Array): string {
-  let binary = "";
-  const len = bytes.length;
-  for (let i = 0; i < len; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  const base64 = btoa(binary);
-  return base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
-}
+export type DeleteRoomResult =
+  | { ok: true; status: "deleted" | "already_deleted" | "not_found" }
+  | { ok: false; status: "not_owner" | "forbidden" | "timeout" | "network_error"; message: string };
 
 export async function create_share_token(
   room_secret_b64: string,
@@ -51,15 +55,6 @@ export async function create_share_token(
   const message = new TextEncoder().encode(`${room_id}:${permission}`);
   const sig = new Uint8Array(await crypto.subtle.sign("HMAC", key, message));
   return `${permission}.${base64url_encode(sig.slice(0, 16))}`;
-}
-
-function base64url_decode(str: string): Uint8Array {
-  const pad = (4 - (str.length % 4)) % 4;
-  str = str.replace(/\-/g, "+").replace(/\_/g, "/") + "=".repeat(pad);
-  const bytes = new Uint8Array(
-    atob(str).split("").map((c) => c.charCodeAt(0)),
-  );
-  return bytes;
 }
 
 function create_room_id(): string {
@@ -80,6 +75,7 @@ export interface CreatedRoomLinks {
 }
 
 export async function create_room_links(
+  registry: RoomRegistry,
   project_id: string,
   project_name: string,
 ): Promise<CreatedRoomLinks> {
@@ -94,36 +90,17 @@ export async function create_room_links(
   const write_url = `${base_url}#${write_token}`;
   const read_url = `${base_url}#${read_token}`;
 
-  const owned = load_owned_rooms();
-  owned.rooms.push({
+  await registry.put_room_record({
     room_id,
     project_id,
+    role: "owner",
     room_secret: room_secret_b64,
-    created_at: Date.now(),
     name: project_name,
+    created_at: Date.now(),
+    updated_at: Date.now(),
   });
-  save_owned_rooms(owned);
 
   return { room_id, room_secret_b64, write_url, read_url };
-}
-
-export function load_owned_rooms(): OwnedRoomsFile {
-  try {
-    const raw = localStorage.getItem(OWNED_ROOMS_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (parsed.version === 1 && Array.isArray(parsed.rooms)) {
-        return parsed as OwnedRoomsFile;
-      }
-    }
-  } catch {
-    // fallthrough
-  }
-  return { version: 1, rooms: [] };
-}
-
-export function save_owned_rooms(owned: OwnedRoomsFile): void {
-  localStorage.setItem(OWNED_ROOMS_KEY, JSON.stringify(owned));
 }
 
 export function get_share_token_permission(token: string): "read" | "write" | null {
@@ -134,13 +111,105 @@ export function get_share_token_permission(token: string): "read" | "write" | nu
   return null;
 }
 
-export function get_owned_room(room_id: string): OwnedRoom | null {
-  const owned = load_owned_rooms();
-  return owned.rooms.find((r) => r.room_id === room_id) ?? null;
+export async function get_owned_room(registry: RoomRegistry, room_id: string): Promise<OwnedRoom | null> {
+  const record = await registry.get_by_room_id(room_id);
+  if (record && record.role === "owner") {
+    return room_record_to_owned_room(record);
+  }
+  return null;
 }
 
-export async function get_owned_room_links(room_id: string): Promise<OwnedRoomLinks | null> {
-  const owned = get_owned_room(room_id);
+export async function bind_project_to_room(registry: RoomRegistry, project_id: string, room_id: string): Promise<void> {
+  await registry.update_project_binding(room_id, project_id);
+}
+
+export async function close_room(registry: RoomRegistry, room_id: string): Promise<boolean> {
+  const record = await registry.get_by_room_id(room_id);
+  if (!record) return false;
+  await registry.delete_room_record(room_id);
+  return true;
+}
+
+export async function delete_room(registry: RoomRegistry, room_id: string, ws_url: string): Promise<DeleteRoomResult> {
+  const owned = await get_owned_room(registry, room_id);
+  if (!owned) {
+    return { ok: false, status: "not_owner", message: "You do not own this room" };
+  }
+
+  return new Promise((resolve) => {
+    const ws = new WebSocket(ws_url);
+    let resolved = false;
+
+    const remove_owned_room = async () => {
+      try {
+        await registry.delete_room_record(room_id);
+      } catch {
+        // ignore registry errors
+      }
+    };
+
+    const timer = setTimeout(() => {
+      if (resolved) return;
+      resolved = true;
+      ws.close();
+      resolve({ ok: false, status: "timeout", message: "Delete request timed out" });
+    }, 15000);
+
+    ws.onopen = () => {
+      ws.send(JSON.stringify({
+        type: "delete",
+        room_id,
+        room_secret: owned.room_secret,
+      }));
+    };
+
+    ws.onmessage = (e) => {
+      if (typeof e.data !== "string") return;
+      try {
+        const msg = JSON.parse(e.data);
+        if (msg.type === "deleted") {
+          if (resolved) return;
+          resolved = true;
+          clearTimeout(timer);
+          ws.close();
+          void remove_owned_room();
+          resolve({ ok: true, status: "deleted" });
+        } else if (msg.type === "error") {
+          if (resolved) return;
+          resolved = true;
+          clearTimeout(timer);
+          ws.close();
+          resolve({ ok: false, status: "forbidden", message: msg.message || "Delete failed" });
+        }
+      } catch {
+        // ignore malformed messages
+      }
+    };
+
+    ws.onclose = (e) => {
+      if (resolved) return;
+      resolved = true;
+      clearTimeout(timer);
+      if (e.code === 4410 || e.code === 4404) {
+        void remove_owned_room();
+        resolve({ ok: true, status: e.code === 4410 ? "already_deleted" : "not_found" });
+        return;
+      }
+      resolve({ ok: false, status: "network_error", message: `Connection closed (${e.code})` });
+    };
+
+    ws.onerror = () => {
+      if (resolved) return;
+      resolved = true;
+      clearTimeout(timer);
+      ws.close();
+      resolve({ ok: false, status: "network_error", message: "WebSocket error" });
+    };
+  });
+}
+
+export async function get_owned_room_links(registry: RoomRegistry, room_id: string): Promise<OwnedRoomLinks | null> {
+  const owned = await get_owned_room(registry, room_id);
   if (!owned) return null;
   const write_token = await create_share_token(owned.room_secret, room_id, "w");
   const read_token = await create_share_token(owned.room_secret, room_id, "r");
@@ -163,12 +232,21 @@ function is_owned_room(value: unknown): value is OwnedRoom {
   );
 }
 
-export function export_rooms_backup(): string {
-  const owned = load_owned_rooms();
-  return JSON.stringify({ version: 1, rooms: owned.rooms }, null, 2);
+export async function export_rooms_backup(registry: RoomRegistry): Promise<string> {
+  const registry_rooms = await registry.get_all_rooms();
+  const rooms = registry_rooms
+    .filter(r => r.role === "owner")
+    .map(room_record_to_owned_room)
+    .sort((a, b) => b.created_at - a.created_at);
+  return JSON.stringify({ version: 1, rooms }, null, 2);
 }
 
-export function import_rooms_backup(json: string): RoomsImportResult {
+export async function get_exportable_room_count(registry: RoomRegistry): Promise<number> {
+  const registry_rooms = await registry.get_all_rooms();
+  return registry_rooms.filter(r => r.role === "owner").length;
+}
+
+export async function import_rooms_backup(registry: RoomRegistry, json: string): Promise<RoomsImportResult> {
   let parsed: unknown;
   try {
     parsed = JSON.parse(json);
@@ -185,8 +263,8 @@ export function import_rooms_backup(json: string): RoomsImportResult {
     throw new Error("Unsupported backup format");
   }
 
-  const owned = load_owned_rooms();
-  const existing_ids = new Set(owned.rooms.map((room) => room.room_id));
+  const existing = await registry.get_all_rooms();
+  const existing_ids = new Set(existing.map((r) => r.room_id));
   let imported = 0;
   let skipped = 0;
 
@@ -199,21 +277,29 @@ export function import_rooms_backup(json: string): RoomsImportResult {
       skipped++;
       continue;
     }
-    owned.rooms.push(room);
     existing_ids.add(room.room_id);
     imported++;
-  }
 
-  if (imported > 0) {
-    owned.rooms.sort((a, b) => b.created_at - a.created_at);
-    save_owned_rooms(owned);
+    try {
+      await registry.put_room_record({
+        room_id: room.room_id,
+        project_id: room.project_id,
+        role: "owner",
+        room_secret: room.room_secret,
+        name: room.name,
+        created_at: room.created_at,
+        updated_at: Date.now(),
+      });
+    } catch {
+      // ignore registry errors during import
+    }
   }
 
   return { imported, skipped };
 }
 
-export function download_rooms_backup(): void {
-  const blob = new Blob([export_rooms_backup()], { type: "application/json" });
+export async function download_rooms_backup(registry: RoomRegistry): Promise<void> {
+  const blob = new Blob([await export_rooms_backup(registry)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const stamp = new Date().toISOString().slice(0, 10);
   const a = document.createElement("a");
@@ -223,9 +309,9 @@ export function download_rooms_backup(): void {
   URL.revokeObjectURL(url);
 }
 
-export async function load_rooms_backup_from_file(file: File): Promise<RoomsImportResult> {
+export async function load_rooms_backup_from_file(registry: RoomRegistry, file: File): Promise<RoomsImportResult> {
   const text = await file.text();
-  return import_rooms_backup(text);
+  return await import_rooms_backup(registry, text);
 }
 
 export function parse_collab_url(url: URL): { room_id: string; token: string } | null {

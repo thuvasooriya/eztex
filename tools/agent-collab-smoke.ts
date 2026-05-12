@@ -13,6 +13,7 @@ import { Awareness, applyAwarenessUpdate, encodeAwarenessUpdate } from "y-protoc
 import { readSyncMessage, writeSyncStep1, writeSyncStep2 } from "y-protocols/sync";
 import { createEncoder, toUint8Array } from "lib0/encoding";
 import { createDecoder } from "lib0/decoding";
+import { base64url_decode } from "../app/src/lib/crypto_utils";
 
 const url_arg = process.argv[2];
 if (!url_arg) {
@@ -45,12 +46,6 @@ const PROVIDER_ORIGIN = "eztex:agent-smoke";
 const FrameKind = { SyncStep1: 0, SyncStep2: 1, DocUpdate: 2, Awareness: 3 };
 
 let permission: string | null = null;
-
-function base64url_decode(str: string): Uint8Array {
-  const pad = (4 - (str.length % 4)) % 4;
-  str = str.replace(/\-/g, "+").replace(/\_/g, "/") + "=".repeat(pad);
-  return new Uint8Array(atob(str).split("").map((c) => c.charCodeAt(0)));
-}
 
 function send_frame(ws: WebSocket, kind: number, payload: Uint8Array) {
   const frame = new Uint8Array(payload.length + 1);

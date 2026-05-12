@@ -22,6 +22,8 @@ import { worker_client } from "../lib/worker_client";
 type Props = {
   store: ProjectStore;
   vim_enabled: boolean;
+  word_wrap: boolean;
+  editor_font_size: "small" | "medium" | "large";
   read_only?: boolean;
   on_editor_view: (view: EditorView) => void;
 };
@@ -157,11 +159,28 @@ const tokyo_night_highlight = HighlightStyle.define([
   { tag: tags.processingInstruction, color: "var(--syntax-definition)" },
 ]);
 
+const EDITOR_FONT_SIZES: Record<Props["editor_font_size"], string> = {
+  small: "12.5px",
+  medium: "13.5px",
+  large: "15px",
+};
+
+function editor_font_size_theme(size: Props["editor_font_size"]) {
+  const fontSize = EDITOR_FONT_SIZES[size];
+  return EditorView.theme({
+    ".cm-content": { fontSize },
+    ".cm-gutters": { fontSize },
+    ".cm-lineNumbers .cm-gutterElement": { fontSize },
+  });
+}
+
 const Editor: Component<Props> = (props) => {
   let container_ref: HTMLDivElement | undefined;
   let view: EditorView | undefined;
 
   const vim_compartment = new Compartment();
+  const line_wrap_compartment = new Compartment();
+  const font_size_compartment = new Compartment();
   const undo_managers = new Map<string, Y.UndoManager>();
 
   function get_undo_manager(path: string, ytext: Y.Text): Y.UndoManager {
@@ -238,6 +257,8 @@ const Editor: Component<Props> = (props) => {
       yCollab(ytext, props.store.awareness(), { undoManager }),
       keymap.of([...defaultKeymap, ...yUndoManagerKeymap, indentWithTab]),
       vim_compartment.of([]),
+      line_wrap_compartment.of(props.word_wrap ? EditorView.lineWrapping : []),
+      font_size_compartment.of(editor_font_size_theme(props.editor_font_size)),
       read_only_compartment.of(readOnly ? [EditorState.readOnly.of(true), EditorView.editable.of(false)] : []),
       EditorView.updateListener.of((update) => {
         if (update.selectionSet || update.docChanged) {
@@ -245,7 +266,6 @@ const Editor: Component<Props> = (props) => {
           schedule_forward_synctex(update);
         }
       }),
-      EditorView.lineWrapping,
     ];
   }
 
@@ -313,6 +333,26 @@ const Editor: Component<Props> = (props) => {
         if (!view) return;
         const extensions = readOnly ? [EditorState.readOnly.of(true), EditorView.editable.of(false)] : [];
         view.dispatch({ effects: read_only_compartment.reconfigure(extensions) });
+      },
+    ),
+  );
+
+  createEffect(
+    on(
+      () => props.word_wrap,
+      (wordWrap) => {
+        if (!view) return;
+        view.dispatch({ effects: line_wrap_compartment.reconfigure(wordWrap ? EditorView.lineWrapping : []) });
+      },
+    ),
+  );
+
+  createEffect(
+    on(
+      () => props.editor_font_size,
+      (fontSize) => {
+        if (!view) return;
+        view.dispatch({ effects: font_size_compartment.reconfigure(editor_font_size_theme(fontSize)) });
       },
     ),
   );

@@ -6,14 +6,17 @@ import { createEncoder, toUint8Array } from "lib0/encoding";
 import { encode_frame, decode_frame, FrameKind } from "./collab_protocol";
 import type { UserIdentity } from "./identity";
 import { get_jjk_name } from "./jjk_names";
+import { base64url_encode, base64url_decode } from "./crypto_utils";
 
 export type CollabPermission = "read" | "write";
-export type CollabStatus = "idle" | "connecting" | "connected" | "reconnecting" | "closed" | "error";
+export type CollabStatus = "idle" | "connecting" | "connected" | "reconnecting" | "closed" | "deleted" | "error";
 
 export interface CollabProviderOptions {
   room_id: string;
   token: string;
   room_secret?: string | null;
+  precomputed_blobs?: Record<string, string>;
+  put_blobs?: (blobs: Record<string, string>) => Promise<void>;
   doc: Y.Doc;
   awareness: Awareness;
   identity: UserIdentity;
@@ -26,25 +29,6 @@ export interface CollabProviderOptions {
 
 const PROVIDER_ORIGIN = "eztex:collab-provider";
 const RECONNECT_DELAYS = [500, 1000, 2000, 5000, 10000, 15000, 30000];
-
-function base64url_encode(bytes: Uint8Array): string {
-  let binary = "";
-  const len = bytes.length;
-  for (let i = 0; i < len; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  const base64 = btoa(binary);
-  return base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
-}
-
-function base64url_decode(str: string): Uint8Array {
-  const pad = (4 - (str.length % 4)) % 4;
-  str = str.replace(/\-/g, "+").replace(/\_/g, "/") + "=".repeat(pad);
-  const bytes = new Uint8Array(
-    atob(str).split("").map((c) => c.charCodeAt(0)),
-  );
-  return bytes;
-}
 
 export interface CollabProvider {
   status(): CollabStatus;
@@ -104,7 +88,7 @@ export function create_collab_provider(opts: CollabProviderOptions): CollabProvi
       reconnect_attempt = 0;
       const is_owner = !!opts.room_secret && opts.token.startsWith("w.");
       if (is_owner) {
-        ws!.send(JSON.stringify({
+        const create_msg: Record<string, unknown> = {
           type: "create",
           room_id: opts.room_id,
           room_secret: opts.room_secret,
@@ -116,7 +100,11 @@ export function create_collab_provider(opts: CollabProviderOptions): CollabProvi
             color_hue: opts.identity.color_hue,
             color: opts.identity.color,
           },
-        }));
+        };
+        if (opts.precomputed_blobs) {
+          create_msg.blobs = opts.precomputed_blobs;
+        }
+        ws!.send(JSON.stringify(create_msg));
       }
       ws!.send(JSON.stringify({
         type: "join",
@@ -134,7 +122,7 @@ export function create_collab_provider(opts: CollabProviderOptions): CollabProvi
 
     ws.onmessage = (e) => {
       if (typeof e.data === "string") {
-        handle_json(e.data);
+        void handle_json(e.data);
       } else if (e.data instanceof ArrayBuffer) {
         handle_binary(new Uint8Array(e.data));
       }
@@ -142,8 +130,14 @@ export function create_collab_provider(opts: CollabProviderOptions): CollabProvi
 
     ws.onclose = (e) => {
       ws = null;
-      const non_reconnectable = [4401, 4403, 4404, 4410];
-      if (destroyed || non_reconnectable.includes(e.code)) {
+      if (destroyed) return;
+      if (e.code === 4400 && status === "error") return;
+      if (e.code === 4410) {
+        set_status("deleted");
+        return;
+      }
+      const non_reconnectable = [4400, 4401, 4403, 4404, 4410];
+      if (non_reconnectable.includes(e.code)) {
         set_status(e.code === 4403 ? "error" : "closed");
         return;
       }
@@ -158,7 +152,7 @@ export function create_collab_provider(opts: CollabProviderOptions): CollabProvi
     };
   }
 
-  function handle_json(raw: string) {
+  async function handle_json(raw: string) {
     let msg: any;
     try {
       msg = JSON.parse(raw);
@@ -173,12 +167,24 @@ export function create_collab_provider(opts: CollabProviderOptions): CollabProvi
         const snapshot_bytes = base64url_decode(msg.snapshot);
         Y.applyUpdate(opts.doc, snapshot_bytes, PROVIDER_ORIGIN);
       }
+      if (msg.blobs && opts.put_blobs) {
+        await opts.put_blobs(msg.blobs as Record<string, string>);
+      }
       set_status("connected");
       // start sync protocol
       send_sync_step1();
+    } else if (msg.type === "room-deleted") {
+      set_status("deleted");
+      ws?.close(4410, "Room deleted");
     } else if (msg.type === "created") {
       // wait for the follow-up join response before starting sync
     } else if (msg.type === "error") {
+      if (msg.code === "create_failed") {
+        set_status("error");
+        opts.on_error?.(msg.message);
+        ws?.close(4400, "Create failed");
+        return;
+      }
       set_status("error");
       opts.on_error?.(msg.message);
     } else if (msg.type === "peer-count") {

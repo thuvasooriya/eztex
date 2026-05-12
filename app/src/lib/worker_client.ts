@@ -6,8 +6,6 @@ import type { ProjectFiles } from "./project_store";
 import type { Diagnostic } from "../worker/protocol";
 import { decompress_gzip, parse_synctex, sync_to_pdf, sync_to_code } from "./synctex";
 import type { PdfSyncObject, SyncToPdfResult } from "./synctex";
-import { save_synctex as persist_synctex } from "./project_persist";
-import type { ProjectId } from "./y_project_doc";
 
 export type CompileMode = "preview" | "full";
 
@@ -51,7 +49,6 @@ function request_goto(file: string, line: number): void {
 
 let worker: Worker | null = null;
 let prev_pdf_url: string | null = null;
-let _project_id: ProjectId | null = null;
 
 // imperative compile-done callbacks -- supports multiple subscribers
 const _on_compile_done_cbs: Array<() => void> = [];
@@ -80,6 +77,50 @@ function append_log(msg: string, cls: string = "") {
 
 function clear_logs() {
   set_logs([]);
+}
+
+type CompleteMessage = {
+  pdf: Uint8Array | null;
+  synctex: Uint8Array | null;
+  elapsed?: number;
+};
+
+async function handle_complete(data: CompleteMessage) {
+  const pdf_data = data.pdf;
+  const synctex_raw = data.synctex;
+  if (pdf_data) {
+    set_pdf_bytes(new Uint8Array(pdf_data));
+    if (prev_pdf_url) URL.revokeObjectURL(prev_pdf_url);
+    const blob = new Blob([pdf_data as BlobPart], { type: "application/pdf" });
+    const url = URL.createObjectURL(blob);
+    prev_pdf_url = url;
+    set_pdf_url(url);
+  }
+
+  if (synctex_raw && synctex_raw.length > 0) {
+    try {
+      const text = await decompress_gzip(synctex_raw);
+      const parsed = parse_synctex(text);
+      if (parsed) {
+        set_synctex_text(text);
+        set_synctex_data(parsed);
+      }
+    } catch {
+      append_log("[synctex] failed to parse synchronization data", "log-error");
+    }
+  }
+
+  batch(() => {
+    set_compiling(false);
+    set_last_elapsed(data.elapsed ? `${data.elapsed}s` : null);
+    if (!pdf_data) {
+      set_status("error");
+      set_status_text("Error");
+    } else {
+      set_status_text("Success");
+    }
+  });
+  for (const cb of _on_compile_done_cbs) cb();
 }
 
 function handle_message(e: MessageEvent) {
@@ -113,42 +154,7 @@ function handle_message(e: MessageEvent) {
       for (const cb of _on_ready_cbs) cb();
       break;
     case "complete": {
-      const pdf_data = data.pdf as Uint8Array | null;
-      const synctex_raw = data.synctex as Uint8Array | null;
-      if (pdf_data) {
-        set_pdf_bytes(new Uint8Array(pdf_data));
-        if (prev_pdf_url) URL.revokeObjectURL(prev_pdf_url);
-        const blob = new Blob([pdf_data as BlobPart], { type: "application/pdf" });
-        const url = URL.createObjectURL(blob);
-        prev_pdf_url = url;
-        set_pdf_url(url);
-      }
-      // parse synctex asynchronously
-      if (synctex_raw && synctex_raw.length > 0) {
-        decompress_gzip(synctex_raw)
-          .then((text) => {
-            const parsed = parse_synctex(text);
-            if (parsed) {
-              set_synctex_text(text);
-              set_synctex_data(parsed);
-              // persist immediately -- on_compile_done fires before this .then() resolves,
-              // so saving from there would read stale/null synctex_text()
-              persist_synctex(text, _project_id ?? undefined).catch(() => {});
-            }
-          })
-          .catch(() => {});
-      }
-      batch(() => {
-        set_compiling(false);
-        set_last_elapsed(data.elapsed ? `${data.elapsed}s` : null);
-        if (!pdf_data) {
-          set_status("error");
-          set_status_text("Error");
-        } else {
-          set_status_text("Success");
-        }
-      });
-      for (const cb of _on_compile_done_cbs) cb();
+      void handle_complete(data as CompleteMessage);
       break;
     }
   }
@@ -199,10 +205,6 @@ function compile_and_wait(req: CompileRequest): Promise<boolean> {
 }
 
 // stub: SAB-based cancellation not yet implemented -- falls back to dirty_compiling in watch_controller
-function cancel_and_recompile(_req: CompileRequest): boolean {
-  return false;
-}
-
 function clear_cache() {
   if (!worker) return;
   worker.postMessage({ type: "clear_cache" });
@@ -220,7 +222,6 @@ function restore_pdf_bytes(bytes: Uint8Array) {
 }
 
 function restore_synctex(parsed: PdfSyncObject) {
-  if (import.meta.env.DEV) console.log("[synctex:restore] restore_synctex called, setting synctex_data signal");
   set_synctex_data(parsed);
 }
 
@@ -229,8 +230,7 @@ function destroy() {
   worker = null;
   if (prev_pdf_url) URL.revokeObjectURL(prev_pdf_url);
   prev_pdf_url = null;
-  _project_id = null;
-  _on_compile_done_cbs.length = 0;
+    _on_compile_done_cbs.length = 0;
   _on_ready_cbs.length = 0;
   batch(() => {
     set_status("idle");
@@ -278,10 +278,8 @@ function do_sync_to_code(page: number, x: number, y: number): void {
 
 export const worker_client = {
   init: init_worker,
-  set_project_id: (id: ProjectId | null) => { _project_id = id; },
   compile,
   compile_and_wait,
-  cancel_and_recompile,
   clear_cache,
   clear_logs,
   on_compile_done,

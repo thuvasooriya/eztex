@@ -26,7 +26,7 @@ type Props = {
 
 const FilePanel: Component<Props> = (props) => {
   const app = use_app_context();
-  const folder_sync = () => app.folder_sync;
+  const folder_sync = () => app.get_folder_sync();
   const [renaming, set_renaming] = createSignal<string | null>(null);
   const [rename_value, set_rename_value] = createSignal("");
   const [ctx_menu, set_ctx_menu] = createSignal<{ file: string; x: number; y: number } | null>(null);
@@ -406,11 +406,11 @@ const FilePanel: Component<Props> = (props) => {
         }
       }}
     >
-      <Show when={folder_sync().state().active}>
+      <Show when={folder_sync()?.state().active}>
         <div class="folder-sync-panel-bar">
           <FolderSyncStatus
-            state={folder_sync().state()}
-            on_disconnect={() => folder_sync().disconnect()}
+            state={folder_sync()!.state()}
+            on_disconnect={() => folder_sync()?.disconnect()}
           />
         </div>
       </Show>

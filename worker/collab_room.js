@@ -3,7 +3,12 @@ import * as Y from "yjs";
 const ROOM_META_KEY = "room-meta";
 const YDOC_SNAPSHOT_KEY = "ydoc-snapshot";
 const LAST_COMPACTED_AT_KEY = "last-compacted-at";
+const BLOB_PREFIX = "blob:";
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+
+function is_room_deleted(meta) {
+  return meta?.deleted === true || meta?.closed === true;
+}
 
 function base64url_encode(bytes) {
   let binary = "";
@@ -98,7 +103,7 @@ export class CollabRoom {
 
       const snapshot = await this.ctx.storage.get(YDOC_SNAPSHOT_KEY);
       this.room_doc = new Y.Doc();
-      if (snapshot && snapshot.byteLength > 0) {
+      if (!is_room_deleted(this.room_meta) && snapshot && snapshot.byteLength > 0) {
         Y.applyUpdate(this.room_doc, new Uint8Array(snapshot));
       }
 
@@ -135,6 +140,8 @@ export class CollabRoom {
 
       if (parsed.type === "create") {
         await this._handle_create(ws, parsed);
+      } else if (parsed.type === "delete") {
+        await this._handle_delete(ws, parsed);
       } else if (parsed.type === "join") {
         await this._handle_join(ws, parsed);
       } else if (parsed.type === "ping") {
@@ -197,6 +204,7 @@ export class CollabRoom {
   async alarm() {
     const meta = await this.ctx.storage.get(ROOM_META_KEY);
     if (!meta) return;
+    if (is_room_deleted(meta)) return;
     if (this.peers.size > 0) return;
     const inactive = Date.now() - (meta.last_active_at ?? 0);
     if (inactive >= SEVEN_DAYS_MS) {
@@ -205,7 +213,8 @@ export class CollabRoom {
   }
 
   async _handle_create(ws, msg) {
-    const { room_id, room_secret, peer_id, identity, initial_state } = msg;
+    const { room_id, room_secret, peer_id, identity, initial_state, blobs } = msg;
+    let was_freshly_created = false;
 
     if (typeof room_id !== "string" || !room_id.startsWith("r_")) {
       ws.close(4400, "Invalid room ID");
@@ -223,11 +232,16 @@ export class CollabRoom {
     }
 
     if (this.room_meta) {
+      if (is_room_deleted(this.room_meta)) {
+        ws.close(4410, "Room deleted");
+        return;
+      }
       if (this.room_meta.room_secret !== room_secret) {
         ws.close(4409, "Room already exists with different secret");
         return;
       }
     } else {
+      was_freshly_created = true;
       const now = Date.now();
       this.room_meta = {
         version: 1,
@@ -251,13 +265,36 @@ export class CollabRoom {
       }
     }
 
-    if (initial_bytes && initial_bytes.byteLength > 0) {
-      const bytes = new Uint8Array(initial_bytes);
-      Y.applyUpdate(this.room_doc, bytes);
-      await this._persist_snapshot();
-    }
+    try {
+      if (initial_bytes && initial_bytes.byteLength > 0) {
+        const bytes = new Uint8Array(initial_bytes);
+        Y.applyUpdate(this.room_doc, bytes);
+        await this._persist_snapshot();
+      }
 
-    ws.send(JSON.stringify({ type: "created", room_id, snapshot_applied: !!initial_bytes }));
+      if (blobs && typeof blobs === "object") {
+        await this._store_blobs(blobs);
+      }
+
+      ws.send(JSON.stringify({ type: "created", room_id, snapshot_applied: !!initial_bytes }));
+    } catch (err) {
+      console.error("Room create persistence failed:", err);
+      ws.send(JSON.stringify({ type: "error", code: "create_failed", message: "Failed to persist room data" }));
+      ws.close(1011, "Server error");
+
+      if (was_freshly_created) {
+        this.room_meta = null;
+        this.room_doc = new Y.Doc();
+        const blob_entries = await this.ctx.storage.list({ prefix: BLOB_PREFIX });
+        await this.ctx.storage.delete(ROOM_META_KEY);
+        await this.ctx.storage.delete(YDOC_SNAPSHOT_KEY);
+        await this.ctx.storage.delete(LAST_COMPACTED_AT_KEY);
+        for (const key of blob_entries.keys()) {
+          await this.ctx.storage.delete(key);
+        }
+      }
+      return;
+    }
   }
 
   async _handle_join(ws, msg) {
@@ -267,8 +304,8 @@ export class CollabRoom {
       ws.close(4404, "Room not found");
       return;
     }
-    if (this.room_meta.closed) {
-      ws.close(4410, "Room closed");
+    if (is_room_deleted(this.room_meta)) {
+      ws.close(4410, "Room deleted");
       return;
     }
 
@@ -294,17 +331,98 @@ export class CollabRoom {
     await this.ctx.storage.put(ROOM_META_KEY, this.room_meta);
 
     const snapshot = Y.encodeStateAsUpdate(this.room_doc);
+    const blobs = await this._load_blobs();
     ws.send(JSON.stringify({
       type: "joined",
       room_id,
       permission,
       snapshot: base64url_encode(snapshot),
+      blobs,
     }));
 
     this._broadcast_peer_count();
   }
 
+  async _handle_delete(ws, msg) {
+    const { room_id, room_secret, peer_id } = msg;
+
+    if (typeof room_id !== "string" || !room_id.startsWith("r_")) {
+      ws.close(4400, "Invalid room ID");
+      return;
+    }
+    if (!this.room_meta) {
+      ws.close(4404, "Room not found");
+      return;
+    }
+    if (is_room_deleted(this.room_meta)) {
+      ws.close(4410, "Room deleted");
+      return;
+    }
+    if (typeof room_secret !== "string") {
+      ws.close(4400, "Missing room secret");
+      return;
+    }
+
+    let secret;
+    let expected;
+    try {
+      secret = decode_room_secret(room_secret);
+      expected = decode_room_secret(this.room_meta.room_secret);
+    } catch {
+      ws.close(4400, "Invalid room secret");
+      return;
+    }
+
+    if (!constant_time_equal(secret, expected)) {
+      ws.send(JSON.stringify({ type: "error", message: "Delete forbidden" }));
+      return;
+    }
+
+    const deleted_at = Date.now();
+    this.room_meta.deleted = true;
+    this.room_meta.closed = true;
+    this.room_meta.deleted_at = deleted_at;
+    this.room_meta.deleted_by_peer_id = typeof peer_id === "string" ? peer_id : null;
+    this.room_meta.last_active_at = deleted_at;
+
+    if (this._persist_timer) {
+      clearTimeout(this._persist_timer);
+      this._persist_timer = null;
+    }
+    this._pending_updates = 0;
+    this.room_doc = new Y.Doc();
+
+    await this.ctx.storage.put(ROOM_META_KEY, this.room_meta);
+
+    ws.send(JSON.stringify({ type: "deleted", room_id, deleted_at }));
+
+    for (const [peer_ws] of this.peers) {
+      if (peer_ws === ws) continue;
+      try {
+        peer_ws.send(JSON.stringify({ type: "room-deleted", room_id, deleted_at }));
+      } catch {
+        // ignore send errors
+      }
+      try {
+        peer_ws.close(4410, "Room deleted");
+      } catch {
+        // ignore close errors
+      }
+    }
+
+    const blob_entries = await this.ctx.storage.list({ prefix: BLOB_PREFIX });
+    await this.ctx.storage.delete(YDOC_SNAPSHOT_KEY);
+    await this.ctx.storage.delete(LAST_COMPACTED_AT_KEY);
+    for (const key of blob_entries.keys()) {
+      await this.ctx.storage.delete(key);
+    }
+
+    this.room_meta.purged_at = Date.now();
+    await this.ctx.storage.put(ROOM_META_KEY, this.room_meta);
+  }
+
   _apply_update(update_bytes) {
+    if (is_room_deleted(this.room_meta)) return;
     Y.applyUpdate(this.room_doc, update_bytes);
     this._pending_updates++;
     if (this._pending_updates >= 100) {
@@ -325,6 +443,7 @@ export class CollabRoom {
   }
 
   async _persist_snapshot() {
+    if (is_room_deleted(this.room_meta)) return;
     this._pending_updates = 0;
     const snapshot = Y.encodeStateAsUpdate(this.room_doc);
     await this.ctx.storage.put(YDOC_SNAPSHOT_KEY, snapshot);
@@ -359,6 +478,33 @@ export class CollabRoom {
       await this.ctx.storage.put(ROOM_META_KEY, this.room_meta);
     }
     await this.ctx.storage.setAlarm(Date.now() + SEVEN_DAYS_MS);
+  }
+
+  async _store_blobs(blobs) {
+    if (!blobs || typeof blobs !== "object") return;
+    const MAX_BLOB_SIZE = 1024 * 1024;
+    for (const [hash, b64] of Object.entries(blobs)) {
+      if (typeof hash !== "string" || typeof b64 !== "string") continue;
+      if (b64.length > MAX_BLOB_SIZE) {
+        throw new Error(`Blob ${hash} exceeds ${MAX_BLOB_SIZE} bytes`);
+      }
+      await this.ctx.storage.put(BLOB_PREFIX + hash, b64);
+    }
+  }
+
+  async _load_blobs() {
+    try {
+      const entries = await this.ctx.storage.list({ prefix: BLOB_PREFIX });
+      const result = {};
+      for (const [key, value] of entries) {
+        if (typeof value === "string") {
+          result[key.slice(BLOB_PREFIX.length)] = value;
+        }
+      }
+      return result;
+    } catch {
+      return {};
+    }
   }
 
   _check_agent_rate(peer_id) {
