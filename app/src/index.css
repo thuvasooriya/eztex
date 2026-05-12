@@ -234,6 +234,12 @@ body {
   opacity: 0.9;
 }
 
+.toolbar-toggle:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
 /* compile spinner */
 .compile-spinner {
   display: inline-block;
@@ -350,9 +356,10 @@ body {
 }
 
 .compile-group-text {
-  max-width: 160px;
+  max-width: 220px;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .compile-group-elapsed {
@@ -2630,6 +2637,109 @@ body {
 .share-dropdown {
   min-width: 200px;
   font-family: var(--font-mono);
+}
+
+.share-avatar-stack {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 8px;
+}
+
+.share-presence {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: 30px;
+}
+
+.avatar-stack {
+  display: flex;
+  align-items: center;
+  position: relative;
+}
+
+.avatar-circle {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 2px solid var(--bg-dark);
+  border-radius: 50%;
+  overflow: hidden;
+  background: transparent;
+  transition: margin-left var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out);
+  cursor: pointer;
+}
+
+.avatar-circle:not(:first-child) {
+  margin-left: -12px;
+}
+
+.avatar-stack:hover .avatar-circle:not(:first-child) {
+  margin-left: 4px;
+}
+
+.avatar-circle:hover {
+  transform: translateY(-1px);
+}
+
+.avatar-circle-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.avatar-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  min-width: 220px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 220;
+}
+
+.avatar-popover .avatar-circle {
+  width: 48px;
+  height: 48px;
+  margin-left: 0;
+}
+
+.avatar-popover-name {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.avatar-popover-meta {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+
+.avatar-popover-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-light);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.avatar-popover-action:hover {
+  background: var(--bg-lighter);
+  border-color: var(--border-light);
 }
 
 .share-peer-badge {

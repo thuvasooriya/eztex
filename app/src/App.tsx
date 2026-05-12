@@ -17,7 +17,8 @@ import {
   create_fresh_project,
 } from "./lib/project_persist";
 import { get_project, set_current_project } from "./lib/project_manager";
-import { parse_collab_url, get_owned_room } from "./lib/collab_share";
+import { get_collab_ws_url } from "./lib/collab_config";
+import { create_share_token, get_share_token_permission, parse_collab_url, get_owned_room } from "./lib/collab_share";
 import { create_collab_provider, type CollabProvider, type CollabStatus, type CollabPermission } from "./lib/collab_provider";
 import { get_or_create_identity } from "./lib/identity";
 import { AppContextProvider } from "./lib/app_context";
@@ -97,6 +98,7 @@ const App: Component = () => {
   const [collab_permission, set_collab_permission] = createSignal<CollabPermission | null>(null);
   const [collab_peer_count, set_collab_peer_count] = createSignal(0);
   const read_only = createMemo(() => collab_permission() === "read");
+  const [collab_room_id, set_collab_room_id] = createSignal<string | null>(null);
 
   const [collab_provider, set_collab_provider] = createSignal<CollabProvider | null>(null);
   const collab_awareness = createMemo(() => collab_provider() ? store.awareness() : null);
@@ -137,6 +139,26 @@ const App: Component = () => {
   let cleanup_autosave: (() => void) | undefined;
   let cleanup_folder_compile_sync: (() => void) | undefined;
   let cleanup_worker_ready: (() => void) | undefined;
+
+  async function resolve_collab_auth(room_id: string): Promise<{ token: string; room_secret: string | null } | null> {
+    const collab_url = parse_collab_url(new URL(window.location.href));
+    if (collab_url && collab_url.room_id === room_id) {
+      const owned = get_owned_room(room_id);
+      const permission = get_share_token_permission(collab_url.token);
+      return {
+        token: collab_url.token,
+        room_secret: permission === "write" ? owned?.room_secret ?? null : null,
+      };
+    }
+
+    const owned = get_owned_room(room_id);
+    if (!owned) return null;
+
+    return {
+      token: await create_share_token(owned.room_secret, room_id, "w"),
+      room_secret: owned.room_secret,
+    };
+  }
 
   function toggle_files() {
     set_files_visible((v) => !v);
@@ -330,38 +352,10 @@ const App: Component = () => {
       }
     }
 
-    // initialize collaboration if room detected
+    // capture room from share URL so the reactive collab connector can pick it up
     const collab_url = parse_collab_url(new URL(window.location.href));
-    let room_id = store.room_id();
-    let token: string | null = null;
-
     if (collab_url) {
-      room_id = collab_url.room_id;
-      token = collab_url.token;
-      store.set_room_id(room_id);
-    } else if (room_id) {
-      const owned = get_owned_room(room_id);
-      if (owned) {
-        token = await import("./lib/collab_share").then(m => m.create_share_token(owned.room_secret, room_id!, "w"));
-      }
-    }
-
-    if (room_id && token) {
-      const ws_url = `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/collab/ws/${room_id}`;
-      const identity = get_or_create_identity();
-      const provider = create_collab_provider({
-        room_id,
-        token,
-        doc: store.ydoc(),
-        awareness: store.awareness(),
-        identity,
-        ws_url,
-        on_status: set_collab_status,
-        on_permission: set_collab_permission,
-        on_peer_count: set_collab_peer_count,
-      });
-      set_collab_provider(provider);
-      provider.connect();
+      store.set_room_id(collab_url.room_id);
     }
 
     set_project_ready(true);
@@ -495,6 +489,59 @@ const App: Component = () => {
     }
   });
 
+  createEffect(() => {
+    if (!project_ready()) return;
+
+    const room_id = store.room_id();
+    const active_room_id = collab_room_id();
+    const current_provider = collab_provider();
+
+    if (!room_id) {
+      if (current_provider) {
+        current_provider.destroy();
+        set_collab_provider(null);
+        set_collab_room_id(null);
+      }
+      return;
+    }
+
+    if (active_room_id === room_id && current_provider) return;
+
+    if (current_provider && active_room_id && active_room_id !== room_id) {
+      current_provider.destroy();
+      set_collab_provider(null);
+      set_collab_room_id(null);
+    }
+
+    let cancelled = false;
+    void resolve_collab_auth(room_id).then((auth) => {
+      if (cancelled || !auth) return;
+
+      collab_provider()?.destroy();
+      set_collab_provider(null);
+
+      const provider = create_collab_provider({
+        room_id,
+        token: auth.token,
+        room_secret: auth.room_secret,
+        doc: store.ydoc(),
+        awareness: store.awareness(),
+        identity: get_or_create_identity(),
+        ws_url: get_collab_ws_url(room_id),
+        on_status: set_collab_status,
+        on_permission: set_collab_permission,
+        on_peer_count: set_collab_peer_count,
+      });
+      set_collab_provider(provider);
+      set_collab_room_id(room_id);
+      provider.connect();
+    });
+
+    onCleanup(() => {
+      cancelled = true;
+    });
+  });
+
   function handle_file_resize(delta: number) {
     set_file_panel_width((w) => Math.max(140, Math.min(400, w + delta)));
   }
@@ -533,12 +580,10 @@ const App: Component = () => {
   async function handle_copy_agent_write_link() {
     const rid = store.room_id();
     if (!rid) return;
-    const { get_owned_room, create_share_token } = await import("./lib/collab_share");
     const owned = get_owned_room(rid);
     if (!owned) return;
     const token = await create_share_token(owned.room_secret, rid, "w");
-    const ws_proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const ws_url = `${ws_proto}//${window.location.host}/collab/ws/${rid}`;
+    const ws_url = get_collab_ws_url(rid);
     const link = `${ws_url}#${token}`;
     try {
       await navigator.clipboard.writeText(link);

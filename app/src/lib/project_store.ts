@@ -486,6 +486,7 @@ export function create_project_store() {
   }
 
   function room_id(): string | undefined {
+    revision();
     return get_project_metadata(yp).room_id;
   }
 

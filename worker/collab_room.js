@@ -6,13 +6,18 @@ const LAST_COMPACTED_AT_KEY = "last-compacted-at";
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 
 function base64url_encode(bytes) {
-  const base64 = btoa(String.fromCharCode(...bytes));
+  let binary = "";
+  const len = bytes.length;
+  for (let i = 0; i < len; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  const base64 = btoa(binary);
   return base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
 }
 
 function base64url_decode(str) {
-  str += new Array(5 - (str.length % 4)).join("=");
-  str = str.replace(/\-/g, "+").replace(/\_/g, "/");
+  const pad = (4 - (str.length % 4)) % 4;
+  str = str.replace(/\-/g, "+").replace(/\_/g, "/") + "=".repeat(pad);
   const bytes = new Uint8Array(
     atob(str).split("").map((c) => c.charCodeAt(0)),
   );
@@ -56,6 +61,14 @@ async function verify_token(room_secret_b64, room_id, token) {
   } catch {
     return null;
   }
+}
+
+function decode_room_secret(room_secret_b64) {
+  const secret = base64url_decode(room_secret_b64);
+  if (secret.byteLength !== 32) {
+    throw new Error("Room secret must be 32 bytes");
+  }
+  return secret;
 }
 
 export const FrameKind = {
@@ -194,6 +207,21 @@ export class CollabRoom {
   async _handle_create(ws, msg) {
     const { room_id, room_secret, peer_id, identity, initial_state } = msg;
 
+    if (typeof room_id !== "string" || !room_id.startsWith("r_")) {
+      ws.close(4400, "Invalid room ID");
+      return;
+    }
+    if (typeof room_secret !== "string") {
+      ws.close(4400, "Missing room secret");
+      return;
+    }
+    try {
+      decode_room_secret(room_secret);
+    } catch {
+      ws.close(4400, "Invalid room secret");
+      return;
+    }
+
     if (this.room_meta) {
       if (this.room_meta.room_secret !== room_secret) {
         ws.close(4409, "Room already exists with different secret");
@@ -213,23 +241,23 @@ export class CollabRoom {
       await this.ctx.storage.put(ROOM_META_KEY, this.room_meta);
     }
 
-    const attachment = {
-      peer_id,
-      permission: "write",
-      identity,
-      kind: "human",
-      joined_at: Date.now(),
-    };
-    ws.serializeAttachment(attachment);
-    this.peers.set(ws, attachment);
+    let initial_bytes = null;
+    if (typeof initial_state === "string") {
+      try {
+        initial_bytes = base64url_decode(initial_state);
+      } catch {
+        ws.close(4400, "Invalid initial state");
+        return;
+      }
+    }
 
-    if (initial_state && initial_state.byteLength > 0) {
-      const bytes = new Uint8Array(initial_state);
+    if (initial_bytes && initial_bytes.byteLength > 0) {
+      const bytes = new Uint8Array(initial_bytes);
       Y.applyUpdate(this.room_doc, bytes);
       await this._persist_snapshot();
     }
 
-    ws.send(JSON.stringify({ type: "created", room_id, snapshot_applied: true }));
+    ws.send(JSON.stringify({ type: "created", room_id, snapshot_applied: !!initial_bytes }));
   }
 
   async _handle_join(ws, msg) {

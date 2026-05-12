@@ -399,7 +399,7 @@ export function init_commands(d: CommandDeps): void {
       const { get_project } = await import("./project_manager");
       const entry = await get_project(pid);
       const project_name = entry?.name ?? "Untitled Project";
-      const links = await create_room_links(pid, project_name, window.location.origin);
+      const links = await create_room_links(pid, project_name);
       project.store.set_room_id(links.room_id);
       try {
         await navigator.clipboard.writeText(links.write_url);

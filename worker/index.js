@@ -12,6 +12,7 @@
  */
 
 import { CollabRoom } from './collab_room.js';
+export { CollabRoom };
 
 // upstream Tectonic bundle (fallback origin)
 const TECTONIC_BUNDLE_URL = 'https://relay.fullyjustified.net/default_bundle_v33.tar';

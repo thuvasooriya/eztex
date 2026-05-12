@@ -18,6 +18,7 @@
         "jszip": "^3.10.1",
         "lib0": "^0.2.114",
         "pdfjs-dist": "^5.4.624",
+        "playful-avatars": "^1.0.0",
         "solid-js": "^1.9.10",
         "y-codemirror.next": "^0.3.5",
         "y-indexeddb": "^9.0.12",
@@ -723,6 +724,8 @@
     "picocolors": ["picocolors@1.1.1", "", {}, "sha512-xceH2snhtb5M9liqDsmEw56le376mTZkEX/jEb/RxNFyegNul7eNslCXP9FDj/Lcu0X8KEyMceP2ntpaHrDEVA=="],
 
     "picomatch": ["picomatch@4.0.3", "", {}, "sha512-5gTmgEY/sqK6gFXLIsQNH19lWb4ebPDLA4SdLP7dsWkIXHWlG66oPuVvXSGFPppYZz8ZDZq0dYYrbHfBCVUb1Q=="],
+
+    "playful-avatars": ["playful-avatars@1.0.0", "", {}, "sha512-kQK76frsyuX5y7agZKteMwsIFKSxtNg1AnIy8WspO5tAl32hPPSysDHS0WB5xWrvyx58jkhsQ2Jo9GE03W6YtA=="],
 
     "possible-typed-array-names": ["possible-typed-array-names@1.1.0", "", {}, "sha512-/+5VFTchJDoVj3bhoqi6UeymcD00DAwb1nJwamzPvHEszJ4FpF6SNNbUbOS8yI56qHzdV8eK0qEfOSiodkTdxg=="],
 

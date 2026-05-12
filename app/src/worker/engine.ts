@@ -75,7 +75,10 @@ function common_dir_prefix(paths: string[]): string {
     return parts;
   });
   const prefix: string[] = [];
-  const max_len = Math.min(...dir_parts.map((parts) => parts.length));
+  let max_len = Infinity;
+  for (const parts of dir_parts) {
+    if (parts.length < max_len) max_len = parts.length;
+  }
   for (let i = 0; i < max_len; i++) {
     const segment = dir_parts[0][i];
     if (dir_parts.every((parts) => parts[i] === segment)) {
@@ -502,7 +505,6 @@ async function download_format(): Promise<boolean> {
   const url = wasm_api.format_url();
   const serial = wasm_api.format_serial();
   dbg("fmt", `downloading precompiled format (serial ${serial}) from ${url}...`);
-  send_status("Downloading format...", "loading");
 
   let data: Uint8Array | null = null;
   let last_err: string | null = null;
@@ -518,7 +520,30 @@ async function download_format(): Promise<boolean> {
         last_err = `HTTP ${resp.status}`;
         continue;
       }
-      data = new Uint8Array(await resp.arrayBuffer());
+      const total = Number(resp.headers.get("content-length") ?? "0");
+      if (!resp.body || total <= 0) {
+        data = new Uint8Array(await resp.arrayBuffer());
+      } else {
+        const reader = resp.body.getReader();
+        const chunks: Uint8Array[] = [];
+        let loaded = 0;
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (!value) continue;
+          chunks.push(value);
+          loaded += value.byteLength;
+          const pct = Math.min(100, Math.round((loaded / total) * 100));
+          send_progress(pct);
+          send_status(`Downloading format ${pct}%`, "loading");
+        }
+        data = new Uint8Array(loaded);
+        let offset = 0;
+        for (const chunk of chunks) {
+          data.set(chunk, offset);
+          offset += chunk.byteLength;
+        }
+      }
       last_err = null;
       break;
     } catch (err) {

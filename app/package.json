@@ -22,6 +22,7 @@
     "jszip": "^3.10.1",
     "lib0": "^0.2.114",
     "pdfjs-dist": "^5.4.624",
+    "playful-avatars": "^1.0.0",
     "solid-js": "^1.9.10",
     "y-codemirror.next": "^0.3.5",
     "y-indexeddb": "^9.0.12",

@@ -1,10 +1,11 @@
 import * as Y from "yjs";
 import { Awareness, applyAwarenessUpdate, encodeAwarenessUpdate } from "y-protocols/awareness";
-import { readSyncMessage, writeSyncStep1, writeSyncStep2 } from "y-protocols/sync";
+import { readSyncMessage, writeSyncStep1 } from "y-protocols/sync";
 import { createDecoder } from "lib0/decoding";
 import { createEncoder, toUint8Array } from "lib0/encoding";
 import { encode_frame, decode_frame, FrameKind } from "./collab_protocol";
 import type { UserIdentity } from "./identity";
+import { get_jjk_name } from "./jjk_names";
 
 export type CollabPermission = "read" | "write";
 export type CollabStatus = "idle" | "connecting" | "connected" | "reconnecting" | "closed" | "error";
@@ -12,6 +13,7 @@ export type CollabStatus = "idle" | "connecting" | "connected" | "reconnecting" 
 export interface CollabProviderOptions {
   room_id: string;
   token: string;
+  room_secret?: string | null;
   doc: Y.Doc;
   awareness: Awareness;
   identity: UserIdentity;
@@ -25,9 +27,19 @@ export interface CollabProviderOptions {
 const PROVIDER_ORIGIN = "eztex:collab-provider";
 const RECONNECT_DELAYS = [500, 1000, 2000, 5000, 10000, 15000, 30000];
 
+function base64url_encode(bytes: Uint8Array): string {
+  let binary = "";
+  const len = bytes.length;
+  for (let i = 0; i < len; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  const base64 = btoa(binary);
+  return base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
+}
+
 function base64url_decode(str: string): Uint8Array {
-  str += new Array(5 - (str.length % 4)).join("=");
-  str = str.replace(/\-/g, "+").replace(/\_/g, "/");
+  const pad = (4 - (str.length % 4)) % 4;
+  str = str.replace(/\-/g, "+").replace(/\_/g, "/") + "=".repeat(pad);
   const bytes = new Uint8Array(
     atob(str).split("").map((c) => c.charCodeAt(0)),
   );
@@ -48,7 +60,12 @@ export function create_collab_provider(opts: CollabProviderOptions): CollabProvi
   let ws: WebSocket | null = null;
   let reconnect_attempt = 0;
   let reconnect_timer: ReturnType<typeof setTimeout> | null = null;
+  let presence_timer: ReturnType<typeof setInterval> | null = null;
   let destroyed = false;
+
+  function touch_presence() {
+    opts.awareness.setLocalStateField("last_active_at", Date.now());
+  }
 
   function set_status(s: CollabStatus) {
     status = s;
@@ -58,13 +75,22 @@ export function create_collab_provider(opts: CollabProviderOptions): CollabProvi
   function set_permission(p: CollabPermission) {
     permission = p;
     opts.on_permission?.(p);
+    const name = get_jjk_name(opts.identity.user_id);
     opts.awareness.setLocalStateField("user", {
       user_id: opts.identity.user_id,
-      name: opts.identity.display_name,
+      name,
       color: opts.identity.color,
       color_hue: opts.identity.color_hue,
       permission: p,
+      kind: opts.identity.kind ?? "human",
     });
+    touch_presence();
+    if (opts.awareness.getLocalState()?.edit_count == null) {
+      opts.awareness.setLocalStateField("edit_count", 0);
+    }
+    if (!presence_timer) {
+      presence_timer = setInterval(() => touch_presence(), 30000);
+    }
   }
 
   function connect() {
@@ -76,6 +102,22 @@ export function create_collab_provider(opts: CollabProviderOptions): CollabProvi
 
     ws.onopen = () => {
       reconnect_attempt = 0;
+      const is_owner = !!opts.room_secret && opts.token.startsWith("w.");
+      if (is_owner) {
+        ws!.send(JSON.stringify({
+          type: "create",
+          room_id: opts.room_id,
+          room_secret: opts.room_secret,
+          initial_state: base64url_encode(Y.encodeStateAsUpdate(opts.doc)),
+          peer_id: opts.identity.user_id,
+          identity: {
+            user_id: opts.identity.user_id,
+            display_name: opts.identity.display_name,
+            color_hue: opts.identity.color_hue,
+            color: opts.identity.color,
+          },
+        }));
+      }
       ws!.send(JSON.stringify({
         type: "join",
         room_id: opts.room_id,
@@ -135,8 +177,7 @@ export function create_collab_provider(opts: CollabProviderOptions): CollabProvi
       // start sync protocol
       send_sync_step1();
     } else if (msg.type === "created") {
-      set_status("connected");
-      send_sync_step1();
+      // wait for the follow-up join response before starting sync
     } else if (msg.type === "error") {
       set_status("error");
       opts.on_error?.(msg.message);
@@ -150,14 +191,14 @@ export function create_collab_provider(opts: CollabProviderOptions): CollabProvi
   function handle_binary(bytes: Uint8Array) {
     try {
       const frame = decode_frame(bytes);
-      if (frame.kind === FrameKind.SyncStep1) {
-        const encoder = createEncoder();
-        writeSyncStep2(encoder, opts.doc);
-        const reply = toUint8Array(encoder);
-        send_frame(FrameKind.SyncStep2, reply);
-      } else if (frame.kind === FrameKind.SyncStep2) {
+      if (frame.kind === FrameKind.SyncStep1 || frame.kind === FrameKind.SyncStep2) {
         const decoder = createDecoder(frame.payload);
-        (readSyncMessage as any)(decoder, opts.doc, PROVIDER_ORIGIN);
+        const encoder = createEncoder();
+        readSyncMessage(decoder, encoder, opts.doc, PROVIDER_ORIGIN);
+        const reply = toUint8Array(encoder);
+        if (frame.kind === FrameKind.SyncStep1 && reply.length > 0) {
+          send_frame(FrameKind.SyncStep2, reply);
+        }
       } else if (frame.kind === FrameKind.DocUpdate) {
         Y.applyUpdate(opts.doc, frame.payload, PROVIDER_ORIGIN);
       } else if (frame.kind === FrameKind.Awareness) {
@@ -215,10 +256,17 @@ export function create_collab_provider(opts: CollabProviderOptions): CollabProvi
       clearTimeout(reconnect_timer);
       reconnect_timer = null;
     }
+    if (presence_timer) {
+      clearInterval(presence_timer);
+      presence_timer = null;
+    }
     if (ws) {
       ws.close();
       ws = null;
     }
+    opts.awareness.setLocalStateField("cursor", null);
+    opts.awareness.setLocalStateField("cursor_file", null);
+    opts.awareness.setLocalStateField("cursor_line", null);
     set_status("idle");
   }
 

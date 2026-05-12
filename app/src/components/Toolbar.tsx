@@ -1,7 +1,8 @@
-import { type Component, Show, For, onCleanup, onMount, createSignal, createEffect, untrack, type Setter } from "solid-js";
+import { type Component, Show, For, onCleanup, onMount, createSignal, createEffect, createMemo, untrack, type Setter } from "solid-js";
 import AnimatedShow from "./AnimatedShow";
 import { worker_client, type LogEntry } from "../lib/worker_client";
 import ProgressBar from "./ProgressBar";
+import UserAvatar from "./UserAvatar";
 import { read_zip, write_zip } from "../lib/zip_utils";
 import { use_app_context } from "../lib/app_context";
 import type { ProjectStore } from "../lib/project_store";
@@ -10,7 +11,9 @@ import type { ProjectFiles } from "../lib/project_store";
 import { save_pdf, clear_bundle_cache, reset_all_persistence } from "../lib/project_persist";
 import type { ProjectCatalogEntry } from "../lib/project_persist";
 import { list_projects, rename_project, delete_project, get_project_url, create_project, set_current_project, duplicate_project } from "../lib/project_manager";
-import { create_room_links } from "../lib/collab_share";
+import { create_room_links, download_rooms_backup, get_owned_room, get_owned_room_links, load_rooms_backup_from_file } from "../lib/collab_share";
+import { get_or_create_identity } from "../lib/identity";
+import { get_jjk_name } from "../lib/jjk_names";
 import type { ConflictInfo } from "../lib/local_folder_sync";
 import type { WatchController } from "../lib/watch_controller";
 import logo_svg from "/logo.svg?raw";
@@ -43,22 +46,38 @@ const Logo: Component = () => (
   <span class="logo" aria-label="eztex" innerHTML={logo_svg} />
 );
 
+type HumanPeer = {
+  user_id: string;
+  display_name: string;
+  color: string;
+  current_file: string | null;
+  current_line: number | null;
+  last_active_at: number | null;
+  edit_count: number;
+  is_self: boolean;
+};
+
 const Toolbar: Component<Props> = (props) => {
   const app = use_app_context();
   const folder_sync = () => app.folder_sync;
   const collab = app.collab;
   const agent_review_store = () => app.agent_review_store;
+  const local_identity = get_or_create_identity();
 
   let zip_input_ref: HTMLInputElement | undefined;
   let folder_input_ref: HTMLInputElement | undefined;
   let file_input_ref: HTMLInputElement | undefined;
+  let rooms_backup_input_ref: HTMLInputElement | undefined;
   let upload_btn_ref: HTMLDivElement | undefined;
   let download_btn_ref: HTMLDivElement | undefined;
+  let share_presence_ref: HTMLDivElement | undefined;
 
   const [show_upload_menu, set_show_upload_menu] = createSignal(false);
   const [show_download_menu, set_show_download_menu] = createSignal(false);
   const [show_project_menu, set_show_project_menu] = createSignal(false);
   const [show_share_menu, set_show_share_menu] = createSignal(false);
+  const [selected_peer_id, set_selected_peer_id] = createSignal<string | null>(null);
+  const [selected_peer_left, set_selected_peer_left] = createSignal(0);
   const [share_links, set_share_links] = createSignal<{ write_url: string; read_url: string } | null>(null);
   const [projects, set_projects] = createSignal<ProjectCatalogEntry[]>([]);
   const [current_project_name, set_current_project_name] = createSignal("");
@@ -76,8 +95,73 @@ const Toolbar: Component<Props> = (props) => {
   // cache state (moved from CachePill)
   const [cache_bytes, set_cache_bytes] = createSignal(0);
   const [clearing_cache, set_clearing_cache] = createSignal(false);
+  const [awareness_revision, set_awareness_revision] = createSignal(0);
+  const [clock_now, set_clock_now] = createSignal(Date.now());
   let estimate_opfs_timer: ReturnType<typeof setTimeout> | undefined;
   let cleanup_compile_persist: (() => void) | undefined;
+  let cleanup_clock: ReturnType<typeof setInterval> | undefined;
+  const current_owned_room = createMemo(() => {
+    const room_id = props.store.room_id();
+    return room_id ? get_owned_room(room_id) : null;
+  });
+  const show_room_backup_actions = createMemo(() => !props.store.room_id() || current_owned_room() !== null);
+  const connected_users = createMemo<HumanPeer[]>(() => {
+    const awareness = collab.awareness();
+    if (!awareness) return [];
+    awareness_revision();
+
+    const users = new Map<string, HumanPeer>();
+    for (const [, state] of awareness.getStates()) {
+      const user = state?.user;
+      if (!user || user.kind === "agent" || typeof user.user_id !== "string") continue;
+      users.set(user.user_id, {
+        user_id: user.user_id,
+        display_name: typeof user.name === "string" ? user.name : get_jjk_name(user.user_id),
+        color: typeof user.color === "string" ? user.color : "var(--accent)",
+        current_file: typeof state.cursor_file === "string" ? state.cursor_file : null,
+        current_line: typeof state.cursor_line === "number" ? state.cursor_line : null,
+        last_active_at: typeof state.last_active_at === "number" ? state.last_active_at : null,
+        edit_count: typeof state.edit_count === "number" ? state.edit_count : 0,
+        is_self: user.user_id === local_identity.user_id,
+      });
+    }
+
+    return [...users.values()].sort((a, b) => {
+      if (a.is_self !== b.is_self) return a.is_self ? -1 : 1;
+      return a.display_name.localeCompare(b.display_name);
+    });
+  });
+  const selected_peer = createMemo(() => connected_users().find((user) => user.user_id === selected_peer_id()) ?? null);
+
+  createEffect(() => {
+    const awareness = collab.awareness();
+    if (!awareness) {
+      set_awareness_revision(0);
+      return;
+    }
+
+    const refresh = () => set_awareness_revision((v) => v + 1);
+    refresh();
+    awareness.on("change", refresh);
+    onCleanup(() => awareness.off("change", refresh));
+  });
+
+  createEffect(() => {
+    if (!selected_peer_id()) return;
+    const on_click = (e: MouseEvent) => {
+      if (share_presence_ref && share_presence_ref.contains(e.target as Node)) return;
+      set_selected_peer_id(null);
+    };
+    const on_key = (e: KeyboardEvent) => {
+      if (e.key === "Escape") set_selected_peer_id(null);
+    };
+    document.addEventListener("click", on_click);
+    document.addEventListener("keydown", on_key);
+    onCleanup(() => {
+      document.removeEventListener("click", on_click);
+      document.removeEventListener("keydown", on_key);
+    });
+  });
 
   function format_cache_size(bytes: number): string {
     if (bytes <= 0) return "0 B";
@@ -133,10 +217,12 @@ const Toolbar: Component<Props> = (props) => {
         })
         .catch(() => {});
     });
+    cleanup_clock = setInterval(() => set_clock_now(Date.now()), 30000);
   });
 
   onCleanup(() => {
     cleanup_compile_persist?.();
+    if (cleanup_clock !== undefined) clearInterval(cleanup_clock);
     if (estimate_opfs_timer !== undefined) clearTimeout(estimate_opfs_timer);
   });
 
@@ -232,9 +318,84 @@ const Toolbar: Component<Props> = (props) => {
   async function handle_create_room() {
     const pid = props.store.project_id();
     if (!pid) return;
-    const links = await create_room_links(pid, current_project_name(), window.location.origin);
+    const links = await create_room_links(pid, current_project_name());
     set_share_links({ write_url: links.write_url, read_url: links.read_url });
     props.store.set_room_id(links.room_id);
+  }
+
+  async function handle_copy_write_share_link() {
+    const room_id = props.store.room_id();
+    const links = share_links() ?? (room_id ? await get_owned_room_links(room_id) : null);
+    if (links) {
+      await handle_copy_link(links.write_url);
+      return;
+    }
+    await show_alert_modal({
+      title: "Write Link Unavailable",
+      message: "This browser does not have the room secret for generating a write link.",
+    });
+  }
+
+  async function handle_copy_read_share_link() {
+    const room_id = props.store.room_id();
+    const links = share_links() ?? (room_id ? await get_owned_room_links(room_id) : null);
+    const url = links?.read_url ?? window.location.href;
+    await handle_copy_link(url);
+  }
+
+  function handle_export_rooms() {
+    set_show_project_menu(false);
+    download_rooms_backup();
+  }
+
+  async function handle_import_rooms_backup(e: Event) {
+    const input = e.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+
+    try {
+      const result = await load_rooms_backup_from_file(file);
+      await show_alert_modal({
+        title: "Rooms Imported",
+        message: `Imported ${result.imported} room(s). Skipped ${result.skipped}.`,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to import room backup.";
+      await show_alert_modal({
+        title: "Import Error",
+        message,
+      });
+    }
+
+    input.value = "";
+  }
+
+  function handle_jump_to_peer(peer: HumanPeer) {
+    if (!peer.current_file || !peer.current_line) return;
+    set_selected_peer_id(null);
+    props.store.set_current_file(peer.current_file);
+    worker_client.request_goto(peer.current_file, peer.current_line);
+  }
+
+  function handle_select_peer(peer: HumanPeer, el: HTMLElement) {
+    const root_rect = share_presence_ref?.getBoundingClientRect();
+    const avatar_rect = el.getBoundingClientRect();
+    set_selected_peer_left(root_rect ? avatar_rect.left - root_rect.left : 0);
+    set_selected_peer_id((current) => current === peer.user_id ? null : peer.user_id);
+  }
+
+  function format_last_active(ts: number | null): string {
+    void clock_now();
+    if (!ts) return "Unknown";
+    const diff_ms = Math.max(0, Date.now() - ts);
+    const diff_sec = Math.floor(diff_ms / 1000);
+    if (diff_sec < 10) return "Just now";
+    if (diff_sec < 60) return `${diff_sec}s ago`;
+    const diff_min = Math.floor(diff_sec / 60);
+    if (diff_min < 60) return `${diff_min}m ago`;
+    const diff_hr = Math.floor(diff_min / 60);
+    if (diff_hr < 24) return `${diff_hr}h ago`;
+    return `${Math.floor(diff_hr / 24)}d ago`;
   }
 
   async function handle_copy_link(url: string) {
@@ -432,7 +593,14 @@ const Toolbar: Component<Props> = (props) => {
     });
 
     if (choice === "new") {
-      handle_import_as_new_project(incoming);
+      const name = await show_input_modal({
+        title: "New Project",
+        message: "Enter a name for the imported project.",
+        placeholder: "Project name",
+        default_value: "Imported Project",
+      });
+      if (name === null) return;
+      handle_import_as_new_project(incoming, name.trim() || "Imported Project");
       return;
     }
 
@@ -472,14 +640,14 @@ const Toolbar: Component<Props> = (props) => {
     }
   }
 
-  async function handle_import_as_new_project(incoming: ProjectFiles) {
-    const id = await create_project("Imported Project");
+  async function handle_import_as_new_project(incoming: ProjectFiles, project_name: string) {
+    const id = await create_project(project_name);
     await set_current_project(id);
 
     // save snapshot with the imported files
     const { create_y_project_doc, encode_snapshot: enc_snap, get_or_create_text_file, create_binary_file_ref, set_project_metadata } = await import("../lib/y_project_doc");
     const { save_ydoc_snapshot, save_blob, compute_hash, save_project_manifest, load_catalog, save_catalog } = await import("../lib/project_persist");
-    const yp = create_y_project_doc(id, "Imported Project");
+    const yp = create_y_project_doc(id, project_name);
     for (const [path, content] of Object.entries(incoming)) {
       if (content instanceof Uint8Array) {
         const hash = await compute_hash(content);
@@ -526,7 +694,7 @@ const Toolbar: Component<Props> = (props) => {
     await save_project_manifest(id, {
       version: 2,
       id,
-      name: "Imported Project",
+      name: project_name,
       created_at: Date.now(),
       updated_at: Date.now(),
       main_file: detected_main ?? "main.tex",
@@ -537,6 +705,7 @@ const Toolbar: Component<Props> = (props) => {
     const cat = await load_catalog();
     const entry = cat.projects.find(p => p.id === id);
     if (entry) {
+      entry.name = project_name;
       entry.main_file = detected_main ?? "main.tex";
       await save_catalog(cat);
     }
@@ -775,7 +944,25 @@ const Toolbar: Component<Props> = (props) => {
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z"/><path d="M12 22V12"/><polyline points="3.29 7 12 12 20.71 7"/><path d="m7.5 4.27 9 5.15"/></svg>
               Export Project
             </button>
-            <div class="upload-dropdown-divider" />
+            <Show when={show_room_backup_actions()}>
+              <button class="upload-dropdown-item" onClick={handle_export_rooms}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="7 10 12 15 17 10" />
+                  <line x1="12" y1="15" x2="12" y2="3" />
+                </svg>
+                Export Rooms
+              </button>
+              <button class="upload-dropdown-item" onClick={() => { set_show_project_menu(false); rooms_backup_input_ref?.click(); }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="17 8 12 3 7 8" />
+                  <line x1="12" y1="3" x2="12" y2="15" />
+                </svg>
+                Import Rooms
+              </button>
+              <div class="upload-dropdown-divider" />
+            </Show>
             <button class="upload-dropdown-item" onClick={handle_rename_project}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
@@ -841,7 +1028,7 @@ const Toolbar: Component<Props> = (props) => {
               </AnimatedShow>
             </div>
             <div class="upload-menu-wrapper" ref={download_btn_ref}>
-              <button class="toolbar-toggle" title="Download" onClick={() => set_show_download_menu(v => !v)}>
+              <button class="toolbar-toggle" title="Download" disabled={!worker_client.pdf_url()} onClick={() => set_show_download_menu(v => !v)}>
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
                   <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
                   <polyline points="7,10 12,15 17,10"/>
@@ -868,6 +1055,7 @@ const Toolbar: Component<Props> = (props) => {
         <input ref={zip_input_ref} type="file" accept=".zip" style={{ display: "none" }} onChange={handle_zip_upload} />
         <input ref={file_input_ref} type="file" multiple accept=".tex,.bib,.sty,.cls,.png,.jpg,.jpeg,.gif,.webp,.svg,.ttf,.otf,.woff,.woff2,.pdf" style={{ display: "none" }} onChange={handle_file_upload} />
         <input ref={folder_input_ref} type="file" {...{ webkitdirectory: true } as any} style={{ display: "none" }} onChange={handle_folder_upload} />
+        <input ref={rooms_backup_input_ref} type="file" accept="application/json,.json" style={{ display: "none" }} onChange={handle_import_rooms_backup} />
       </div>
 
       {/* center: reconnect pill (reusable notification area) */}
@@ -891,6 +1079,38 @@ const Toolbar: Component<Props> = (props) => {
       </Show>
 
       <div class="toolbar-right">
+        <div class="share-presence" ref={share_presence_ref}>
+          <Show when={connected_users().length > 0}>
+            <div class="share-avatar-stack avatar-stack" title={`${connected_users().length} collaborator(s)`}>
+              <For each={connected_users()}>
+                {(user) => (
+                  <UserAvatar
+                    user_id={user.user_id}
+                    display_name={user.display_name}
+                    color={user.color}
+                    on_click={(e) => handle_select_peer(user, e.currentTarget)}
+                  />
+                )}
+              </For>
+            </div>
+          </Show>
+          <Show when={selected_peer()}>
+            {(peer) => (
+              <div class="avatar-popover" style={{ left: `${selected_peer_left()}px` }}>
+                <UserAvatar user_id={peer().user_id} display_name={peer().display_name} color={peer().color} />
+                <div class="avatar-popover-name">{peer().display_name}</div>
+                <div class="avatar-popover-meta">Last active: {format_last_active(peer().last_active_at)}</div>
+                <div class="avatar-popover-meta">Currently editing: {peer().current_file ?? "Idle"}</div>
+                <div class="avatar-popover-meta">Changes this session: {peer().edit_count}</div>
+                <Show when={peer().current_file && peer().current_line}>
+                  <button class="avatar-popover-action" onClick={() => handle_jump_to_peer(peer())}>
+                    Jump to cursor
+                  </button>
+                </Show>
+              </div>
+            )}
+          </Show>
+        </div>
         <div class="upload-menu-wrapper" ref={share_btn_ref}>
           <button
             class={`toolbar-toggle ${collab.status() === "connected" ? "active" : ""}`}
@@ -904,9 +1124,6 @@ const Toolbar: Component<Props> = (props) => {
               <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
               <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
             </svg>
-            <Show when={collab.peer_count() > 0}>
-              <span class="share-peer-badge">{collab.peer_count()}</span>
-            </Show>
           </button>
           <AnimatedShow when={show_share_menu()}>
             <div class="upload-dropdown share-dropdown">
@@ -931,27 +1148,21 @@ const Toolbar: Component<Props> = (props) => {
                   </Show>
                 </div>
                 <div class="upload-dropdown-divider" />
+                <Show when={share_links() || current_owned_room()}>
+                  <button
+                    class="upload-dropdown-item"
+                    onClick={() => { void handle_copy_write_share_link(); }}
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <rect x="9" y="9" width="13" height="13" rx="2" />
+                      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                    </svg>
+                    Copy Write Link
+                  </button>
+                </Show>
                 <button
                   class="upload-dropdown-item"
-                  onClick={() => {
-                    const links = share_links();
-                    const url = links?.write_url ?? window.location.href;
-                    handle_copy_link(url);
-                  }}
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <rect x="9" y="9" width="13" height="13" rx="2" />
-                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                  </svg>
-                  Copy Write Link
-                </button>
-                <button
-                  class="upload-dropdown-item"
-                  onClick={() => {
-                    const links = share_links();
-                    const url = links?.read_url ?? window.location.href;
-                    handle_copy_link(url);
-                  }}
+                  onClick={() => { void handle_copy_read_share_link(); }}
                 >
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />

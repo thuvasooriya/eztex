@@ -210,6 +210,19 @@ const Editor: Component<Props> = (props) => {
   let suppress_forward_sync = false;
   const read_only_compartment = new Compartment();
 
+  function update_cursor_presence(editor: EditorView, doc_changed: boolean): void {
+    const awareness = props.store.awareness();
+    const line = editor.state.doc.lineAt(editor.state.selection.main.head).number;
+    awareness.setLocalStateField("cursor_file", props.store.current_file());
+    awareness.setLocalStateField("cursor_line", line);
+    awareness.setLocalStateField("last_active_at", Date.now());
+    if (doc_changed) {
+      const state = awareness.getLocalState();
+      const edit_count = typeof state?.edit_count === "number" ? state.edit_count : 0;
+      awareness.setLocalStateField("edit_count", edit_count + 1);
+    }
+  }
+
   function base_extensions(ytext: Y.Text, undoManager: Y.UndoManager, readOnly: boolean): any[] {
     return [
       lineNumbers(),
@@ -228,6 +241,7 @@ const Editor: Component<Props> = (props) => {
       read_only_compartment.of(readOnly ? [EditorState.readOnly.of(true), EditorView.editable.of(false)] : []),
       EditorView.updateListener.of((update) => {
         if (update.selectionSet || update.docChanged) {
+          update_cursor_presence(update.view, update.docChanged);
           schedule_forward_synctex(update);
         }
       }),
@@ -267,6 +281,7 @@ const Editor: Component<Props> = (props) => {
     });
 
     props.on_editor_view(view);
+    update_cursor_presence(view, false);
 
     if (props.vim_enabled) {
       import("@replit/codemirror-vim").then(({ vim }) => {
@@ -313,6 +328,7 @@ const Editor: Component<Props> = (props) => {
         const undoManager = get_undo_manager(file, ytext);
 
         view.setState(create_editor_state(ytext, undoManager));
+        update_cursor_presence(view, false);
 
         if (props.vim_enabled) {
           import("@replit/codemirror-vim").then(({ vim }) => {
@@ -360,6 +376,18 @@ const Editor: Component<Props> = (props) => {
     if (goto_reset_timer !== undefined) clearTimeout(goto_reset_timer);
     goto_reset_timer = setTimeout(() => { suppress_forward_sync = false; }, 400);
     worker_client.clear_goto();
+  });
+
+  createEffect(() => {
+    const current_file = props.store.current_file();
+    const awareness = props.store.awareness();
+    if (!view || current_is_binary()) {
+      awareness.setLocalStateField("cursor_file", current_file);
+      awareness.setLocalStateField("cursor_line", null);
+      awareness.setLocalStateField("last_active_at", Date.now());
+      return;
+    }
+    update_cursor_presence(view, false);
   });
 
   onCleanup(() => {

@@ -47,8 +47,8 @@ const FrameKind = { SyncStep1: 0, SyncStep2: 1, DocUpdate: 2, Awareness: 3 };
 let permission: string | null = null;
 
 function base64url_decode(str: string): Uint8Array {
-  str += new Array(5 - (str.length % 4)).join("=");
-  str = str.replace(/-/g, "+").replace(/_/g, "/");
+  const pad = (4 - (str.length % 4)) % 4;
+  str = str.replace(/\-/g, "+").replace(/\_/g, "/") + "=".repeat(pad);
   return new Uint8Array(atob(str).split("").map((c) => c.charCodeAt(0)));
 }
 
