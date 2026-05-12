@@ -210,8 +210,16 @@ export class ProjectSessionManager {
       put_blobs: async (blobs: Record<string, string>) => {
         await store.import_blobs(blobs);
       },
+      on_blob_available: (hash) => { void store.handle_blob_available(hash); },
+      on_blob_request: (hash) => { void store.handle_blob_request(hash); },
+      on_blob_response: (hash, bytes) => { void store.handle_blob_response(hash, bytes); },
       on_status: () => {},
       on_permission: () => {},
+    });
+    store.set_blob_sync_sender({
+      send_blob_available: collab_provider.send_blob_available,
+      send_blob_request: collab_provider.send_blob_request,
+      send_blob_response: collab_provider.send_blob_response,
     });
 
     const session = this._create_session({
@@ -273,8 +281,16 @@ export class ProjectSessionManager {
       put_blobs: async (blobs: Record<string, string>) => {
         await store.import_blobs(blobs);
       },
+      on_blob_available: (hash) => { void store.handle_blob_available(hash); },
+      on_blob_request: (hash) => { void store.handle_blob_request(hash); },
+      on_blob_response: (hash, bytes) => { void store.handle_blob_response(hash, bytes); },
       on_status: () => {},
       on_permission: () => {},
+    });
+    store.set_blob_sync_sender({
+      send_blob_available: collab_provider.send_blob_available,
+      send_blob_request: collab_provider.send_blob_request,
+      send_blob_response: collab_provider.send_blob_response,
     });
 
     const session = this._create_session({
@@ -310,6 +326,7 @@ export class ProjectSessionManager {
     if (session.collab_provider) {
       session.collab_provider.destroy();
     }
+    session.store.set_blob_sync_sender(null);
     session.store.set_room_id(undefined);
 
     if (session.folder_sync) {

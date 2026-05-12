@@ -346,7 +346,17 @@ const Toolbar: Component<Props> = (props) => {
     }
   }
 
-  function handle_compile() {
+  async function handle_compile() {
+    await props.store.flush_dirty_blobs();
+    const missing = await props.store.missing_blob_paths();
+    if (missing.length > 0) {
+      await props.store.request_missing_blobs();
+      await show_alert_modal({
+        title: "Waiting for Binary Files",
+        message: `Still syncing binary file data for: ${missing.slice(0, 5).join(", ")}${missing.length > 5 ? "..." : ""}`,
+      });
+      return;
+    }
     const files = { ...props.store.files };
     worker_client.compile({ files, main: props.store.main_file(), mode: "full" });
   }

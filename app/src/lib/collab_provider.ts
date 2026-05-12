@@ -17,6 +17,9 @@ export interface CollabProviderOptions {
   room_secret?: string | null;
   precomputed_blobs?: Record<string, string>;
   put_blobs?: (blobs: Record<string, string>) => Promise<void>;
+  on_blob_available?: (hash: string) => void;
+  on_blob_request?: (hash: string) => void;
+  on_blob_response?: (hash: string, bytes: Uint8Array) => void;
   doc: Y.Doc;
   awareness: Awareness;
   identity: UserIdentity;
@@ -29,6 +32,7 @@ export interface CollabProviderOptions {
 
 const PROVIDER_ORIGIN = "eztex:collab-provider";
 const RECONNECT_DELAYS = [500, 1000, 2000, 5000, 10000, 15000, 30000];
+const BLOB_CHUNK_BYTES = 192 * 1024;
 
 export interface CollabProvider {
   status(): CollabStatus;
@@ -36,6 +40,9 @@ export interface CollabProvider {
   connect(): void;
   disconnect(): void;
   destroy(): void;
+  send_blob_available(hash: string): void;
+  send_blob_request(hash: string): void;
+  send_blob_response(hash: string, bytes: Uint8Array): void;
 }
 
 export function create_collab_provider(opts: CollabProviderOptions): CollabProvider {
@@ -45,9 +52,11 @@ export function create_collab_provider(opts: CollabProviderOptions): CollabProvi
   let reconnect_attempt = 0;
   let reconnect_timer: ReturnType<typeof setTimeout> | null = null;
   let presence_timer: ReturnType<typeof setInterval> | null = null;
+  let full_sync_timer: ReturnType<typeof setTimeout> | null = null;
   let destroyed = false;
   let create_pending = false;
   let terminal_error = false;
+  const incoming_blob_chunks = new Map<string, { total: number; chunks: Array<Uint8Array | undefined>; received: number }>();
 
   function touch_presence() {
     opts.awareness.setLocalStateField("last_active_at", Date.now());
@@ -92,6 +101,73 @@ export function create_collab_provider(opts: CollabProviderOptions): CollabProvi
         color: opts.identity.color,
       },
     });
+  }
+
+  function send_json(msg: Record<string, unknown>) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    try {
+      ws.send(JSON.stringify(msg));
+    } catch {
+      // ignore send failures; normal reconnect handles socket closure
+    }
+  }
+
+  function send_blob_available(hash: string) {
+    send_json({ type: "blob-available", hash });
+  }
+
+  function send_blob_request(hash: string) {
+    send_json({ type: "blob-request", hash });
+  }
+
+  function send_blob_response(hash: string, bytes: Uint8Array) {
+    const total = Math.max(1, Math.ceil(bytes.byteLength / BLOB_CHUNK_BYTES));
+    for (let index = 0; index < total; index++) {
+      const start = index * BLOB_CHUNK_BYTES;
+      const chunk = bytes.slice(start, Math.min(bytes.byteLength, start + BLOB_CHUNK_BYTES));
+      send_json({
+        type: "blob-chunk",
+        hash,
+        index,
+        total,
+        data: base64url_encode(chunk),
+      });
+    }
+  }
+
+  function handle_blob_chunk(msg: any) {
+    if (typeof msg.hash !== "string" || typeof msg.data !== "string") return;
+    if (!Number.isInteger(msg.index) || !Number.isInteger(msg.total)) return;
+    if (msg.index < 0 || msg.total < 1 || msg.index >= msg.total) return;
+
+    let entry = incoming_blob_chunks.get(msg.hash);
+    if (!entry || entry.total !== msg.total) {
+      entry = { total: msg.total, chunks: new Array(msg.total), received: 0 };
+      incoming_blob_chunks.set(msg.hash, entry);
+    }
+    if (entry.chunks[msg.index] !== undefined) return;
+
+    let chunk: Uint8Array;
+    try {
+      chunk = base64url_decode(msg.data);
+    } catch {
+      return;
+    }
+
+    entry.chunks[msg.index] = chunk;
+    entry.received++;
+    if (entry.received !== entry.total) return;
+
+    incoming_blob_chunks.delete(msg.hash);
+    const total_bytes = entry.chunks.reduce((sum, part) => sum + (part?.byteLength ?? 0), 0);
+    const bytes = new Uint8Array(total_bytes);
+    let offset = 0;
+    for (const part of entry.chunks) {
+      if (!part) return;
+      bytes.set(part, offset);
+      offset += part.byteLength;
+    }
+    opts.on_blob_response?.(msg.hash, bytes);
   }
 
   function connect() {
@@ -148,6 +224,7 @@ export function create_collab_provider(opts: CollabProviderOptions): CollabProvi
       const was_creating = create_pending;
       ws = null;
       create_pending = false;
+      incoming_blob_chunks.clear();
       if (destroyed) return;
       if (terminal_error) return;
       if (was_creating) {
@@ -219,6 +296,20 @@ export function create_collab_provider(opts: CollabProviderOptions): CollabProvi
       opts.on_peer_count?.(msg.count);
     } else if (msg.type === "pong") {
       // ignore
+    } else if (msg.type === "blob-available") {
+      if (typeof msg.hash === "string") opts.on_blob_available?.(msg.hash);
+    } else if (msg.type === "blob-request") {
+      if (typeof msg.hash === "string") opts.on_blob_request?.(msg.hash);
+    } else if (msg.type === "blob-response") {
+      if (typeof msg.hash === "string" && typeof msg.data === "string") {
+        try {
+          opts.on_blob_response?.(msg.hash, base64url_decode(msg.data));
+        } catch {
+          // ignore malformed blob payloads
+        }
+      }
+    } else if (msg.type === "blob-chunk") {
+      handle_blob_chunk(msg);
     }
   }
 
@@ -250,6 +341,17 @@ export function create_collab_provider(opts: CollabProviderOptions): CollabProvi
     send_frame(FrameKind.SyncStep1, bytes);
   }
 
+  function schedule_full_state_sync() {
+    if (full_sync_timer) {
+      clearTimeout(full_sync_timer);
+    }
+    full_sync_timer = setTimeout(() => {
+      full_sync_timer = null;
+      if (permission !== "write") return;
+      send_frame(FrameKind.DocUpdate, Y.encodeStateAsUpdate(opts.doc));
+    }, 500);
+  }
+
   function send_frame(kind: FrameKind, payload: Uint8Array) {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     try {
@@ -263,6 +365,7 @@ export function create_collab_provider(opts: CollabProviderOptions): CollabProvi
     if (origin === PROVIDER_ORIGIN) return;
     if (permission !== "write") return;
     send_frame(FrameKind.DocUpdate, update);
+    schedule_full_state_sync();
   };
 
   const awareness_handler = ({ added, updated, removed }: any) => {
@@ -294,10 +397,15 @@ export function create_collab_provider(opts: CollabProviderOptions): CollabProvi
       clearInterval(presence_timer);
       presence_timer = null;
     }
+    if (full_sync_timer) {
+      clearTimeout(full_sync_timer);
+      full_sync_timer = null;
+    }
     if (ws) {
       ws.close();
       ws = null;
     }
+    incoming_blob_chunks.clear();
     opts.awareness.setLocalStateField("cursor", null);
     opts.awareness.setLocalStateField("cursor_file", null);
     opts.awareness.setLocalStateField("cursor_line", null);
@@ -317,5 +425,8 @@ export function create_collab_provider(opts: CollabProviderOptions): CollabProvi
     connect,
     disconnect,
     destroy,
+    send_blob_available,
+    send_blob_request,
+    send_blob_response,
   };
 }

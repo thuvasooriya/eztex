@@ -146,6 +146,14 @@ export class CollabRoom {
         await this._handle_join(ws, parsed);
       } else if (parsed.type === "ping") {
         ws.send(JSON.stringify({ type: "pong" }));
+      } else if (
+        parsed.type === "blob-available"
+        || parsed.type === "blob-request"
+        || parsed.type === "blob-response"
+        || parsed.type === "blob-chunk"
+      ) {
+        if (!peer) return;
+        this._broadcast_json(parsed, ws);
       }
       return;
     }
@@ -466,6 +474,18 @@ export class CollabRoom {
     for (const [ws] of this.peers) {
       try {
         ws.send(msg);
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  _broadcast_json(msg, exclude_ws) {
+    const raw = JSON.stringify(msg);
+    for (const [ws] of this.peers) {
+      if (ws === exclude_ws) continue;
+      try {
+        ws.send(raw);
       } catch {
         // ignore
       }

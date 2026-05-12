@@ -2,6 +2,7 @@ import { type Component, onMount, onCleanup, createSignal, createEffect, createM
 import type { EditorView } from "@codemirror/view";
 import AnimatedShow from "./components/AnimatedShow";
 import { worker_client } from "./lib/worker_client";
+import type { CompileMode } from "./lib/worker_client";
 import { parse_synctex } from "./lib/synctex";
 import { create_project_store } from "./lib/project_store";
 import { ProjectSessionManager } from "./lib/project_session_manager";
@@ -104,11 +105,28 @@ const App: Component = () => {
   let _trigger_folder_upload = () => {};
   let _trigger_zip_upload = () => {};
 
+  async function compile_project(req: { files: Record<string, string | Uint8Array>; main: string; mode: CompileMode }) {
+    await store.flush_dirty_blobs();
+    const missing = await store.missing_blob_paths();
+    if (missing.length > 0) {
+      await store.request_missing_blobs();
+      scheduler.notify_compile_done(false);
+      if (req.mode === "full") {
+        await show_alert_modal({
+          title: "Waiting for Binary Files",
+          message: `Still syncing binary file data for: ${missing.slice(0, 5).join(", ")}${missing.length > 5 ? "..." : ""}`,
+        });
+      }
+      return;
+    }
+    worker_client.compile({ files: { ...store.files }, main: req.main, mode: req.mode });
+  }
+
   const scheduler = create_compile_scheduler({
     get_files: () => store.files,
     get_main: () => store.main_file(),
     is_ready: () => worker_client.ready() && !worker_client.compiling(),
-    compile: (req) => worker_client.compile(req),
+    compile: (req) => { void compile_project(req); },
     get_permission: () => collab_permission(),
     project_id: () => store.project_id() ?? undefined,
   });
@@ -191,7 +209,7 @@ const App: Component = () => {
     const files = { ...store.files };
     if (Object.keys(files).length === 0) return;
     initial_preview_requested = true;
-    worker_client.compile({ files, main: store.main_file(), mode: "preview" });
+    void compile_project({ files, main: store.main_file(), mode: "preview" });
   }
 
   async function resolve_collab_auth(room_id: string): Promise<{ token: string; room_secret: string | null } | null> {
@@ -254,6 +272,7 @@ const App: Component = () => {
   }
 
   function clear_collab_state() {
+    store.set_blob_sync_sender(null);
     set_collab_provider(null);
     set_collab_room_id(null);
     set_collab_status("idle");
@@ -663,11 +682,21 @@ const App: Component = () => {
           if (status === "connected") {
             store.clear_snapshot_expected();
             sync_main_file_from_doc();
+            void store.announce_available_blobs();
+            void store.request_missing_blobs();
           }
         },
         on_permission: set_collab_permission,
         on_peer_count: set_collab_peer_count,
+        on_blob_available: (hash) => { void store.handle_blob_available(hash); },
+        on_blob_request: (hash) => { void store.handle_blob_request(hash); },
+        on_blob_response: (hash, bytes) => { void store.handle_blob_response(hash, bytes); },
         put_blobs: (blobs) => store.import_blobs(blobs),
+      });
+      store.set_blob_sync_sender({
+        send_blob_available: provider.send_blob_available,
+        send_blob_request: provider.send_blob_request,
+        send_blob_response: provider.send_blob_response,
       });
       set_collab_provider(provider);
       set_collab_room_id(room_id);

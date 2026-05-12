@@ -194,6 +194,16 @@ const ToolbarFileActions: Component<Props> = (props) => {
   }
 
   async function handle_download_pdf() {
+    await props.store.flush_dirty_blobs();
+    const missing = await props.store.missing_blob_paths();
+    if (missing.length > 0) {
+      await props.store.request_missing_blobs();
+      await show_alert_modal({
+        title: "Waiting for Binary Files",
+        message: `Still syncing binary file data for: ${missing.slice(0, 5).join(", ")}${missing.length > 5 ? "..." : ""}`,
+      });
+      return;
+    }
     const ok = await worker_client.compile_and_wait({ files: { ...props.store.files }, main: props.store.main_file(), mode: "full" });
     if (!ok) return;
     const url = worker_client.pdf_url();

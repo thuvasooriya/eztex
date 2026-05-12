@@ -49,7 +49,13 @@ const FilePanel: Component<Props> = (props) => {
   function set_entry_and_compile(name: string) {
     props.store.set_main_file(name);
     if (worker_client.ready() && !worker_client.compiling()) {
-      worker_client.compile({ files: { ...props.store.files }, main: name, mode: "preview" });
+      void props.store.missing_blob_paths().then(async (missing) => {
+        if (missing.length > 0) {
+          await props.store.request_missing_blobs();
+          return;
+        }
+        worker_client.compile({ files: { ...props.store.files }, main: name, mode: "preview" });
+      });
     }
   }
 

@@ -23,6 +23,12 @@ import type { ProjectBroadcast } from "./project_broadcast";
 export type FileContent = string | Uint8Array;
 export type ProjectFiles = Record<string, FileContent>;
 
+export type BlobSyncSender = {
+  send_blob_available: (hash: string) => void;
+  send_blob_request: (hash: string) => void;
+  send_blob_response: (hash: string, bytes: Uint8Array) => void;
+};
+
 
 
 const BINARY_EXTS = new Set([
@@ -53,8 +59,10 @@ export function create_project_store() {
   let awareness = new Awareness(ydoc);
   const binary_cache = new Map<string, Uint8Array>();
   const _dirty_blob_paths = new Set<string>();
+  const _requested_blob_hashes = new Set<string>();
   let _blob_store: BlobStore | null = null;
   let _broadcast: ProjectBroadcast | null = null;
+  let _blob_sync_sender: BlobSyncSender | null = null;
   let _owns_doc = true;
 
   const [files, set_files] = createStore<ProjectFiles>({ "main.tex": "" });
@@ -113,6 +121,7 @@ export function create_project_store() {
         return;
       }
       refresh_facade();
+      void request_missing_blobs();
       if (origin !== ORIGIN_REMOTE_BC && origin !== ORIGIN_LOAD) {
         broadcast_update(update);
       }
@@ -126,23 +135,53 @@ export function create_project_store() {
     if (_broadcast) {
       _broadcast.send_blob_available(hash);
     }
+    _blob_sync_sender?.send_blob_available(hash);
   }
 
   function broadcast_blob_request(hash: string) {
     if (_broadcast) {
       _broadcast.send_blob_request(hash);
     }
+    _blob_sync_sender?.send_blob_request(hash);
   }
 
   function broadcast_blob_response(hash: string, bytes: Uint8Array) {
     if (_broadcast) {
       _broadcast.send_blob_response(hash, bytes);
     }
+    _blob_sync_sender?.send_blob_response(hash, bytes);
+  }
+
+  function set_blob_sync_sender(sender: BlobSyncSender | null) {
+    _blob_sync_sender = sender;
+  }
+
+  async function has_blob(hash: string): Promise<boolean> {
+    if (_blob_store && await _blob_store.has(hash)) return true;
+    for (const [, cached] of binary_cache) {
+      try {
+        if (await compute_hash(cached) === hash) return true;
+      } catch {
+        // keep checking other cached blobs
+      }
+    }
+    return false;
+  }
+
+  async function persist_binary_file(path: string, bytes: Uint8Array): Promise<void> {
+    const hash = await compute_hash(bytes);
+    create_binary_file_ref(yp, path, hash, bytes.length);
+    if (_blob_store) {
+      await _blob_store.put(bytes);
+    }
+    _dirty_blob_paths.delete(path);
+    _requested_blob_hashes.delete(hash);
+    broadcast_blob_available(hash);
   }
 
   async function handle_blob_available(hash: string | undefined) {
     if (!hash) return;
-    const found = binary_cache.has(hash) || await (_blob_store?.has(hash) ?? Promise.resolve(false));
+    const found = await has_blob(hash);
     if (!found) {
       broadcast_blob_request(hash);
     }
@@ -165,12 +204,14 @@ export function create_project_store() {
       }
     }
     if (bytes) {
+      _requested_blob_hashes.delete(hash);
       broadcast_blob_response(hash, bytes);
     }
   }
 
   async function handle_blob_response(hash: string | undefined, bytes: Uint8Array | undefined) {
     if (!hash || !bytes) return;
+    _requested_blob_hashes.delete(hash);
     if (_blob_store) {
       await _blob_store.put(bytes);
     }
@@ -185,6 +226,51 @@ export function create_project_store() {
       }
     }
     if (updated) refresh_facade();
+  }
+
+  async function request_missing_blobs(): Promise<string[]> {
+    const missing: string[] = [];
+    let loaded_any = false;
+    for (const path of list_paths(yp)) {
+      const fid = get_file_id(yp, path);
+      if (!fid) continue;
+      const meta = yp.file_meta.get(fid) as Y.Map<unknown> | undefined;
+      if (meta?.get("kind") !== "binary") continue;
+      const hash = yp.blob_refs.get(fid) as string | undefined;
+      if (!hash) continue;
+      if (binary_cache.has(path)) continue;
+
+      const bytes = await (_blob_store?.get(hash) ?? Promise.resolve(null));
+      if (bytes) {
+        binary_cache.set(path, bytes);
+        _requested_blob_hashes.delete(hash);
+        loaded_any = true;
+        continue;
+      }
+
+      missing.push(path);
+      if (!_requested_blob_hashes.has(hash)) {
+        _requested_blob_hashes.add(hash);
+        broadcast_blob_request(hash);
+      }
+    }
+    if (loaded_any) refresh_facade();
+    return missing;
+  }
+
+  async function missing_blob_paths(): Promise<string[]> {
+    const missing = await request_missing_blobs();
+    return missing;
+  }
+
+  async function announce_available_blobs(): Promise<void> {
+    for (const path of list_paths(yp)) {
+      const fid = get_file_id(yp, path);
+      if (!fid) continue;
+      const hash = yp.blob_refs.get(fid) as string | undefined;
+      if (!hash || !(await has_blob(hash))) continue;
+      broadcast_blob_available(hash);
+    }
   }
 
   function init_with_doc(
@@ -205,6 +291,8 @@ export function create_project_store() {
     snapshot_expected = false;
     binary_cache.clear();
     _dirty_blob_paths.clear();
+    _requested_blob_hashes.clear();
+    _blob_sync_sender = null;
     set_project_id_signal(id);
     set_room_id_signal(undefined);
     _set_main_file_raw("main.tex");
@@ -251,7 +339,9 @@ export function create_project_store() {
         }, ORIGIN_LOCAL);
       }
       compute_hash(content).then((hash) => {
-        broadcast_blob_available(hash);
+        void persist_binary_file(name, content).catch(() => {
+          broadcast_blob_available(hash);
+        });
       }).catch(() => {});
     } else {
       get_or_create_text_file(yp, name, content);
@@ -324,7 +414,9 @@ export function create_project_store() {
         }, ORIGIN_LOCAL);
       }
       compute_hash(content).then((hash) => {
-        broadcast_blob_available(hash);
+        void persist_binary_file(name, content).catch(() => {
+          broadcast_blob_available(hash);
+        });
       }).catch(() => {});
       if (!_broadcast) refresh_facade();
     } else {
@@ -560,6 +652,7 @@ export function create_project_store() {
         if (_blob_store) {
           await _blob_store.put(bytes);
         }
+        _requested_blob_hashes.delete(hash);
         broadcast_blob_available(hash);
         _dirty_blob_paths.delete(path);
       } catch {
@@ -655,6 +748,7 @@ export function create_project_store() {
       _broadcast.close();
     }
     _broadcast = null;
+    _blob_sync_sender = null;
     _blob_store = null;
     awareness.destroy();
     if (_owns_doc) {
@@ -710,6 +804,10 @@ export function create_project_store() {
     load_persisted_blobs,
     export_blobs,
     import_blobs,
+    missing_blob_paths,
+    request_missing_blobs,
+    announce_available_blobs,
+    set_blob_sync_sender,
     init_with_doc,
     destroy,
     handle_blob_available,

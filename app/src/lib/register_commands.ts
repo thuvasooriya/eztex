@@ -74,6 +74,18 @@ export function init_commands(d: CommandDeps): void {
   const uploads = d.uploads;
   const agent = d.agent;
 
+  async function alert_if_missing_blobs(): Promise<boolean> {
+    await project.store.flush_dirty_blobs();
+    const missing = await project.store.missing_blob_paths();
+    if (missing.length === 0) return false;
+    await project.store.request_missing_blobs();
+    await show_alert_modal({
+      title: "Waiting for Binary Files",
+      message: `Still syncing binary file data for: ${missing.slice(0, 5).join(", ")}${missing.length > 5 ? "..." : ""}`,
+    });
+    return true;
+  }
+
   // -- Compile --
 
   register_command({
@@ -84,7 +96,8 @@ export function init_commands(d: CommandDeps): void {
     category: "Compile",
     keybinding: "Cmd+Enter",
     when: () => Object.keys(project.store.files).length > 0,
-    action: () => {
+    action: async () => {
+      if (await alert_if_missing_blobs()) return;
       const files = { ...project.store.files };
       worker_client.compile({ files, main: project.store.main_file(), mode: "full" });
     },
@@ -353,6 +366,7 @@ export function init_commands(d: CommandDeps): void {
     keybinding: "Cmd+Shift+D",
     when: () => worker_client.pdf_url() !== null,
     action: async () => {
+      if (await alert_if_missing_blobs()) return;
       const ok = await worker_client.compile_and_wait({
         files: { ...project.store.files },
         main: project.store.main_file(),
