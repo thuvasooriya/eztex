@@ -397,6 +397,27 @@ body {
   font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.6;
+  scrollbar-color: var(--bg-lighter) var(--bg);
+}
+
+.compile-logs-scroll::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.compile-logs-scroll::-webkit-scrollbar-track,
+.compile-logs-scroll::-webkit-scrollbar-corner,
+.compile-logs-scroll::-webkit-resizer {
+  background: var(--bg);
+}
+
+.compile-logs-scroll::-webkit-scrollbar-thumb {
+  background: var(--bg-lighter);
+  border-radius: 999px;
+}
+
+.compile-logs-scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--border);
 }
 
 /* === progress bar === */
@@ -796,6 +817,33 @@ body {
 
 .editor-cm-container .cm-editor {
   height: 100%;
+}
+
+.editor-cm-container .cm-scroller {
+  scrollbar-color: var(--bg-lighter) transparent;
+}
+
+.editor-cm-container .cm-scroller::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.editor-cm-container .cm-scroller::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.editor-cm-container .cm-scroller::-webkit-scrollbar-corner,
+.editor-cm-container .cm-scroller::-webkit-resizer {
+  background: var(--editor-gradient-3);
+}
+
+.editor-cm-container .cm-scroller::-webkit-scrollbar-thumb {
+  background: var(--bg-lighter);
+  border-radius: 999px;
+}
+
+.editor-cm-container .cm-scroller::-webkit-scrollbar-thumb:hover {
+  background: var(--border);
 }
 
 .binary-placeholder {
