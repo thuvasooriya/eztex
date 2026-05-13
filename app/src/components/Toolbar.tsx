@@ -60,7 +60,6 @@ type HumanPeer = {
   current_file: string | null;
   current_line: number | null;
   last_active_at: number | null;
-  edit_count: number;
   is_self: boolean;
 };
 
@@ -114,7 +113,6 @@ const Toolbar: Component<Props> = (props) => {
         current_file: typeof state.cursor_file === "string" ? state.cursor_file : null,
         current_line: typeof state.cursor_line === "number" ? state.cursor_line : null,
         last_active_at: typeof state.last_active_at === "number" ? state.last_active_at : null,
-        edit_count: typeof state.edit_count === "number" ? state.edit_count : 0,
         is_self: user.user_id === local_identity.user_id,
       });
     }
@@ -125,6 +123,22 @@ const Toolbar: Component<Props> = (props) => {
     });
   });
   const selected_peer = createMemo(() => connected_users().find((user) => user.user_id === selected_peer_id()) ?? null);
+  const share_state = createMemo<"none" | "connected" | "syncing" | "error">(() => {
+    if (!props.store.room_id()) return "none";
+    const status = collab.status();
+    if (status === "connected") return "connected";
+    if (status === "error" || status === "closed" || status === "deleted") return "error";
+    return "syncing";
+  });
+  const share_status_label = createMemo(() => {
+    const status = collab.status();
+    if (status === "connected") return "Collaboration room connected";
+    if (status === "connecting" || status === "reconnecting") return "Collaboration room connecting";
+    if (status === "deleted") return "Collaboration room deleted";
+    if (status === "error" || status === "closed") return "Collaboration room disconnected";
+    if (props.store.room_id()) return "Collaboration room inactive";
+    return "Share project";
+  });
 
   createEffect(() => {
     const awareness = collab.awareness();
@@ -493,8 +507,6 @@ const Toolbar: Component<Props> = (props) => {
                 <UserAvatar user_id={peer().user_id} display_name={peer().display_name} color={peer().color} />
                 <div class="avatar-popover-name">{peer().display_name}</div>
                 <div class="avatar-popover-meta">Last active: {format_last_active(peer().last_active_at)}</div>
-                <div class="avatar-popover-meta">Currently editing: {peer().current_file ?? "Idle"}</div>
-                <div class="avatar-popover-meta">Changes this session: {peer().edit_count}</div>
                 <Show when={peer().current_file && peer().current_line}>
                   <button class="avatar-popover-action" onClick={() => handle_jump_to_peer(peer())}>
                     Jump to cursor
@@ -506,8 +518,9 @@ const Toolbar: Component<Props> = (props) => {
         </div>
         <div class="upload-menu-wrapper" ref={share_btn_ref}>
           <button
-            class={`toolbar-toggle ${collab.status() === "connected" ? "active" : ""}`}
-            title={collab.status() === "connected" ? "Collaboration active" : "Share project"}
+            class={`toolbar-toggle share-state-${share_state()}`}
+            title={share_status_label()}
+            aria-label={share_status_label()}
             aria-haspopup="menu"
             aria-expanded={show_share_menu()}
             onClick={() => set_show_share_menu(v => !v)}
@@ -525,7 +538,7 @@ const Toolbar: Component<Props> = (props) => {
             on_choice={show_choice_modal}
           />
         </div>
-        <Show when={collab.status() === "connected"}>
+        <Show when={collab.status() === "connected" && !props.store.room_id()}>
           <button
             class="toolbar-toggle agent-indicator"
             title="Agent panel"

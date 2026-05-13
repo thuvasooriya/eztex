@@ -1,5 +1,5 @@
 import * as Y from "yjs";
-import { Awareness, applyAwarenessUpdate, encodeAwarenessUpdate } from "y-protocols/awareness";
+import { Awareness, applyAwarenessUpdate, encodeAwarenessUpdate, removeAwarenessStates } from "y-protocols/awareness";
 import { readSyncMessage, writeSyncStep1 } from "y-protocols/sync";
 import { createDecoder } from "lib0/decoding";
 import { createEncoder, toUint8Array } from "lib0/encoding";
@@ -28,6 +28,7 @@ export interface CollabProviderOptions {
   on_permission?: (permission: CollabPermission) => void;
   on_error?: (message: string) => void;
   on_peer_count?: (count: number) => void;
+  on_room_deleted?: () => void;
 }
 
 const PROVIDER_ORIGIN = "eztex:collab-provider";
@@ -56,6 +57,7 @@ export function create_collab_provider(opts: CollabProviderOptions): CollabProvi
   let destroyed = false;
   let create_pending = false;
   let terminal_error = false;
+  let room_deleted_notified = false;
   const incoming_blob_chunks = new Map<string, { total: number; chunks: Array<Uint8Array | undefined>; received: number }>();
 
   function touch_presence() {
@@ -70,11 +72,12 @@ export function create_collab_provider(opts: CollabProviderOptions): CollabProvi
   function set_permission(p: CollabPermission) {
     permission = p;
     opts.on_permission?.(p);
-    const name = get_jjk_name(opts.identity.user_id);
+    const name = opts.identity.display_name || get_jjk_name(opts.identity.user_id);
     opts.awareness.setLocalStateField("user", {
       user_id: opts.identity.user_id,
       name,
       color: opts.identity.color,
+      colorLight: `${opts.identity.color}33`,
       color_hue: opts.identity.color_hue,
       permission: p,
       kind: opts.identity.kind ?? "human",
@@ -86,6 +89,13 @@ export function create_collab_provider(opts: CollabProviderOptions): CollabProvi
     if (!presence_timer) {
       presence_timer = setInterval(() => touch_presence(), 30000);
     }
+  }
+
+  function notify_room_deleted() {
+    if (room_deleted_notified) return;
+    room_deleted_notified = true;
+    set_status("deleted");
+    opts.on_room_deleted?.();
   }
 
   function build_join_msg(): string {
@@ -234,7 +244,7 @@ export function create_collab_provider(opts: CollabProviderOptions): CollabProvi
         return;
       }
       if (e.code === 4410) {
-        set_status("deleted");
+        notify_room_deleted();
         return;
       }
       const non_reconnectable = [4400, 4401, 4403, 4404, 4410];
@@ -274,8 +284,8 @@ export function create_collab_provider(opts: CollabProviderOptions): CollabProvi
       set_status("connected");
       // start sync protocol
       send_sync_step1();
-    } else if (msg.type === "room-deleted") {
-      set_status("deleted");
+    } else if (msg.type === "room-deleted" || msg.type === "deleted" || msg.type === "room-closed") {
+      notify_room_deleted();
       ws?.close(4410, "Room deleted");
     } else if (msg.type === "created") {
       if (create_pending && ws?.readyState === WebSocket.OPEN) {
@@ -406,6 +416,10 @@ export function create_collab_provider(opts: CollabProviderOptions): CollabProvi
       ws = null;
     }
     incoming_blob_chunks.clear();
+    const remote_clients = Array.from(opts.awareness.getStates().keys()).filter((id) => id !== opts.awareness.clientID);
+    if (remote_clients.length > 0) {
+      removeAwarenessStates(opts.awareness, remote_clients, PROVIDER_ORIGIN);
+    }
     opts.awareness.setLocalStateField("cursor", null);
     opts.awareness.setLocalStateField("cursor_file", null);
     opts.awareness.setLocalStateField("cursor_line", null);

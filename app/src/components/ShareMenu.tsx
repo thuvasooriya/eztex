@@ -247,6 +247,7 @@ const ShareMenu: Component<Props> = (props) => {
               <span class="share-status-text">
                 {collab.status() === "deleted" ? "Room deleted" : collab.status() === "connected" ? "Connected" : collab.status() === "connecting" ? "Connecting..." : "Disconnected"}
               </span>
+              <span class="share-room-id">Room: {props.store.room_id()}</span>
               <Show when={collab.permission() === "read"}>
                 <span class="share-permission-badge">Read-only</span>
               </Show>

@@ -135,6 +135,28 @@ const tokyo_night_theme = EditorView.theme({
     opacity: "0.6",
     color: "var(--fg-muted)",
   },
+  ".cm-ySelectionInfo": {
+    position: "absolute",
+    top: "-1.55em",
+    left: "-1px",
+    padding: "2px 6px",
+    border: "0",
+    borderRadius: "var(--radius-sm)",
+    borderBottomLeftRadius: "0",
+    color: "var(--bg-dark)",
+    fontFamily: "var(--font-mono)",
+    fontSize: "10.5px",
+    fontWeight: "700",
+    lineHeight: "1.2",
+    whiteSpace: "nowrap",
+    pointerEvents: "none",
+    userSelect: "none",
+    opacity: "1",
+    zIndex: "20",
+  },
+  ".cm-ySelectionCaretDot": {
+    display: "none",
+  },
 }, { dark: true });
 
 const tokyo_night_highlight = HighlightStyle.define([

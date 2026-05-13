@@ -14,6 +14,7 @@ export interface ProjectSession {
   broadcast: ProjectBroadcast;
   collab_provider: CollabProvider | null;
   folder_sync: LocalFolderSync | null;
+  cleanup?: () => void;
 
   flush(): Promise<void>;
   close(reason: "switch" | "tab-close" | "delete"): Promise<void>;

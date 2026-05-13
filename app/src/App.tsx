@@ -87,8 +87,11 @@ const App: Component = () => {
   const [collab_permission, set_collab_permission] = createSignal<CollabPermission | null>(null);
   const [collab_peer_count, set_collab_peer_count] = createSignal(0);
   const [collab_ready, set_collab_ready] = createSignal(false);
+  const [collab_role, set_collab_role] = createSignal<"owner" | "guest" | null>(null);
   const [joining_room, set_joining_room] = createSignal(false);
-  const read_only = createMemo(() => collab_permission() === "read");
+  const [room_deleted_notice, set_room_deleted_notice] = createSignal(false);
+  const [room_deleted_countdown, set_room_deleted_countdown] = createSignal(5);
+  const read_only = createMemo(() => collab_permission() === "read" || room_deleted_notice());
   const [collab_room_id, set_collab_room_id] = createSignal<string | null>(null);
 
   const [collab_provider, set_collab_provider] = createSignal<CollabProvider | null>(null);
@@ -104,6 +107,8 @@ const App: Component = () => {
   let _trigger_file_upload = () => {};
   let _trigger_folder_upload = () => {};
   let _trigger_zip_upload = () => {};
+  let room_deleted_timer: ReturnType<typeof setInterval> | undefined;
+  let room_deleted_cleanup_started = false;
 
   async function compile_project(req: { files: Record<string, string | Uint8Array>; main: string; mode: CompileMode }) {
     await store.flush_dirty_blobs();
@@ -279,6 +284,7 @@ const App: Component = () => {
     set_collab_permission(null);
     set_collab_peer_count(0);
     set_collab_ready(false);
+    set_collab_role(null);
   }
 
   init_commands({
@@ -367,6 +373,7 @@ const App: Component = () => {
     if (layout_switch_timer !== undefined) clearTimeout(layout_switch_timer);
     if (layout_switch_reset_timer !== undefined) clearTimeout(layout_switch_reset_timer);
     if (save_timer !== undefined) clearTimeout(save_timer);
+    if (room_deleted_timer !== undefined) clearInterval(room_deleted_timer);
     cleanup_resize?.();
     cleanup_keydown?.();
     cleanup_pagehide?.();
@@ -375,6 +382,74 @@ const App: Component = () => {
     store.destroy();
     worker_client.destroy();
   });
+
+  async function finish_room_deleted_cleanup() {
+    if (room_deleted_cleanup_started) return;
+    room_deleted_cleanup_started = true;
+    if (room_deleted_timer !== undefined) {
+      clearInterval(room_deleted_timer);
+      room_deleted_timer = undefined;
+    }
+
+    const session = session_manager.current();
+    const deleted_project_id = session?.project_id ?? null;
+    const repo = session_manager.get_repository();
+    const record = deleted_project_id ? await repo.get_project(deleted_project_id) : null;
+    const fallback = (await repo.list_projects()).find((p) => p.id !== deleted_project_id && p.origin !== "guest-room");
+    if (fallback) {
+      await repo.set_current_project(fallback.id);
+    } else {
+      await repo.create_project("Demo Project");
+    }
+
+    collab_provider()?.destroy();
+    clear_collab_state();
+    await session_manager.close_current("delete");
+    if (deleted_project_id && record?.origin === "guest-room") {
+      await session_manager.delete_project(deleted_project_id).catch(() => {});
+    }
+
+    window.location.assign(new URL("/", window.location.origin).toString());
+  }
+
+  async function cleanup_deleted_owner_room() {
+    if (room_deleted_timer !== undefined) {
+      clearInterval(room_deleted_timer);
+      room_deleted_timer = undefined;
+    }
+    set_room_deleted_notice(false);
+    set_room_deleted_countdown(5);
+    const room_id = store.room_id();
+    collab_provider()?.destroy();
+    store.set_room_id(undefined);
+    clear_collab_state();
+    if (room_id) {
+      await session_manager.get_room_registry().delete_room_record(room_id).catch(() => {});
+    }
+    set_project_ready(true);
+  }
+
+  function handle_room_deleted(role: "owner" | "guest" | null = collab_role()) {
+    if (role === "owner") {
+      void cleanup_deleted_owner_room();
+      return;
+    }
+    if (room_deleted_notice()) return;
+    set_room_deleted_notice(true);
+    set_room_deleted_countdown(5);
+    set_project_ready(false);
+    set_collab_ready(false);
+    if (room_deleted_timer !== undefined) clearInterval(room_deleted_timer);
+    room_deleted_timer = setInterval(() => {
+      set_room_deleted_countdown((current) => {
+        if (current <= 1) {
+          void finish_room_deleted_cleanup();
+          return 0;
+        }
+        return current - 1;
+      });
+    }, 1000);
+  }
 
   async function setup_after_session(session: ProjectSession, is_collab: boolean) {
     const pid = session.project_id;
@@ -655,6 +730,7 @@ const App: Component = () => {
       clear_collab_state();
 
       const is_owner = !!auth.room_secret && auth.token.startsWith("w.");
+      set_collab_role(is_owner ? "owner" : "guest");
       let precomputed_blobs: Record<string, string> | undefined;
       if (is_owner) {
         precomputed_blobs = await store.export_blobs({
@@ -688,6 +764,7 @@ const App: Component = () => {
         },
         on_permission: set_collab_permission,
         on_peer_count: set_collab_peer_count,
+        on_room_deleted: () => handle_room_deleted(is_owner ? "owner" : "guest"),
         on_blob_available: (hash) => { void store.handle_blob_available(hash); },
         on_blob_request: (hash) => { void store.handle_blob_request(hash); },
         on_blob_response: (hash, bytes) => { void store.handle_blob_response(hash, bytes); },
@@ -719,8 +796,7 @@ const App: Component = () => {
   createEffect(() => {
     if (collab_status() !== "deleted") return;
     if (!store.room_id()) return;
-    set_collab_ready(false);
-    store.set_room_id(undefined);
+    handle_room_deleted();
   });
 
   function handle_file_resize(delta: number) {
@@ -832,9 +908,26 @@ const App: Component = () => {
     agent_review_store,
   };
 
+  createEffect(() => {
+    if (store.room_id()) set_show_agent_panel(false);
+  });
+
   return (
     <AppContextProvider value={app_context}>
       <div class="app">
+        <Show when={room_deleted_notice()}>
+          <div class="room-deleted-overlay" role="alertdialog" aria-modal="true" aria-labelledby="room-deleted-title">
+            <div class="room-deleted-card">
+              <div id="room-deleted-title" class="room-deleted-title">Room deleted</div>
+              <p class="room-deleted-message">
+                This shared room has been deleted. Editing is disabled and you will be redirected in {room_deleted_countdown()} seconds.
+              </p>
+              <button class="room-deleted-action" onClick={() => { void finish_room_deleted_cleanup(); }}>
+                Go home now
+              </button>
+            </div>
+          </div>
+        </Show>
         <Toolbar
           store={store}
           room_registry={session_manager.get_room_registry()}

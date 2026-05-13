@@ -11,6 +11,7 @@ import {
   bind_y_project_doc,
   apply_snapshot,
   get_project_metadata,
+  set_project_metadata,
 } from "./y_project_doc";
 import type { ProjectId } from "./y_project_doc";
 import type { ProjectSession } from "./project_session";
@@ -21,6 +22,22 @@ export type CloseReason = "switch" | "tab-close" | "delete";
 
 const MAX_CREATE_BLOB_ENCODED_BYTES = 768 * 1024;
 const MAX_CREATE_BLOBS_TOTAL_ENCODED_BYTES = 768 * 1024;
+const MAIN_FILE_CANDIDATES = ["main.tex", "paper.tex", "thesis.tex", "document.tex"];
+
+function detect_main_file(store: ProjectStore): string | undefined {
+  const names = [...store.file_names()].sort((a, b) => a.localeCompare(b));
+  const tex_files = names.filter((name) => name.endsWith(".tex"));
+  const documentclass_files = tex_files.filter((name) => store.get_text_content(name).includes("\\documentclass"));
+
+  if (documentclass_files.length === 1) return documentclass_files[0];
+  if (documentclass_files.length > 1) {
+    const preferred = MAIN_FILE_CANDIDATES.find((candidate) => documentclass_files.some((name) => name === candidate || name.endsWith(`/${candidate}`)));
+    if (preferred) return documentclass_files.find((name) => name === preferred || name.endsWith(`/${preferred}`));
+    return documentclass_files[0];
+  }
+
+  return tex_files[0] ?? names[0];
+}
 
 export class ProjectSessionManager {
   private current_session: ProjectSession | null = null;
@@ -100,6 +117,7 @@ export class ProjectSessionManager {
     broadcast: ProjectBroadcast;
     collab_provider: CollabProvider | null;
     folder_sync: LocalFolderSync | null;
+    cleanup?: () => void;
   }): ProjectSession {
     return {
       project_id: options.project_id,
@@ -109,6 +127,7 @@ export class ProjectSessionManager {
       broadcast: options.broadcast,
       collab_provider: options.collab_provider,
       folder_sync: options.folder_sync,
+      cleanup: options.cleanup,
       flush: async () => { await this.flush(); },
       close: async (reason: CloseReason) => { await this.close_current(reason); },
     };
@@ -192,11 +211,43 @@ export class ProjectSessionManager {
     const loaded = await this.repo.load_project(project_id);
     const doc = new Y.Doc();
     const { store, blob_store, broadcast } = await this._init_store_and_broadcast(project_id, doc, loaded, room_id);
+    const yp = bind_y_project_doc(doc);
+
+    let guest_main_detection_done = false;
+    const maybe_detect_guest_main = () => {
+      if (guest_main_detection_done) return;
+      const names = store.file_names();
+      if (names.length === 0) return;
+
+      const meta_main = yp.meta.get("main_file") as string | undefined;
+      if (meta_main && names.includes(meta_main)) {
+        guest_main_detection_done = true;
+        store.set_main_file(meta_main);
+        store.set_current_file(meta_main);
+        return;
+      }
+
+      const detected = detect_main_file(store);
+      if (!detected) return;
+      guest_main_detection_done = true;
+      set_project_metadata(yp, { main_file: detected });
+      store.set_main_file(detected);
+      store.set_current_file(detected);
+    };
+    let stop_guest_main_detection: (() => void) | null = null;
+    stop_guest_main_detection = store.on_change(() => {
+      maybe_detect_guest_main();
+      if (guest_main_detection_done) {
+        stop_guest_main_detection?.();
+        stop_guest_main_detection = null;
+      }
+    });
 
     if (!loaded.snapshot || store.file_names().length === 0) {
       // guest room: wait for collab snapshot
     } else {
       await store.load_persisted_blobs();
+      maybe_detect_guest_main();
     }
 
     const identity = get_or_create_identity();
@@ -230,6 +281,10 @@ export class ProjectSessionManager {
       broadcast,
       collab_provider,
       folder_sync: null,
+      cleanup: () => {
+        stop_guest_main_detection?.();
+        stop_guest_main_detection = null;
+      },
     });
 
     collab_provider.connect();
@@ -337,6 +392,7 @@ export class ProjectSessionManager {
     if (session.folder_sync) {
       session.folder_sync.cleanup();
     }
+    session.cleanup?.();
 
     if (!this._store) {
       session.store.destroy();
