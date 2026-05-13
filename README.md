@@ -2,7 +2,7 @@
 
 zig based wrapper for tex/xelatex engine built on [tectonic](https://tectonic-typesetting.github.io/)
 
-packaged as a native cli and a [wasm-powered web app](<(https://eztex.pages.dev/)>) with a solid-js frontend
+packaged as a native cli and a [wasm-powered web app](https://eztex.thuvasooriya.me/) with a solid-js frontend
 
 ## quickstart
 

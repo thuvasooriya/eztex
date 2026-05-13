@@ -114,7 +114,7 @@ Example: `xelatex_v33_abc123def456_wasm32-wasi.fmt`
 
 **Recommended**: Option 3 - host at `{bundle_base_url}/formats/xelatex_v33_{digest}.fmt`
 
-Example: `https://eztex-cors-proxy.thuva.workers.dev/formats/xelatex_v33_abc123.fmt`
+Example: `https://eztex.thuvasooriya.me/formats/xelatex_v33_abc123.fmt`
 
 ---
 
@@ -409,7 +409,7 @@ High complexity. Consider only if preview mode can skip PDF generation.
 
 **Directory structure on server**:
 ```
-https://eztex-cors-proxy.thuva.workers.dev/
+https://eztex.thuvasooriya.me/
 ├── bundle                    (300MB tar)
 ├── index.gz                  (1MB compressed index)
 └── formats/

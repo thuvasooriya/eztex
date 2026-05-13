@@ -6,7 +6,7 @@
 //   bun run tools/agent-collab-smoke.ts <ws_url_with_token>
 //
 // Example:
-//   bun run tools/agent-collab-smoke.ts "wss://eztex.thuva.workers.dev/collab/ws/r_abc123#w.sig"
+//   bun run tools/agent-collab-smoke.ts "wss://eztex.thuvasooriya.me/collab/ws/r_abc123#w.sig"
 
 import * as Y from "yjs";
 import { Awareness, applyAwarenessUpdate, encodeAwarenessUpdate } from "y-protocols/awareness";

@@ -15,14 +15,14 @@ export default defineConfig({
         ],
         navigateFallback: '/index.html',
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
-        // Don't let Service Worker intercept cross-origin worker requests
-        // (bundle, index, format files are fetched from external worker URL)
+        // Keep package and format fetches network-only; they are immutable and
+        // already cached by OPFS/R2, not by the app shell service worker.
         runtimeCaching: [
           {
-            urlPattern: /^https:\/\/eztex-cors-proxy\.thuva\.workers\.dev\/.*/,
+            urlPattern: /^https:\/\/eztex\.(thuva\.workers\.dev|thuvasooriya\.me)\/(bundle(?:\/.*)?|index(?:\.gz)?|formats\/.*)$/,
             handler: 'NetworkOnly',
             options: {
-              cacheName: 'external-worker',
+              cacheName: 'latex-assets',
             },
           },
         ],

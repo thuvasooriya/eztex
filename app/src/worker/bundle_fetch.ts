@@ -15,8 +15,8 @@ export let index_bytes_len = 0;
 
 // fallback URLs matching Config.zig defaults -- used when api_instance
 // is not yet initialized (index fetch races WASM compilation).
-const FALLBACK_BUNDLE_URL = "https://eztex-cors-proxy.thuva.workers.dev/bundle";
-const FALLBACK_INDEX_URL = "https://eztex-cors-proxy.thuva.workers.dev/index.gz";
+const FALLBACK_BUNDLE_URL = "/bundle";
+const FALLBACK_INDEX_URL = "/index.gz";
 
 // get bundle URL: prefer Zig config via api_instance, fallback to JS constant.
 function get_bundle_url(): string {

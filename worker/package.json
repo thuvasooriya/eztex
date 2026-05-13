@@ -1,7 +1,7 @@
 {
-  "name": "eztex-cors-proxy",
+  "name": "eztex-worker",
   "version": "1.0.0",
-  "description": "CORS proxy for Tectonic LaTeX bundle server",
+  "description": "Unified Worker for eztex app, assets, and collaboration",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",

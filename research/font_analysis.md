@@ -75,9 +75,9 @@ plain text, one line per file: `<name> <offset> <length>`. 134,977 entries. ~5MB
 
 ### bundle URL
 
-configurable via `eztex.zon`, defaults to:
-- bundle: `https://eztex-cors-proxy.thuva.workers.dev/bundle`
-- index: `https://eztex-cors-proxy.thuva.workers.dev/index.gz`
+configurable via `eztex.zon`, defaults to same-origin production routes:
+- bundle: `/bundle` (`https://eztex.thuvasooriya.me/bundle` in production)
+- index: `/index.gz` (`https://eztex.thuvasooriya.me/index.gz` in production)
 
 ---
 

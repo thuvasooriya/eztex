@@ -5,13 +5,12 @@
   "compatibility_date": "2026-05-13",
   "workers_dev": true,
 
-  // Custom domain - will be configured later after testing
-  // "routes": [
-  //   {
-  //     "pattern": "eztex.thuvasooriya.me",
-  //     "custom_domain": true
-  //   }
-  // ],
+  "routes": [
+    {
+      "pattern": "eztex.thuvasooriya.me",
+      "custom_domain": true
+    }
+  ],
 
   "assets": {
     "directory": "app/dist",

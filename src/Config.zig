@@ -35,13 +35,16 @@ pub const Bundle = struct {
 pub const filename = "eztex.zon";
 
 // canonical bundle URL and digest -- the single source of truth.
-pub const default_bundle_url = "https://eztex-cors-proxy.thuva.workers.dev/bundle";
-pub const default_index_url = "https://eztex-cors-proxy.thuva.workers.dev/index.gz";
-pub const default_bundle_digest = compute_digest(default_bundle_url);
+// The digest identifies the bundle contents/cache namespace, not the transport URL.
+pub const default_bundle_url = "/bundle";
+pub const default_index_url = "/index.gz";
+pub const default_bundle_digest = digest_literal("c1607948053fc5d44a13913ecd09c53072698e2033244ae69d78218010027d09");
 
-fn compute_digest(comptime input: []const u8) [64]u8 {
-    @setEvalBranchQuota(10000);
-    return @import("Digest.zig").hexDigest(input);
+fn digest_literal(comptime hex: []const u8) [64]u8 {
+    if (hex.len != 64) @compileError("bundle digest must be 64 lowercase hex chars");
+    var out: [64]u8 = undefined;
+    @memcpy(out[0..], hex);
+    return out;
 }
 
 // return canonical defaults for all fields.

@@ -23,6 +23,7 @@ const R2_BUNDLE_KEY = 'tlextras-2022.0r0.tar';
 const R2_INDEX_KEY = 'tlextras-2022.0r0.tar.index.gz';
 
 const FORMAT_PREFIX = '/formats/';
+const INDEX_CACHE_VERSION = 'v2';
 const BUNDLE_CACHE_CONTROL = 'public, max-age=31536000, immutable';
 const FORMAT_CACHE_CONTROL = 'public, max-age=31536000, immutable';
 
@@ -30,8 +31,8 @@ const FORMAT_CACHE_CONTROL = 'public, max-age=31536000, immutable';
 const ALLOWED_ORIGINS = new Set([
   'http://localhost:5173',
   'http://localhost:3000',
-  'https://eztex-cors-proxy.thuva.workers.dev',
   'https://eztex.thuva.workers.dev',
+  'https://eztex.thuvasooriya.me',
   'https://eztex.pages.dev',
 ]);
 
@@ -90,12 +91,12 @@ export default {
 
     if (path === '/index.gz' || path === '/index') {
       // try edge cache first
-      const cached = await getCachedIndex(request);
+      const cached = request.method === 'GET' ? await getCachedIndex(request) : null;
       if (cached) return cached;
 
       const response = await serveR2OrFallback(request, env, R2_INDEX_KEY, TECTONIC_INDEX_URL, 'application/gzip', ctx);
       // cache only full 200 responses (Cache API rejects 206)
-      if (response.status === 200) {
+      if (request.method === 'GET' && response.status === 200) {
         ctx.waitUntil(cacheIndexResponse(request, response));
       }
       return response;
@@ -120,11 +121,11 @@ export default {
 async function getCachedIndex(request) {
   try {
     const cache = caches.default;
-    const cacheKey = new Request(request.url, { method: 'GET' });
+    const cacheKey = indexCacheKey(request);
     const cached = await cache.match(cacheKey);
     if (cached) {
       console.log('index cache hit');
-      return cached;
+      return withCors(cached, request);
     }
   } catch (err) {
     console.error('Cache match error:', err);
@@ -135,11 +136,37 @@ async function getCachedIndex(request) {
 async function cacheIndexResponse(request, response) {
   try {
     const cache = caches.default;
-    const cacheKey = new Request(request.url, { method: 'GET' });
+    const cacheKey = indexCacheKey(request);
     await cache.put(cacheKey, response.clone());
   } catch (err) {
     console.error('Cache put error:', err);
   }
+}
+
+function indexCacheKey(request) {
+  const url = new URL(request.url);
+  url.searchParams.set('__eztex_index_cache', INDEX_CACHE_VERSION);
+  return new Request(url.toString(), { method: 'GET' });
+}
+
+function withCors(response, request) {
+  const headers = new Headers(response.headers);
+  for (const name of [
+    'Access-Control-Allow-Origin',
+    'Access-Control-Allow-Methods',
+    'Access-Control-Allow-Headers',
+    'Access-Control-Expose-Headers',
+  ]) {
+    headers.delete(name);
+  }
+  for (const [key, value] of Object.entries(corsHeaders(request))) {
+    headers.set(key, value);
+  }
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
 }
 
 // validate Range header format
@@ -310,7 +337,7 @@ async function handleFormatRequest(request, env, path) {
 
     const headers = buildFormatHeaders(object, request);
     const hasBody = 'body' in object && object.body;
-    const status = hasBody ? (object.range ? 206 : 200) : conditionalStatus(request);
+    const status = isHead && !hasConditionals ? 200 : (hasBody ? (object.range ? 206 : 200) : conditionalStatus(request));
 
     if (object.range) {
       headers.set(

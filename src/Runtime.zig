@@ -40,7 +40,7 @@ pub fn init(io: Io) Runtime {
         .world = .{},
         .bundle_store = BundleStore.init(
             std.heap.c_allocator,
-            "https://eztex-cors-proxy.thuva.workers.dev/bundle",
+            "/bundle",
             &@import("Config.zig").default_bundle_digest,
         ),
         .active_engine = null,

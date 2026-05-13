@@ -1,6 +1,6 @@
 # eztex Pages Redirect
 
-This directory is a minimal Cloudflare Pages project that redirects `eztex.pages.dev` to the unified Worker at `https://eztex.thuva.workers.dev`.
+This directory is a minimal Cloudflare Pages project that redirects `eztex.pages.dev` to the canonical eztex app at `https://eztex.thuvasooriya.me`.
 
 ## Files
 
@@ -10,15 +10,15 @@ This directory is a minimal Cloudflare Pages project that redirects `eztex.pages
 ## Redirect Rules
 
 ```text
-/ https://eztex.thuva.workers.dev/ 302
-/* https://eztex.thuva.workers.dev/:splat 302
+/ https://eztex.thuvasooriya.me/ 302
+/* https://eztex.thuvasooriya.me/:splat 302
 ```
 
 Examples:
 
-- `https://eztex.pages.dev/` -> `https://eztex.thuva.workers.dev/`
-- `https://eztex.pages.dev/c/room-id` -> `https://eztex.thuva.workers.dev/c/room-id`
-- `https://eztex.pages.dev/formats/xelatex.fmt` -> `https://eztex.thuva.workers.dev/formats/xelatex.fmt`
+- `https://eztex.pages.dev/` -> `https://eztex.thuvasooriya.me/`
+- `https://eztex.pages.dev/c/room-id` -> `https://eztex.thuvasooriya.me/c/room-id`
+- `https://eztex.pages.dev/formats/xelatex.fmt` -> `https://eztex.thuvasooriya.me/formats/xelatex.fmt`
 
 ## Deploy With Drag And Drop
 
@@ -39,7 +39,7 @@ Set the Pages project build settings to use this directory as the deploy output.
 
 ## Status Code
 
-The current rules use `302` so the redirect is easy to change while testing. After the Worker URL is final, you can switch both rules to `301` for a permanent redirect.
+The current rules use `302` so the redirect is easy to change while testing. After the canonical URL is final, you can switch both rules to `301` for a permanent redirect.
 
 ## Caveats
 

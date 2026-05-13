@@ -25,8 +25,8 @@ import {
   ConsoleStdout,
 } from "@bjorn3/browser_wasi_shim";
 
-const BUNDLE_URL = "https://eztex-cors-proxy.thuva.workers.dev/bundle";
-const INDEX_URL = "https://eztex-cors-proxy.thuva.workers.dev/index.gz";
+const BUNDLE_URL = "https://eztex.thuvasooriya.me/bundle";
+const INDEX_URL = "https://eztex.thuvasooriya.me/index.gz";
 const WASM_PATH = "../zig-out/bin/eztex.wasm";
 const ASSETS_DIR = "assets";
 
