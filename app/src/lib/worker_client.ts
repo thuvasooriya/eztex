@@ -175,6 +175,27 @@ function init_worker() {
   worker.postMessage({ type: "init", debug: _debug });
 }
 
+async function post_compile(req: CompileRequest, mode: CompileMode) {
+  try {
+    if (!worker || !ready()) return;
+    worker.postMessage({
+      type: "compile",
+      files: req.files,
+      main: req.main,
+      mode,
+      debug: _debug,
+    });
+  } catch (err) {
+    append_log(`[ui] failed to prepare images for compile: ${err instanceof Error ? err.message : String(err)}`, "log-error");
+    batch(() => {
+      set_compiling(false);
+      set_status("error");
+      set_status_text("Error");
+    });
+    for (const cb of _on_compile_done_cbs) cb();
+  }
+}
+
 function compile(req: CompileRequest) {
   if (!worker || !ready()) return;
   const mode = req.mode ?? "full";
@@ -183,13 +204,7 @@ function compile(req: CompileRequest) {
   set_status_text(mode === "preview" ? "Previewing..." : "Compiling...");
   set_progress(0);
   set_diagnostics([]);
-  worker.postMessage({
-    type: "compile",
-    files: req.files,
-    main: req.main,
-    mode,
-    debug: _debug,
-  });
+  void post_compile(req, mode);
 }
 
 function compile_and_wait(req: CompileRequest): Promise<boolean> {

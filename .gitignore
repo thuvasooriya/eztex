@@ -4,6 +4,7 @@
 ref/
 tmp/
 worker/.env
+/.wrangler/
 worker/.wrangler/
 worker/assets/
 **/node_modules/
@@ -27,4 +28,3 @@ tests/tmp/
 # Generated format files (built by worker/generate-wasm-format.ts, uploaded to R2)
 *.fmt
 app/public/formats/
-

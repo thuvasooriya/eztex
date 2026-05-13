@@ -26,6 +26,8 @@ const [modal_state, set_modal_state] = createStore<ModalState>({
 
 export function get_modal_state() { return modal_state; }
 
+export function is_modal_open() { return modal_state.open; }
+
 export async function show_input_modal(opts: {
   title: string;
   message?: string;

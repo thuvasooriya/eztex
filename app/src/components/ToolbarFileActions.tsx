@@ -6,7 +6,8 @@ import type { ProjectStore } from "../lib/project_store";
 import { is_binary, is_text_ext, type ProjectFiles } from "../lib/project_store";
 import { ProjectRepository } from "../lib/project_repository";
 import type { ConflictInfo, LocalFolderSync } from "../lib/local_folder_sync";
-import { show_alert_modal, show_choice_modal, show_input_modal } from "../lib/modal_store";
+import { is_modal_open, show_alert_modal, show_choice_modal, show_input_modal } from "../lib/modal_store";
+import { apply_graphics_rewrites_to_files, find_import_graphics_repairs } from "../lib/latex_graphics";
 
 type Props = {
   store: ProjectStore;
@@ -44,8 +45,19 @@ const ToolbarFileActions: Component<Props> = (props) => {
     const handler = (e: MouseEvent) => {
       if (upload_btn_ref && !upload_btn_ref.contains(e.target as Node)) set_show_upload_menu(false);
     };
+    const on_key = (e: KeyboardEvent) => {
+      if (is_modal_open()) return;
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      set_show_upload_menu(false);
+      upload_btn_ref?.querySelector("button")?.focus({ preventScroll: true });
+    };
     document.addEventListener("click", handler);
-    onCleanup(() => document.removeEventListener("click", handler));
+    document.addEventListener("keydown", on_key);
+    onCleanup(() => {
+      document.removeEventListener("click", handler);
+      document.removeEventListener("keydown", on_key);
+    });
   });
 
   createEffect(() => {
@@ -53,8 +65,19 @@ const ToolbarFileActions: Component<Props> = (props) => {
     const handler = (e: MouseEvent) => {
       if (download_btn_ref && !download_btn_ref.contains(e.target as Node)) set_show_download_menu(false);
     };
+    const on_key = (e: KeyboardEvent) => {
+      if (is_modal_open()) return;
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      set_show_download_menu(false);
+      download_btn_ref?.querySelector("button")?.focus({ preventScroll: true });
+    };
     document.addEventListener("click", handler);
-    onCleanup(() => document.removeEventListener("click", handler));
+    document.addEventListener("keydown", on_key);
+    onCleanup(() => {
+      document.removeEventListener("click", handler);
+      document.removeEventListener("keydown", on_key);
+    });
   });
 
   function content_equal(a: string | Uint8Array, b: string | Uint8Array): boolean {
@@ -65,6 +88,36 @@ const ToolbarFileActions: Component<Props> = (props) => {
       return true;
     }
     return false;
+  }
+
+  function detect_main_file(files: ProjectFiles): string | undefined {
+    const tex_files = Object.entries(files).filter(([name, content]) => typeof content === "string" && name.endsWith(".tex"));
+    const documentclass_files = tex_files.filter(([, content]) => (content as string).includes("\\documentclass"));
+    if (documentclass_files.length === 1) return documentclass_files[0][0];
+    const preferred = ["main.tex", "paper.tex", "thesis.tex", "document.tex"];
+    for (const candidate of preferred) {
+      const found = documentclass_files.find(([name]) => name === candidate || name.endsWith(`/${candidate}`));
+      if (found) return found[0];
+    }
+    return documentclass_files[0]?.[0] ?? tex_files[0]?.[0] ?? Object.keys(files)[0];
+  }
+
+  async function maybe_fix_imported_graphics_refs(files: ProjectFiles): Promise<ProjectFiles> {
+    const main_file = detect_main_file(files);
+    const repairs = find_import_graphics_repairs(files, main_file);
+    if (repairs.length === 0) return files;
+
+    const preview = repairs.slice(0, 8).map((repair) => `${repair.old_path} -> ${repair.new_path}`).join("\n");
+    const more = repairs.length > 8 ? `\n...and ${repairs.length - 8} more` : "";
+    const choice = await show_choice_modal({
+      title: "Fix Image Paths?",
+      message: `Some imported image references include a directory prefix that was stripped from the ZIP file paths. Fix ${repairs.length} reference${repairs.length === 1 ? "" : "s"}?\n\n${preview}${more}`,
+      options: [
+        { label: "Fix paths", value: "fix", variant: "primary" },
+        { label: "Keep as-is", value: "keep", variant: "default" },
+      ],
+    });
+    return choice === "fix" ? apply_graphics_rewrites_to_files(files, repairs) : files;
   }
 
   async function merge_or_load(incoming: ProjectFiles) {
@@ -90,7 +143,7 @@ const ToolbarFileActions: Component<Props> = (props) => {
     const non_conflicting: ProjectFiles = {};
     const conflicts: ConflictInfo[] = [];
     for (const [name, content] of Object.entries(incoming)) {
-      const existing = props.store.files[name];
+      const existing = props.store.get_content(name);
       if (existing === undefined) non_conflicting[name] = content;
       else if (!content_equal(existing, content)) conflicts.push({ path: name, eztex_content: existing, disk_content: content, eztex_hash: "", disk_hash: "" });
     }
@@ -142,7 +195,8 @@ const ToolbarFileActions: Component<Props> = (props) => {
     try {
       const files = await read_zip(file);
       if (Object.keys(files).length === 0) { await show_alert_modal({ title: "Import Error", message: "No .tex files found in zip." }); return; }
-      merge_or_load(files);
+      const fixed_files = await maybe_fix_imported_graphics_refs(files);
+      merge_or_load(fixed_files);
     } catch (err: any) {
       await show_alert_modal({ title: "Import Error", message: "Failed to read zip: " + err.message });
     }
@@ -163,7 +217,8 @@ const ToolbarFileActions: Component<Props> = (props) => {
       else if (is_text_ext(name)) files[name] = await file.text();
     }
     if (Object.keys(files).length === 0) { await show_alert_modal({ title: "Import Error", message: "No supported files found in folder." }); return; }
-    merge_or_load(files);
+    const fixed_files = await maybe_fix_imported_graphics_refs(files);
+    merge_or_load(fixed_files);
     input.value = "";
   }
 
@@ -184,7 +239,7 @@ const ToolbarFileActions: Component<Props> = (props) => {
   }
 
   async function handle_download_zip() {
-    const blob = await write_zip(props.store.files);
+    const blob = await write_zip(props.store.current_files());
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -204,7 +259,7 @@ const ToolbarFileActions: Component<Props> = (props) => {
       });
       return;
     }
-    const ok = await worker_client.compile_and_wait({ files: { ...props.store.files }, main: props.store.main_file(), mode: "full" });
+    const ok = await worker_client.compile_and_wait({ files: props.store.current_files(), main: props.store.main_file(), mode: "full" });
     if (!ok) return;
     const url = worker_client.pdf_url();
     if (!url) return;
@@ -242,7 +297,7 @@ const ToolbarFileActions: Component<Props> = (props) => {
         </div>
       </div>
       <input ref={zip_input_ref} type="file" accept=".zip" style={{ display: "none" }} onChange={handle_zip_upload} />
-      <input ref={file_input_ref} type="file" multiple accept=".tex,.bib,.sty,.cls,.png,.jpg,.jpeg,.gif,.webp,.svg,.ttf,.otf,.woff,.woff2,.pdf" style={{ display: "none" }} onChange={handle_file_upload} />
+      <input ref={file_input_ref} type="file" multiple accept=".tex,.bib,.sty,.cls,.png,.jpg,.jpeg,.gif,.svg,.ttf,.otf,.woff,.woff2,.pdf" style={{ display: "none" }} onChange={handle_file_upload} />
       <input ref={folder_input_ref} type="file" {...{ webkitdirectory: true } as any} style={{ display: "none" }} onChange={handle_folder_upload} />
     </>
   );

@@ -3,9 +3,17 @@ import { use_app_context } from "../lib/app_context";
 import type { ProjectStore } from "../lib/project_store";
 import { is_binary } from "../lib/project_store";
 import { build_tree, auto_suffix, type TreeNode } from "../lib/file_tree";
-import { show_alert_modal } from "../lib/modal_store";
+import { show_alert_modal, show_choice_modal } from "../lib/modal_store";
 import { worker_client } from "../lib/worker_client";
+import { get_setting } from "../lib/settings_store";
+import {
+  compression_summary,
+  is_optimizable_image,
+  optimize_image_file,
+  type OptimizationQuality,
+} from "../lib/image_tools";
 import FolderSyncStatus from "./FolderSyncStatus";
+import OptimizeImagesModal from "./OptimizeImagesModal";
 
 function file_icon(name: string): string {
   const ext = name.split(".").pop()?.toLowerCase() ?? "";
@@ -13,7 +21,7 @@ function file_icon(name: string): string {
     case "tex": case "dtx": return "T";
     case "bib": case "bbl": return "B";
     case "sty": case "cls": case "clo": return "S";
-    case "png": case "jpg": case "jpeg": case "gif": case "bmp": case "webp": case "svg": return "I";
+    case "png": case "jpg": case "jpeg": case "gif": case "bmp": case "svg": return "I";
     case "ttf": case "otf": case "woff": case "woff2": return "F";
     case "pdf": case "eps": case "ps": return "P";
     default: return "#";
@@ -30,6 +38,7 @@ const FilePanel: Component<Props> = (props) => {
   const [renaming, set_renaming] = createSignal<string | null>(null);
   const [rename_value, set_rename_value] = createSignal("");
   const [ctx_menu, set_ctx_menu] = createSignal<{ file: string; x: number; y: number } | null>(null);
+  const [show_optimize_modal, set_show_optimize_modal] = createSignal(false);
   const [os_drag_over, set_os_drag_over] = createSignal(false);
   const STORAGE_KEY = "eztex_tree_open";
   const initial_open = (() => {
@@ -45,6 +54,8 @@ const FilePanel: Component<Props> = (props) => {
 
   const tex_files = () => props.store.file_names().filter((n) => n.endsWith(".tex"));
   const show_main_controls = () => tex_files().length > 1;
+  const optimizable_images = () => props.store.file_names().filter(is_optimizable_image);
+  const unoptimized_image_count = () => optimizable_images().length;
 
   function set_entry_and_compile(name: string) {
     props.store.set_main_file(name);
@@ -54,7 +65,7 @@ const FilePanel: Component<Props> = (props) => {
           await props.store.request_missing_blobs();
           return;
         }
-        worker_client.compile({ files: { ...props.store.files }, main: name, mode: "preview" });
+        worker_client.compile({ files: props.store.current_files(), main: name, mode: "preview" });
       });
     }
   }
@@ -192,6 +203,44 @@ const FilePanel: Component<Props> = (props) => {
     start_rename(folder_name + "/");
   }
 
+  async function choose_optimization_quality(): Promise<OptimizationQuality | null> {
+    const current = get_setting("optimization_quality");
+    const choice = await show_choice_modal({
+      title: "Optimize Image",
+      message: `Choose optimization quality. Current default is ${current}%. This overwrites the original only if the optimized file is smaller.`,
+      options: [
+        { label: "70% - smallest", value: "70", variant: current === 70 ? "primary" : "default" },
+        { label: "80% - balanced", value: "80", variant: current === 80 ? "primary" : "default" },
+        { label: "90% - highest quality", value: "90", variant: current === 90 ? "primary" : "default" },
+      ],
+    });
+    if (choice !== "70" && choice !== "80" && choice !== "90") return null;
+    return Number(choice) as OptimizationQuality;
+  }
+
+  async function handle_optimize_image(path: string) {
+    const quality = get_setting("optimize_use_default_quality") ? get_setting("optimization_quality") : await choose_optimization_quality();
+    if (quality === null) return;
+    const choice = await show_choice_modal({
+      title: "Overwrite Image?",
+      message: "This optimizes the image in place. The original is replaced only if the optimized output is smaller.",
+      options: [
+        { label: "Optimize in place", value: "optimize", variant: "primary" },
+        { label: "Cancel", value: "cancel", variant: "default" },
+      ],
+    });
+    if (choice !== "optimize") return;
+    try {
+      const result = await optimize_image_file(props.store, path, quality);
+      await show_alert_modal({
+        title: "Image Optimized",
+        message: compression_summary(result),
+      });
+    } catch (err) {
+      await show_alert_modal({ title: "Optimize Failed", message: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
   // OS drag-drop handler
   async function handle_os_drop(e: DragEvent) {
     const dt = e.dataTransfer;
@@ -199,7 +248,7 @@ const FilePanel: Component<Props> = (props) => {
     for (const file of Array.from(dt.files)) {
       if (file.name.startsWith(".")) continue;
       const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
-      const binary_exts = ["png","jpg","jpeg","gif","webp","svg","pdf","zip","tar","gz","bz2","woff","woff2","ttf","otf"];
+      const binary_exts = ["png","jpg","jpeg","gif","svg","pdf","zip","tar","gz","bz2","woff","woff2","ttf","otf"];
       if (binary_exts.includes(ext)) {
         props.store.add_file(file.name, new Uint8Array(await file.arrayBuffer()));
       } else {
@@ -428,6 +477,19 @@ const FilePanel: Component<Props> = (props) => {
         {render_nodes(tree(), 0)}
       </div>
 
+      <Show when={unoptimized_image_count() > 0}>
+        <div class="file-panel-actions bottom">
+          <button
+            class="file-panel-action-btn"
+            title="Review project image optimization"
+            onClick={(e) => { e.currentTarget.focus({ preventScroll: true }); set_show_optimize_modal(true); }}
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16l4.6-4.6a2 2 0 0 1 2.8 0L16 16"/><path d="M14 14l1.6-1.6a2 2 0 0 1 2.8 0L20 14"/><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="8" cy="9" r="1.2"/></svg>
+            {`Optimize ${unoptimized_image_count()} image${unoptimized_image_count() === 1 ? "" : "s"}`}
+          </button>
+        </div>
+      </Show>
+
       <Show when={ctx_menu()}>
         {(menu) => (
           <div class="ctx-menu"
@@ -441,6 +503,11 @@ const FilePanel: Component<Props> = (props) => {
               <Show when={menu().file.endsWith(".tex") && menu().file !== props.store.main_file()}>
                 <button class="ctx-menu-item" onClick={() => { set_entry_and_compile(menu().file); set_ctx_menu(null); }}>
                   Set as entry file
+                </button>
+              </Show>
+              <Show when={is_optimizable_image(menu().file)}>
+                <button class="ctx-menu-item" onClick={() => { const file = menu().file; set_ctx_menu(null); void handle_optimize_image(file); }}>
+                  Optimize image
                 </button>
               </Show>
               <Show when={menu().file !== props.store.main_file() && props.store.file_names().length > 1}>
@@ -485,6 +552,7 @@ const FilePanel: Component<Props> = (props) => {
           </div>
         )}
       </Show>
+      <OptimizeImagesModal store={props.store} show={show_optimize_modal()} on_close={() => set_show_optimize_modal(false)} />
     </div>
   );
 };

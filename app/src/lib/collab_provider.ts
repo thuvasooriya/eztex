@@ -34,6 +34,10 @@ export interface CollabProviderOptions {
 const PROVIDER_ORIGIN = "eztex:collab-provider";
 const RECONNECT_DELAYS = [500, 1000, 2000, 5000, 10000, 15000, 30000];
 const BLOB_CHUNK_BYTES = 192 * 1024;
+const MAX_INCOMING_BLOB_BYTES = 64 * 1024 * 1024;
+const MAX_INCOMING_BLOB_CHUNKS = Math.ceil(MAX_INCOMING_BLOB_BYTES / BLOB_CHUNK_BYTES);
+const FULL_STATE_SYNC_IDLE_MS = 2000;
+const HANDSHAKE_TIMEOUT_MS = 12000;
 
 export interface CollabProvider {
   status(): CollabStatus;
@@ -54,6 +58,7 @@ export function create_collab_provider(opts: CollabProviderOptions): CollabProvi
   let reconnect_timer: ReturnType<typeof setTimeout> | null = null;
   let presence_timer: ReturnType<typeof setInterval> | null = null;
   let full_sync_timer: ReturnType<typeof setTimeout> | null = null;
+  let handshake_timer: ReturnType<typeof setTimeout> | null = null;
   let destroyed = false;
   let create_pending = false;
   let terminal_error = false;
@@ -98,6 +103,12 @@ export function create_collab_provider(opts: CollabProviderOptions): CollabProvi
     opts.on_room_deleted?.();
   }
 
+  function clear_handshake_timer() {
+    if (!handshake_timer) return;
+    clearTimeout(handshake_timer);
+    handshake_timer = null;
+  }
+
   function build_join_msg(): string {
     return JSON.stringify({
       type: "join",
@@ -134,7 +145,7 @@ export function create_collab_provider(opts: CollabProviderOptions): CollabProvi
     const total = Math.max(1, Math.ceil(bytes.byteLength / BLOB_CHUNK_BYTES));
     for (let index = 0; index < total; index++) {
       const start = index * BLOB_CHUNK_BYTES;
-      const chunk = bytes.slice(start, Math.min(bytes.byteLength, start + BLOB_CHUNK_BYTES));
+      const chunk = bytes.subarray(start, Math.min(bytes.byteLength, start + BLOB_CHUNK_BYTES));
       send_json({
         type: "blob-chunk",
         hash,
@@ -149,6 +160,8 @@ export function create_collab_provider(opts: CollabProviderOptions): CollabProvi
     if (typeof msg.hash !== "string" || typeof msg.data !== "string") return;
     if (!Number.isInteger(msg.index) || !Number.isInteger(msg.total)) return;
     if (msg.index < 0 || msg.total < 1 || msg.index >= msg.total) return;
+    if (msg.total > MAX_INCOMING_BLOB_CHUNKS) return;
+    if (msg.data.length > Math.ceil(BLOB_CHUNK_BYTES * 4 / 3) + 8) return;
 
     let entry = incoming_blob_chunks.get(msg.hash);
     if (!entry || entry.total !== msg.total) {
@@ -163,6 +176,7 @@ export function create_collab_provider(opts: CollabProviderOptions): CollabProvi
     } catch {
       return;
     }
+    if (chunk.byteLength > BLOB_CHUNK_BYTES) return;
 
     entry.chunks[msg.index] = chunk;
     entry.received++;
@@ -170,6 +184,7 @@ export function create_collab_provider(opts: CollabProviderOptions): CollabProvi
 
     incoming_blob_chunks.delete(msg.hash);
     const total_bytes = entry.chunks.reduce((sum, part) => sum + (part?.byteLength ?? 0), 0);
+    if (total_bytes > MAX_INCOMING_BLOB_BYTES) return;
     const bytes = new Uint8Array(total_bytes);
     let offset = 0;
     for (const part of entry.chunks) {
@@ -211,6 +226,16 @@ export function create_collab_provider(opts: CollabProviderOptions): CollabProvi
 
     ws = new WebSocket(opts.ws_url);
     ws.binaryType = "arraybuffer";
+    clear_handshake_timer();
+    handshake_timer = setTimeout(() => {
+      handshake_timer = null;
+      if (status === "connected" || destroyed) return;
+      terminal_error = true;
+      set_status("error");
+      opts.on_error?.(`Collaboration connection timed out: ${opts.ws_url}`);
+      ws?.close(4408, "Handshake timeout");
+      ws = null;
+    }, HANDSHAKE_TIMEOUT_MS);
 
     ws.onopen = () => {
       reconnect_attempt = 0;
@@ -231,6 +256,7 @@ export function create_collab_provider(opts: CollabProviderOptions): CollabProvi
     };
 
     ws.onclose = (e) => {
+      clear_handshake_timer();
       const was_creating = create_pending;
       ws = null;
       create_pending = false;
@@ -256,6 +282,7 @@ export function create_collab_provider(opts: CollabProviderOptions): CollabProvi
     };
 
     ws.onerror = () => {
+      clear_handshake_timer();
       if (ws) {
         ws.close();
         ws = null;
@@ -272,6 +299,7 @@ export function create_collab_provider(opts: CollabProviderOptions): CollabProvi
     }
 
     if (msg.type === "joined") {
+      clear_handshake_timer();
       permission = msg.permission;
       set_permission(msg.permission);
       if (msg.snapshot && typeof msg.snapshot === "string") {
@@ -294,6 +322,7 @@ export function create_collab_provider(opts: CollabProviderOptions): CollabProvi
       }
     } else if (msg.type === "error") {
       if (msg.code === "create_failed") {
+        clear_handshake_timer();
         terminal_error = true;
         set_status("error");
         opts.on_error?.(msg.message);
@@ -320,6 +349,20 @@ export function create_collab_provider(opts: CollabProviderOptions): CollabProvi
       }
     } else if (msg.type === "blob-chunk") {
       handle_blob_chunk(msg);
+    } else if (msg.type === "peer-left") {
+      if (typeof msg.peer_id === "string") remove_peer_awareness(msg.peer_id);
+    }
+  }
+
+  function remove_peer_awareness(peer_id: string) {
+    const clients: number[] = [];
+    for (const [client_id, state] of opts.awareness.getStates()) {
+      if (client_id === opts.awareness.clientID) continue;
+      const user = (state as any)?.user;
+      if (user?.user_id === peer_id) clients.push(client_id);
+    }
+    if (clients.length > 0) {
+      removeAwarenessStates(opts.awareness, clients, PROVIDER_ORIGIN);
     }
   }
 
@@ -359,7 +402,7 @@ export function create_collab_provider(opts: CollabProviderOptions): CollabProvi
       full_sync_timer = null;
       if (permission !== "write") return;
       send_frame(FrameKind.DocUpdate, Y.encodeStateAsUpdate(opts.doc));
-    }, 500);
+    }, FULL_STATE_SYNC_IDLE_MS);
   }
 
   function send_frame(kind: FrameKind, payload: Uint8Array) {
@@ -388,7 +431,7 @@ export function create_collab_provider(opts: CollabProviderOptions): CollabProvi
   opts.awareness.on("change", awareness_handler);
 
   function schedule_reconnect() {
-    if (destroyed) return;
+    if (destroyed || reconnect_timer) return;
     set_status("reconnecting");
     const delay = RECONNECT_DELAYS[Math.min(reconnect_attempt, RECONNECT_DELAYS.length - 1)];
     reconnect_attempt++;
@@ -410,6 +453,10 @@ export function create_collab_provider(opts: CollabProviderOptions): CollabProvi
     if (full_sync_timer) {
       clearTimeout(full_sync_timer);
       full_sync_timer = null;
+    }
+    clear_handshake_timer();
+    if (ws?.readyState === WebSocket.OPEN) {
+      removeAwarenessStates(opts.awareness, [opts.awareness.clientID], PROVIDER_ORIGIN);
     }
     if (ws) {
       ws.close();

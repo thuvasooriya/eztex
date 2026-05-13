@@ -1,10 +1,13 @@
-import { type Component, Show, onCleanup, createEffect } from "solid-js";
+import { type Component, Show, onCleanup, createEffect, createSignal } from "solid-js";
 import { worker_client } from "../lib/worker_client";
 import { PdfViewerWrapper } from "../lib/pdf_viewer";
 
 const Preview: Component = () => {
   let container_ref: HTMLDivElement | undefined;
   let viewer: PdfViewerWrapper | undefined;
+  let load_seq = 0;
+  const [container_ready, set_container_ready] = createSignal(false);
+  const [load_error, set_load_error] = createSignal("");
 
   function ensure_viewer(): PdfViewerWrapper | undefined {
     if (viewer) return viewer;
@@ -16,9 +19,20 @@ const Preview: Component = () => {
   // load PDF when bytes change
   createEffect(() => {
     const bytes = worker_client.pdf_bytes();
-    if (!bytes) return;
+    const ready = container_ready();
+    if (!bytes) {
+      set_load_error("");
+      return;
+    }
+    if (!ready) return;
     const v = ensure_viewer();
-    if (v) v.load_document(bytes);
+    if (!v) return;
+    const seq = ++load_seq;
+    set_load_error("");
+    void v.load_document(bytes).catch((err: unknown) => {
+      if (seq !== load_seq) return;
+      set_load_error(err instanceof Error ? err.message : String(err));
+    });
   });
 
   // forward sync: highlight target in PDF
@@ -64,26 +78,34 @@ const Preview: Component = () => {
   });
 
   onCleanup(() => {
+    load_seq++;
     viewer?.destroy();
   });
+
+  function set_container_ref(el: HTMLDivElement) {
+    container_ref = el;
+    set_container_ready(true);
+  }
 
   return (
     <div class="preview-pane">
       <div class="preview-content">
-        <Show
-          when={worker_client.pdf_bytes() || worker_client.pdf_url()}
-          fallback={
-            <div class="preview-empty">
-              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--fg-dark)" stroke-width="1">
-                <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
-                <polyline points="14 2 14 8 20 8" />
-              </svg>
-              <span>Compile to see PDF</span>
-            </div>
-          }
-        >
-          <div class="pdf-container" ref={container_ref} onClick={handle_click}>
-            <div class="pdfViewer" />
+        <div class="pdf-container" ref={set_container_ref} onClick={handle_click}>
+          <div class="pdfViewer" />
+        </div>
+        <Show when={!worker_client.pdf_bytes() && !worker_client.pdf_url()}>
+          <div class="preview-empty">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--fg-dark)" stroke-width="1">
+              <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+            </svg>
+            <span>Compile to see PDF</span>
+          </div>
+        </Show>
+        <Show when={load_error()}>
+          <div class="preview-empty preview-error" role="alert">
+            <span>Failed to load PDF</span>
+            <code>{load_error()}</code>
           </div>
         </Show>
       </div>

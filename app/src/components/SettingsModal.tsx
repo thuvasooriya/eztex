@@ -2,6 +2,8 @@ import { type Component, Show, createEffect, createSignal, onCleanup, onMount } 
 import AnimatedShow from "./AnimatedShow";
 import { worker_client } from "../lib/worker_client";
 import type { AppSettings } from "../lib/settings_store";
+import { is_modal_open } from "../lib/modal_store";
+import { current_focus_target, focus_first_element, restore_focus, trap_tab_key } from "../lib/focus_utils";
 import logo_svg from "/logo.svg?raw";
 
 type SettingsTab = "about" | "settings";
@@ -30,6 +32,8 @@ function format_cache_size(bytes: number): string {
 const SettingsModal: Component<Props> = (props) => {
   const [cache_bytes, set_cache_bytes] = createSignal(0);
   const [clearing_cache, set_clearing_cache] = createSignal(false);
+  let modal_ref: HTMLDivElement | undefined;
+  let restore_target: HTMLElement | null = null;
   let estimate_opfs_timer: ReturnType<typeof setTimeout> | undefined;
   let mounted = true;
 
@@ -78,11 +82,23 @@ const SettingsModal: Component<Props> = (props) => {
 
   createEffect(() => {
     if (!props.show) return;
+    restore_target = current_focus_target();
+    requestAnimationFrame(() => { if (modal_ref) focus_first_element(modal_ref); });
     const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") props.on_close();
+      if (is_modal_open()) return;
+      if (e.key === "Tab" && modal_ref) trap_tab_key(e, modal_ref);
+      if (e.key === "Escape") {
+        e.preventDefault();
+        props.on_close();
+      }
     };
     document.addEventListener("keydown", handler);
-    onCleanup(() => document.removeEventListener("keydown", handler));
+    onCleanup(() => {
+      document.removeEventListener("keydown", handler);
+      const target = restore_target;
+      restore_target = null;
+      restore_focus(target);
+    });
   });
 
   createEffect(() => {
@@ -99,7 +115,7 @@ const SettingsModal: Component<Props> = (props) => {
   return (
     <AnimatedShow when={props.show}>
       <div class="info-modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) props.on_close(); }}>
-        <div class="info-modal">
+        <div ref={modal_ref} class="info-modal" role="dialog" aria-modal="true" aria-label="Settings" tabindex="-1">
           <button class="info-modal-close" onClick={props.on_close} title="Close">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <line x1="18" y1="6" x2="6" y2="18" />
@@ -167,6 +183,29 @@ const SettingsModal: Component<Props> = (props) => {
                   <option value="medium">Medium</option>
                   <option value="large">Large</option>
                 </select>
+              </div>
+
+              <div class="settings-group-title">Images</div>
+              <div class="setting-row">
+                <div class="setting-label">
+                  <div class="setting-title">Default optimization quality</div>
+                  <div class="setting-desc">Used when re-encoding JPG/PNG images in place.</div>
+                </div>
+                <select class="settings-select" value={props.settings.optimization_quality} onChange={(e) => props.on_update_setting("optimization_quality", Number(e.currentTarget.value) as 70 | 80 | 90) }>
+                  <option value="70">70%</option>
+                  <option value="80">80%</option>
+                  <option value="90">90%</option>
+                </select>
+              </div>
+              <div class="setting-row">
+                <div class="setting-label">
+                  <div class="setting-title">Use default quality for per-image optimization</div>
+                  <div class="setting-desc">Skip the quality prompt when optimizing a single image.</div>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" checked={props.settings.optimize_use_default_quality} onChange={(e) => props.on_update_setting("optimize_use_default_quality", e.currentTarget.checked)} />
+                  <span class="toggle-slider" />
+                </label>
               </div>
 
             </div>

@@ -55,7 +55,7 @@ const KNOWN_EXTS = new Set([
   "dtx", "fd", "txt", "md", "log", "aux", "toc", "lof",
   "lot", "idx", "ind", "gls", "glo", "ist", "bbl", "blg",
   // binary assets
-  "png", "jpg", "jpeg", "gif", "bmp", "svg", "ico", "webp",
+  "png", "jpg", "jpeg", "gif", "bmp", "svg", "ico",
   "ttf", "otf", "woff", "woff2",
   "pdf", "eps", "ps",
 ]);

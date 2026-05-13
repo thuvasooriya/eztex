@@ -159,6 +159,7 @@ export class CollabRoom {
     }
 
     if (message instanceof ArrayBuffer) {
+      if (!peer) return;
       const bytes = new Uint8Array(message);
       if (bytes.length < 1) return;
 
@@ -185,7 +186,13 @@ export class CollabRoom {
             return;
           }
         }
-        this._apply_update(payload);
+        try {
+          this._apply_update(payload);
+        } catch (err) {
+          console.error("Failed to apply document update:", err);
+          ws.send(JSON.stringify({ type: "error", code: "invalid_update", message: "Invalid document update" }));
+          return;
+        }
         this._broadcast_binary(bytes, ws);
       } else if (kind === FrameKind.SyncStep1 || kind === FrameKind.SyncStep2) {
         this._broadcast_binary(bytes, ws);
@@ -196,14 +203,24 @@ export class CollabRoom {
   }
 
   async webSocketClose(ws, code, reason, wasClean) {
+    const peer = this.peers.get(ws);
     this.peers.delete(ws);
+    if (peer) {
+      this._broadcast_peer_left(peer.peer_id, ws);
+      this._broadcast_peer_count();
+    }
     if (this.peers.size === 0) {
       await this._schedule_cleanup();
     }
   }
 
   async webSocketError(ws, error) {
+    const peer = this.peers.get(ws);
     this.peers.delete(ws);
+    if (peer) {
+      this._broadcast_peer_left(peer.peer_id, ws);
+      this._broadcast_peer_count();
+    }
     if (this.peers.size === 0) {
       await this._schedule_cleanup();
     }
@@ -446,7 +463,9 @@ export class CollabRoom {
     }
     this._persist_timer = setTimeout(() => {
       this._persist_timer = null;
-      this._persist_snapshot();
+      this._persist_snapshot().catch((err) => {
+        console.error("Failed to persist room snapshot:", err);
+      });
     }, delay_ms);
   }
 
@@ -472,6 +491,18 @@ export class CollabRoom {
   _broadcast_peer_count() {
     const msg = JSON.stringify({ type: "peer-count", count: this.peers.size });
     for (const [ws] of this.peers) {
+      try {
+        ws.send(msg);
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  _broadcast_peer_left(peer_id, exclude_ws) {
+    const msg = JSON.stringify({ type: "peer-left", peer_id });
+    for (const [ws] of this.peers) {
+      if (ws === exclude_ws) continue;
       try {
         ws.send(msg);
       } catch {

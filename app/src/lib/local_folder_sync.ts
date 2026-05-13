@@ -2,7 +2,7 @@
 // uses File System Access API (Chrome/Edge only)
 
 import { createSignal } from "solid-js";
-import type { ProjectStore, FileContent, ProjectFiles } from "./project_store";
+import type { ProjectStore, FileContent, ProjectFiles, ProjectChange } from "./project_store";
 import { is_binary } from "./project_store";
 import type { FolderHandleRegistry } from "./folder_handle_registry";
 
@@ -22,7 +22,7 @@ const IGNORED_PREFIXES = [".", "_minted-"];
 const SYNC_EXTS = new Set([
   "tex", "sty", "cls", "bib", "bst", "def", "cfg", "clo", "dtx", "fd",
   "txt", "md",
-  "png", "jpg", "jpeg", "gif", "bmp", "svg", "ico", "webp",
+  "png", "jpg", "jpeg", "gif", "bmp", "svg", "ico",
   "ttf", "otf", "woff", "woff2",
   "pdf", "eps", "ps",
 ]);
@@ -189,15 +189,19 @@ export function create_local_folder_sync(store: ProjectStore, project_id: string
   let unload_handler: ((e: BeforeUnloadEvent) => void) | null = null;
   let visibility_handler: (() => void) | null = null;
 
-  function track_dirty_files() {
+  function track_dirty_files(change?: ProjectChange) {
     const s = state();
     if (!s.active) return;
     const file_names = store.file_names();
     const new_dirty = new Set(s.dirty_files);
 
-    for (const path of file_names) {
-      // mark all files dirty optimistically -- sync_now will verify via hash
-      new_dirty.add(path);
+    if (change?.kind === "content" && change.paths && change.paths.length > 0) {
+      for (const path of change.paths) new_dirty.add(path);
+    } else {
+      for (const path of file_names) {
+        // mark all files dirty optimistically -- sync_now will verify via hash
+        new_dirty.add(path);
+      }
     }
 
     // detect deletions
@@ -324,8 +328,8 @@ export function create_local_folder_sync(store: ProjectStore, project_id: string
 
       // subscribe to store changes
       teardown_runtime();
-      unsub_store = store.on_change(() => {
-        track_dirty_files();
+      unsub_store = store.on_change((change) => {
+        track_dirty_files(change);
         reset_idle_timer();
       });
 
@@ -396,8 +400,8 @@ export function create_local_folder_sync(store: ProjectStore, project_id: string
       });
 
       teardown_runtime();
-      unsub_store = store.on_change(() => {
-        track_dirty_files();
+      unsub_store = store.on_change((change) => {
+        track_dirty_files(change);
         reset_idle_timer();
       });
 

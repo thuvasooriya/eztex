@@ -192,9 +192,9 @@ async function serveR2OrFallback(request, env, r2Key, fallbackUrl, contentType, 
     let object;
     const usedHead = isHead && !hasConditionals;
     if (usedHead) {
-      object = await env.ASSETS.head(r2Key);
+      object = await env.LATEX_ASSETS.head(r2Key);
     } else {
-      object = await env.ASSETS.get(r2Key, {
+      object = await env.LATEX_ASSETS.get(r2Key, {
         range: request.headers,
         onlyIf: request.headers,
       });
@@ -296,9 +296,9 @@ async function handleFormatRequest(request, env, path) {
 
     let object;
     if (isHead && !hasConditionals) {
-      object = await env.ASSETS.head(key);
+      object = await env.LATEX_ASSETS.head(key);
     } else {
-      object = await env.ASSETS.get(key, {
+      object = await env.LATEX_ASSETS.get(key, {
         range: request.headers,
         onlyIf: request.headers,
       });

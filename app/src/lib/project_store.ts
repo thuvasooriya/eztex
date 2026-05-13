@@ -1,4 +1,4 @@
-import { createSignal } from "solid-js";
+import { batch, createSignal } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
 import * as Y from "yjs";
 import { Awareness } from "y-protocols/awareness";
@@ -22,6 +22,7 @@ import type { ProjectBroadcast } from "./project_broadcast";
 
 export type FileContent = string | Uint8Array;
 export type ProjectFiles = Record<string, FileContent>;
+export type ProjectChange = { kind: "content" | "structure"; paths?: string[] };
 
 export type BlobSyncSender = {
   send_blob_available: (hash: string) => void;
@@ -32,7 +33,7 @@ export type BlobSyncSender = {
 
 
 const BINARY_EXTS = new Set([
-  "png", "jpg", "jpeg", "gif", "bmp", "svg", "ico", "webp",
+  "png", "jpg", "jpeg", "gif", "bmp", "svg", "ico",
   "ttf", "otf", "woff", "woff2",
   "pdf", "eps", "ps",
 ]);
@@ -74,17 +75,18 @@ export function create_project_store() {
     set_project_metadata(yp, { main_file: name });
   }
   const [revision, set_revision] = createSignal(0);
+  const [content_revision, set_content_revision] = createSignal(0);
 
-  const _on_change_cbs: Array<() => void> = [];
-  function on_change(cb: () => void): () => void {
+  const _on_change_cbs: Array<(change: ProjectChange) => void> = [];
+  function on_change(cb: (change: ProjectChange) => void): () => void {
     _on_change_cbs.push(cb);
     return () => { const i = _on_change_cbs.indexOf(cb); if (i >= 0) _on_change_cbs.splice(i, 1); };
   }
-  function _notify() { for (const cb of _on_change_cbs) cb(); }
+  function _notify(change: ProjectChange) { for (const cb of _on_change_cbs) cb(change); }
 
-  let _update_handler: ((update: Uint8Array, origin: unknown) => void) | null = null;
+  let _update_handler: ((update: Uint8Array, origin: unknown, doc?: Y.Doc, transaction?: unknown) => void) | null = null;
 
-  function refresh_facade() {
+  function build_files_from_doc(): ProjectFiles {
     const new_files: ProjectFiles = {};
     for (const path of list_paths(yp)) {
       const fid = get_file_id(yp, path);
@@ -101,9 +103,53 @@ export function create_project_store() {
     if (Object.keys(new_files).length === 0 && !_pid && !snapshot_expected) {
       new_files["main.tex"] = "";
     }
-    set_files(reconcile(new_files));
-    set_revision(r => r + 1);
-    _notify();
+    return new_files;
+  }
+
+  function refresh_facade() {
+    const new_files = build_files_from_doc();
+    batch(() => {
+      set_files(reconcile(new_files));
+      set_revision(r => r + 1);
+    });
+  }
+
+  function transaction_changes_file_facade(transaction: unknown): boolean {
+    const changed = (transaction as { changed?: Map<unknown, unknown> } | undefined)?.changed;
+    if (!changed) return true;
+    if (changed.has(yp.paths) || changed.has(yp.file_meta) || changed.has(yp.blob_refs) || changed.has(yp.texts) || changed.has(yp.meta)) {
+      return true;
+    }
+    for (const type of changed.keys()) {
+      if (type instanceof Y.Map && type.get("kind") === "binary") {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function changed_text_paths(transaction: unknown): string[] | undefined {
+    const changed = (transaction as { changed?: Map<unknown, unknown> } | undefined)?.changed;
+    if (!changed) return undefined;
+    const changed_texts = new Set<Y.Text>();
+    for (const type of changed.keys()) {
+      if (type instanceof Y.Text) changed_texts.add(type);
+    }
+    if (changed_texts.size === 0) return undefined;
+    const paths: string[] = [];
+    for (const [fid, ytext] of yp.texts) {
+      if (!changed_texts.has(ytext)) continue;
+      for (const [path, path_fid] of yp.paths) {
+        if (path_fid === fid) paths.push(path);
+      }
+    }
+    return paths.length > 0 ? paths : undefined;
+  }
+
+  function handle_doc_change(change: ProjectChange) {
+    if (change.kind === "structure") refresh_facade();
+    set_content_revision(r => r + 1);
+    _notify(change);
   }
 
   function broadcast_update(update: Uint8Array) {
@@ -116,12 +162,13 @@ export function create_project_store() {
     if (_update_handler) {
       ydoc.off("update", _update_handler);
     }
-    _update_handler = (update: Uint8Array, origin: unknown) => {
+    _update_handler = (update: Uint8Array, origin: unknown, _doc?: Y.Doc, transaction?: unknown) => {
       if (origin === ORIGIN_LOAD && !_broadcast) {
         return;
       }
-      refresh_facade();
-      void request_missing_blobs();
+      const structural = transaction_changes_file_facade(transaction);
+      handle_doc_change({ kind: structural ? "structure" : "content", paths: structural ? undefined : changed_text_paths(transaction) });
+      if (structural) void request_missing_blobs();
       if (origin !== ORIGIN_REMOTE_BC && origin !== ORIGIN_LOAD) {
         broadcast_update(update);
       }
@@ -170,6 +217,7 @@ export function create_project_store() {
 
   async function persist_binary_file(path: string, bytes: Uint8Array): Promise<void> {
     const hash = await compute_hash(bytes);
+    if (binary_cache.get(path) !== bytes) return;
     create_binary_file_ref(yp, path, hash, bytes.length);
     if (_blob_store) {
       await _blob_store.put(bytes);
@@ -211,6 +259,7 @@ export function create_project_store() {
 
   async function handle_blob_response(hash: string | undefined, bytes: Uint8Array | undefined) {
     if (!hash || !bytes) return;
+    if (await compute_hash(bytes) !== hash) return;
     _requested_blob_hashes.delete(hash);
     if (_blob_store) {
       await _blob_store.put(bytes);
@@ -231,6 +280,7 @@ export function create_project_store() {
   async function request_missing_blobs(): Promise<string[]> {
     const missing: string[] = [];
     let loaded_any = false;
+    let removed_stale_cache = false;
     for (const path of list_paths(yp)) {
       const fid = get_file_id(yp, path);
       if (!fid) continue;
@@ -238,7 +288,17 @@ export function create_project_store() {
       if (meta?.get("kind") !== "binary") continue;
       const hash = yp.blob_refs.get(fid) as string | undefined;
       if (!hash) continue;
-      if (binary_cache.has(path)) continue;
+      if (_dirty_blob_paths.has(path)) continue;
+      const cached = binary_cache.get(path);
+      if (cached) {
+        try {
+          if (await compute_hash(cached) === hash) continue;
+        } catch {
+          // Treat unreadable cached bytes as missing and request a fresh blob.
+        }
+        binary_cache.delete(path);
+        removed_stale_cache = true;
+      }
 
       const bytes = await (_blob_store?.get(hash) ?? Promise.resolve(null));
       if (bytes) {
@@ -254,7 +314,7 @@ export function create_project_store() {
         broadcast_blob_request(hash);
       }
     }
-    if (loaded_any) refresh_facade();
+    if (loaded_any || removed_stale_cache) refresh_facade();
     return missing;
   }
 
@@ -319,6 +379,10 @@ export function create_project_store() {
     });
   }
 
+  function current_files(): ProjectFiles {
+    return build_files_from_doc();
+  }
+
   function add_file(name: string, content: FileContent = "") {
     if (content instanceof Uint8Array) {
       binary_cache.set(name, content);
@@ -348,9 +412,6 @@ export function create_project_store() {
       get_or_create_text_file(yp, name, content);
     }
     set_current_file(name);
-    if (!_broadcast) {
-      refresh_facade();
-    }
   }
 
   function remove_file(name: string) {
@@ -362,7 +423,6 @@ export function create_project_store() {
     if (current_file() === name) {
       set_current_file(main_file());
     }
-    if (!_broadcast) refresh_facade();
   }
 
   function rename_file(old_name: string, new_name: string) {
@@ -385,7 +445,6 @@ export function create_project_store() {
     if (main_file() === old_name) {
       set_main_file(new_name);
     }
-    if (!_broadcast) refresh_facade();
   }
 
   function update_content(name: string, content: FileContent) {
@@ -419,7 +478,6 @@ export function create_project_store() {
           broadcast_blob_available(hash);
         });
       }).catch(() => {});
-      if (!_broadcast) refresh_facade();
     } else {
       const fid = get_file_id(yp, name);
       if (fid) {
@@ -433,7 +491,6 @@ export function create_project_store() {
       } else {
         get_or_create_text_file(yp, name, content);
       }
-      if (!_broadcast) refresh_facade();
     }
   }
 
@@ -474,7 +531,6 @@ export function create_project_store() {
     }, ORIGIN_LOCAL);
     _set_main_file_raw("main.tex");
     set_current_file("main.tex");
-    if (!_broadcast) refresh_facade();
   }
 
   function load_files(new_files: ProjectFiles) {
@@ -530,7 +586,7 @@ export function create_project_store() {
     _set_main_file_raw(detected);
     set_project_metadata(yp, { main_file: detected });
     set_current_file(detected);
-    if (!_broadcast) refresh_facade();
+    if (!_broadcast) handle_doc_change({ kind: "structure" });
   }
 
   function merge_files(new_files: ProjectFiles) {
@@ -573,7 +629,6 @@ export function create_project_store() {
         }
       }
     }, ORIGIN_LOCAL);
-    if (!_broadcast) refresh_facade();
   }
 
   async function init_from_template(): Promise<void> {
@@ -722,6 +777,7 @@ export function create_project_store() {
     for (const [hash, b64] of Object.entries(blobs)) {
       try {
         const bytes = base64url_decode(b64);
+        if (await compute_hash(bytes) !== hash) continue;
         if (_blob_store) {
           await _blob_store.put(bytes);
         }
@@ -778,7 +834,9 @@ export function create_project_store() {
     main_file,
     set_main_file,
     revision,
+    content_revision,
     file_names,
+    current_files,
     add_file,
     remove_file,
     rename_file,

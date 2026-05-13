@@ -1,21 +1,26 @@
 import { type Component, Show, For, createEffect, onCleanup, createSignal } from "solid-js";
 import { get_modal_state, close_modal } from "../lib/modal_store";
+import { current_focus_target, focus_first_element, restore_focus, trap_tab_key } from "../lib/focus_utils";
 
 const Modal: Component = () => {
   const state = get_modal_state;
   let input_ref: HTMLInputElement | undefined;
   let overlay_ref: HTMLDivElement | undefined;
+  let restore_target: HTMLElement | null = null;
   const [closing, set_closing] = createSignal(false);
 
   // focus input on open, handle escape key
   createEffect(() => {
     if (!state().open) return;
     set_closing(false);
+    restore_target = current_focus_target();
 
     const timer = setTimeout(() => {
       if (state().type === "input" && input_ref) {
         input_ref.focus();
         input_ref.select();
+      } else if (overlay_ref) {
+        focus_first_element(overlay_ref);
       }
     }, 50);
 
@@ -24,6 +29,7 @@ const Modal: Component = () => {
         e.preventDefault();
         handle_close(null);
       }
+      if (e.key === "Tab" && overlay_ref) trap_tab_key(e, overlay_ref);
       if (e.key === "Enter" && state().type === "input") {
         e.preventDefault();
         const val = input_ref?.value ?? "";
@@ -34,6 +40,9 @@ const Modal: Component = () => {
     onCleanup(() => {
       clearTimeout(timer);
       document.removeEventListener("keydown", on_key);
+      const target = restore_target;
+      restore_target = null;
+      restore_focus(target);
     });
   });
 
@@ -59,7 +68,7 @@ const Modal: Component = () => {
         class={`modal-overlay ${closing() ? "closing" : ""}`}
         onClick={(e) => { if (e.target === e.currentTarget) handle_close(null); }}
       >
-        <div class="modal-box">
+        <div class="modal-box" role="dialog" aria-modal="true" tabindex="-1">
           <p class="modal-title">{state().title}</p>
           <Show when={state().message}>
             <p class="modal-message">{state().message}</p>

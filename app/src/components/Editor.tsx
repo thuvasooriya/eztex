@@ -18,6 +18,9 @@ import * as Y from "yjs";
 import type { ProjectStore } from "../lib/project_store";
 import { is_binary } from "../lib/project_store";
 import { worker_client } from "../lib/worker_client";
+import { latex_autocomplete } from "../lib/latex_autocomplete";
+import { is_editable_image } from "../lib/image_tools";
+import ImageEditor from "./ImageEditor";
 
 type Props = {
   store: ProjectStore;
@@ -28,7 +31,7 @@ type Props = {
   on_editor_view: (view: EditorView) => void;
 };
 
-const IMAGE_EXTS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"]);
+const IMAGE_EXTS = new Set([".png", ".jpg", ".jpeg", ".gif", ".svg"]);
 
 function get_image_mime(name: string): string | null {
   const dot = name.lastIndexOf(".");
@@ -40,7 +43,6 @@ function get_image_mime(name: string): string | null {
     ".jpg": "image/jpeg",
     ".jpeg": "image/jpeg",
     ".gif": "image/gif",
-    ".webp": "image/webp",
     ".svg": "image/svg+xml",
   };
   return map[ext] ?? null;
@@ -222,11 +224,13 @@ const Editor: Component<Props> = (props) => {
     return get_image_mime(name);
   });
 
+  const current_is_editable_image = createMemo(() => image_mime() !== null && is_editable_image(props.store.current_file()));
+
   const [image_url, set_image_url] = createSignal<string | null>(null);
 
   createEffect(
     on(
-      () => ({ file: props.store.current_file(), mime: image_mime() }),
+      () => ({ file: props.store.current_file(), mime: image_mime(), revision: props.store.revision() }),
       ({ file, mime }) => {
         const prev = image_url();
         if (prev) URL.revokeObjectURL(prev);
@@ -256,14 +260,18 @@ const Editor: Component<Props> = (props) => {
   function update_cursor_presence(editor: EditorView, doc_changed: boolean): void {
     const awareness = props.store.awareness();
     const line = editor.state.doc.lineAt(editor.state.selection.main.head).number;
-    awareness.setLocalStateField("cursor_file", props.store.current_file());
-    awareness.setLocalStateField("cursor_line", line);
-    awareness.setLocalStateField("last_active_at", Date.now());
+    const current_state = awareness.getLocalState() ?? {};
+    const next_state: Record<string, unknown> = {
+      ...current_state,
+      cursor_file: props.store.current_file(),
+      cursor_line: line,
+      last_active_at: Date.now(),
+    };
     if (doc_changed) {
-      const state = awareness.getLocalState();
-      const edit_count = typeof state?.edit_count === "number" ? state.edit_count : 0;
-      awareness.setLocalStateField("edit_count", edit_count + 1);
+      const edit_count = typeof current_state.edit_count === "number" ? current_state.edit_count : 0;
+      next_state.edit_count = edit_count + 1;
     }
+    awareness.setLocalState(next_state);
   }
 
   function base_extensions(ytext: Y.Text, undoManager: Y.UndoManager, readOnly: boolean): any[] {
@@ -277,6 +285,7 @@ const Editor: Component<Props> = (props) => {
       foldGutter(),
       StreamLanguage.define(stex),
       syntaxHighlighting(tokyo_night_highlight),
+      latex_autocomplete(),
       tokyo_night_theme,
       yCollab(ytext, props.store.awareness(), { undoManager }),
       keymap.of([...defaultKeymap, ...yUndoManagerKeymap, indentWithTab]),
@@ -491,7 +500,12 @@ const Editor: Component<Props> = (props) => {
             </div>
           }
         >
-          <img src={image_url()!} class="image-preview" alt={props.store.current_file()} />
+          <Show
+            when={current_is_editable_image()}
+            fallback={<img src={image_url()!} class="image-preview" alt={props.store.current_file()} />}
+          >
+            <ImageEditor store={props.store} file={props.store.current_file()} read_only={props.read_only} />
+          </Show>
         </Show>
       </Show>
       <div class="editor-cm-container" ref={container_ref} style={{ display: current_is_binary() ? "none" : undefined }} />

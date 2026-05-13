@@ -233,14 +233,18 @@ export function create_compile_scheduler(deps: CompileSchedulerDeps) {
 
   let last_compiled_files: ProjectFiles = {};
 
+  function seed_current_files() {
+    needs_seed = false;
+    const files = deps.get_files();
+    last_compiled_hash = hash_files(files);
+    last_compiled_files = deep_clone_files(files);
+  }
+
   function notify_change() {
     if (!enabled()) return;
 
     if (needs_seed) {
-      needs_seed = false;
-      const files = deps.get_files();
-      last_compiled_hash = hash_files(files);
-      last_compiled_files = deep_clone_files(files);
+      seed_current_files();
       return;
     }
 
@@ -353,6 +357,7 @@ export function create_compile_scheduler(deps: CompileSchedulerDeps) {
     notify_change,
     notify_compile_done,
     request_compile,
+    seed_current_files,
     status,
     destroy,
     set_project_id,

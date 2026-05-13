@@ -352,7 +352,7 @@ const SYNC_EXTS = new Set([
   // text assets
   "txt", "md",
   // binary assets
-  "png", "jpg", "jpeg", "gif", "bmp", "svg", "ico", "webp",
+  "png", "jpg", "jpeg", "gif", "bmp", "svg", "ico",
   "ttf", "otf", "woff", "woff2",
   "pdf", "eps", "ps",
 ]);

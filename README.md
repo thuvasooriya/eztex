@@ -4,8 +4,6 @@ zig based wrapper for tex/xelatex engine built on [tectonic](https://tectonic-ty
 
 packaged as a native cli and a [wasm-powered web app](<(https://eztex.pages.dev/)>) with a solid-js frontend
 
-![screenshot](https://files.catbox.moe/a32k3e.webp)
-
 ## quickstart
 
 ```sh

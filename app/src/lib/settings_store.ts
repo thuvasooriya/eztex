@@ -7,6 +7,8 @@ export interface AppSettings {
   auto_compile: boolean;
   word_wrap: boolean;
   editor_font_size: "small" | "medium" | "large";
+  optimization_quality: 70 | 80 | 90;
+  optimize_use_default_quality: boolean;
 }
 
 const SETTINGS_KEY = "eztex_settings";
@@ -17,9 +19,11 @@ const DEFAULT_SETTINGS: AppSettings = {
   show_file_panel: true,
   show_preview: true,
   split_direction: "horizontal",
-  auto_compile: true,
+  auto_compile: false,
   word_wrap: false,
   editor_font_size: "medium",
+  optimization_quality: 80,
+  optimize_use_default_quality: true,
 };
 
 function legacy_bool(key: string, fallback: boolean): boolean {
@@ -41,6 +45,8 @@ function parse_settings(value: unknown): Partial<AppSettings> {
   if (typeof raw.auto_compile === "boolean") settings.auto_compile = raw.auto_compile;
   if (typeof raw.word_wrap === "boolean") settings.word_wrap = raw.word_wrap;
   if (raw.editor_font_size === "small" || raw.editor_font_size === "medium" || raw.editor_font_size === "large") settings.editor_font_size = raw.editor_font_size;
+  if (raw.optimization_quality === 70 || raw.optimization_quality === 80 || raw.optimization_quality === 90) settings.optimization_quality = raw.optimization_quality;
+  if (typeof raw.optimize_use_default_quality === "boolean") settings.optimize_use_default_quality = raw.optimize_use_default_quality;
 
   return settings;
 }

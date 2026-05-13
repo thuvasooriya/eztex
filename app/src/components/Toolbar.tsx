@@ -17,7 +17,7 @@ import type { ConflictInfo } from "../lib/local_folder_sync";
 import type { CompileScheduler } from "../lib/compile_scheduler";
 import type { AppSettings } from "../lib/settings_store";
 import logo_svg from "/logo.svg?raw";
-import { show_input_modal, show_confirm_modal, show_choice_modal, show_alert_modal } from "../lib/modal_store";
+import { is_modal_open, show_input_modal, show_confirm_modal, show_choice_modal, show_alert_modal } from "../lib/modal_store";
 
 type Props = {
   store: ProjectStore;
@@ -202,8 +202,19 @@ const Toolbar: Component<Props> = (props) => {
         set_show_project_menu(false);
       }
     };
+    const on_key = (e: KeyboardEvent) => {
+      if (is_modal_open()) return;
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      set_show_project_menu(false);
+      project_btn_ref?.querySelector("button")?.focus({ preventScroll: true });
+    };
     document.addEventListener("click", handler);
-    onCleanup(() => document.removeEventListener("click", handler));
+    document.addEventListener("keydown", on_key);
+    onCleanup(() => {
+      document.removeEventListener("click", handler);
+      document.removeEventListener("keydown", on_key);
+    });
   });
 
   createEffect(() => {
@@ -213,8 +224,19 @@ const Toolbar: Component<Props> = (props) => {
         set_show_share_menu(false);
       }
     };
+    const on_key = (e: KeyboardEvent) => {
+      if (is_modal_open()) return;
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      set_show_share_menu(false);
+      share_btn_ref?.querySelector("button")?.focus({ preventScroll: true });
+    };
     document.addEventListener("click", handler);
-    onCleanup(() => document.removeEventListener("click", handler));
+    document.addEventListener("keydown", on_key);
+    onCleanup(() => {
+      document.removeEventListener("click", handler);
+      document.removeEventListener("keydown", on_key);
+    });
   });
 
   async function refresh_projects() {
@@ -371,7 +393,7 @@ const Toolbar: Component<Props> = (props) => {
       });
       return;
     }
-    const files = { ...props.store.files };
+    const files = props.store.current_files();
     worker_client.compile({ files, main: props.store.main_file(), mode: "full" });
   }
 

@@ -1,0 +1,57 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "eztex",
+  "main": "worker/index.js",
+  "compatibility_date": "2026-05-13",
+  "workers_dev": true,
+
+  // Custom domain - will be configured later after testing
+  // "routes": [
+  //   {
+  //     "pattern": "eztex.thuvasooriya.me",
+  //     "custom_domain": true
+  //   }
+  // ],
+
+  "assets": {
+    "directory": "app/dist",
+    "not_found_handling": "single-page-application",
+    "binding": "SPA_ASSETS",
+    "run_worker_first": [
+      "/collab/*",
+      "/bundle",
+      "/bundle/*",
+      "/index",
+      "/index.gz",
+      "/formats/*"
+    ]
+  },
+
+  "r2_buckets": [
+    {
+      "binding": "LATEX_ASSETS",
+      "bucket_name": "eztex-assets",
+      "preview_bucket_name": "eztex-assets"
+    }
+  ],
+
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "COLLAB_ROOM",
+        "class_name": "CollabRoom"
+      }
+    ]
+  },
+
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["CollabRoom"]
+    }
+  ],
+
+  "observability": {
+    "enabled": true
+  }
+}

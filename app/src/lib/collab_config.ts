@@ -1,6 +1,3 @@
-const LOCALHOST_NAMES = new Set(["localhost", "127.0.0.1"]);
-const LOCAL_COLLAB_PORT = "8787";
-
 function trim_trailing_slash(value: string): string {
   return value.replace(/\/+$/, "");
 }
@@ -12,8 +9,8 @@ export function get_collab_http_origin(): string {
   }
 
   if (typeof window === "undefined") return "";
-  if (LOCALHOST_NAMES.has(window.location.hostname) && window.location.port !== LOCAL_COLLAB_PORT) {
-    return `${window.location.protocol}//${window.location.hostname}:${LOCAL_COLLAB_PORT}`;
+  if (import.meta.env.DEV && (window.location.port === "5173" || window.location.port === "5174")) {
+    return `${window.location.protocol}//${window.location.hostname}:8787`;
   }
   return window.location.origin;
 }

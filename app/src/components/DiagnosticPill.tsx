@@ -22,10 +22,11 @@ const DiagnosticPill: Component<Props> = (props) => {
   function handle_diag_click(d: Diagnostic): void {
     if (!d.file || !d.line) return;
     let target = d.file;
-    if (props.store.files[target] === undefined) {
+    const names = props.store.file_names();
+    if (!names.includes(target)) {
       if (!target.endsWith(".tex")) {
         const with_tex = target + ".tex";
-        if (props.store.files[with_tex] !== undefined) {
+        if (names.includes(with_tex)) {
           target = with_tex;
         } else {
           return;

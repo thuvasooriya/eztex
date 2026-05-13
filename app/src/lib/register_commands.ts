@@ -37,6 +37,7 @@ type LayoutCommandDeps = {
   toggle_preview: () => void;
   set_show_info_modal: Setter<boolean>;
   set_show_onboarding: Setter<boolean>;
+  set_show_search: Setter<boolean>;
 };
 
 type EditorCommandDeps = {
@@ -95,10 +96,10 @@ export function init_commands(d: CommandDeps): void {
     keywords: ["build", "typeset", "latex", "pdf"],
     category: "Compile",
     keybinding: "Cmd+Enter",
-    when: () => Object.keys(project.store.files).length > 0,
+    when: () => project.store.file_names().length > 0,
     action: async () => {
       if (await alert_if_missing_blobs()) return;
-      const files = { ...project.store.files };
+      const files = project.store.current_files();
       worker_client.compile({ files, main: project.store.main_file(), mode: "full" });
     },
   });
@@ -110,7 +111,7 @@ export function init_commands(d: CommandDeps): void {
     keywords: ["auto", "live", "recompile"],
     category: "Compile",
     keybinding: "Cmd+Shift+W",
-    when: () => Object.keys(project.store.files).length > 0,
+    when: () => project.store.file_names().length > 0,
     action: () => compile.watch.toggle(),
   });
 
@@ -205,7 +206,7 @@ export function init_commands(d: CommandDeps): void {
     keywords: ["open", "switch", "quick"],
     category: "Navigate",
     keybinding: "Cmd+P",
-    when: () => Object.keys(project.store.files).length > 0,
+    when: () => project.store.file_names().length > 0,
     action: () => {
       if (palette_open() && palette_filter().startsWith("> ")) {
         set_palette_open(false);
@@ -233,6 +234,17 @@ export function init_commands(d: CommandDeps): void {
         set_palette_open(true);
       }
     },
+  });
+
+  register_command({
+    id: "nav.search_project",
+    label: "Search in Project",
+    description: "Search text across all project files",
+    keywords: ["find", "grep", "project", "files"],
+    category: "Navigate",
+    keybinding: "Cmd+Shift+F",
+    when: () => project.store.file_names().length > 0,
+    action: () => layout.set_show_search(true),
   });
 
   register_command({
@@ -345,9 +357,9 @@ export function init_commands(d: CommandDeps): void {
     description: "Download the entire project as a ZIP file",
     keywords: ["save", "archive", "backup"],
     category: "Project",
-    when: () => Object.keys(project.store.files).length > 0,
+    when: () => project.store.file_names().length > 0,
     action: async () => {
-      const blob = await write_zip(project.store.files);
+      const blob = await write_zip(project.store.current_files());
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -368,7 +380,7 @@ export function init_commands(d: CommandDeps): void {
     action: async () => {
       if (await alert_if_missing_blobs()) return;
       const ok = await worker_client.compile_and_wait({
-        files: { ...project.store.files },
+        files: project.store.current_files(),
         main: project.store.main_file(),
         mode: "full",
       });
@@ -551,6 +563,19 @@ export function init_commands(d: CommandDeps): void {
         set_palette_filter("");
         set_palette_open(true);
       }
+    },
+  });
+
+  register_command({
+    id: "palette.open_command",
+    label: "Command Palette",
+    description: "Open the command palette",
+    keywords: ["search", "commands"],
+    category: "View",
+    keybinding: "Cmd+Shift+P",
+    action: () => {
+      set_palette_filter("");
+      set_palette_open(true);
     },
   });
 

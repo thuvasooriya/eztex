@@ -32,7 +32,7 @@ THIS FILE IS PURELY FOR THE USER TO TRACK AND ANALYZE
 - [ ] share projects
 - [ ] collaboration
 - [ ] pdf color inversion / repaint
-- [ ] webp image auto optimization, and basic image manipulation and transformation features in image preview
+- [ ] image auto optimization, and basic image manipulation and transformation features in image preview
 - [ ] git integration
 - [ ] synctex refinments
 - [ ] precache important packages

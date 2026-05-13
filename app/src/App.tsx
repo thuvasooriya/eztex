@@ -24,6 +24,7 @@ import { init_commands } from "./lib/register_commands";
 import { create_agent_review_store, type AgentReviewStore } from "./lib/agent_review";
 import Toolbar from "./components/Toolbar";
 import CommandPalette from "./components/CommandPalette";
+import SearchPanel from "./components/SearchPanel";
 import ConflictDialog from "./components/ConflictDialog";
 import AgentPanel from "./components/AgentPanel";
 
@@ -80,6 +81,7 @@ const App: Component = () => {
 
   const [show_logs, set_show_logs] = createSignal(false);
   const [show_info_modal, set_show_info_modal] = createSignal(false);
+  const [show_search, set_show_search] = createSignal(false);
 
   const [vim_enabled, set_vim_enabled] = createSignal(initial_settings.vim_mode);
 
@@ -124,11 +126,11 @@ const App: Component = () => {
       }
       return;
     }
-    worker_client.compile({ files: { ...store.files }, main: req.main, mode: req.mode });
+    worker_client.compile({ files: store.current_files(), main: req.main, mode: req.mode });
   }
 
   const scheduler = create_compile_scheduler({
-    get_files: () => store.files,
+    get_files: () => store.current_files(),
     get_main: () => store.main_file(),
     is_ready: () => worker_client.ready() && !worker_client.compiling(),
     compile: (req) => { void compile_project(req); },
@@ -209,9 +211,10 @@ const App: Component = () => {
   }
 
   function request_initial_preview() {
+    if (!scheduler.enabled()) return;
     if (initial_preview_requested || !worker_client.ready() || worker_client.compiling()) return;
     if (joining_room() && !collab_ready()) return;
-    const files = { ...store.files };
+    const files = store.current_files();
     if (Object.keys(files).length === 0) return;
     initial_preview_requested = true;
     void compile_project({ files, main: store.main_file(), mode: "preview" });
@@ -328,6 +331,7 @@ const App: Component = () => {
       toggle_preview,
       set_show_info_modal,
       set_show_onboarding,
+      set_show_search,
     },
     editor: {
       get_editor_view,
@@ -582,7 +586,8 @@ const App: Component = () => {
       }
     }
 
-          scheduler.set_project_id(session.project_id);
+    scheduler.set_project_id(session.project_id);
+    scheduler.seed_current_files();
 
     if (is_collab && session.collab_provider) {
       session.collab_provider.destroy();
@@ -692,7 +697,7 @@ const App: Component = () => {
   createEffect(() => {
     const req = worker_client.goto_request();
     if (!req) return;
-    const file_exists = store.files[req.file] !== undefined;
+    const file_exists = store.file_names().includes(req.file);
     if (!file_exists) return;
     if (req.file !== store.current_file()) {
       store.set_current_file(req.file);
@@ -840,7 +845,8 @@ const App: Component = () => {
 
     const session = await session_manager.switch_to(new_id);
 
-          scheduler.set_project_id(new_id);
+    scheduler.set_project_id(new_id);
+    scheduler.seed_current_files();
 
     const current_provider = collab_provider();
     if (current_provider) {
@@ -1076,6 +1082,7 @@ const App: Component = () => {
       />
 
       <CommandPalette store={store} />
+      <SearchPanel store={store} show={show_search()} on_close={() => set_show_search(false)} />
 
       <Show when={show_agent_panel()}>
         <AgentPanel
