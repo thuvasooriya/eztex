@@ -285,6 +285,7 @@ export function create_project_store() {
 
     if (_owns_doc) {
       awareness.destroy();
+      ydoc.destroy();
     }
 
     _pid = id;

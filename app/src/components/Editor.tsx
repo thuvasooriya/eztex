@@ -1,5 +1,5 @@
 import { type Component, onMount, onCleanup, createEffect, on, Show, createSignal, createMemo } from "solid-js";
-import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightSpecialChars, drawSelection, type ViewUpdate } from "@codemirror/view";
+import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightSpecialChars, drawSelection } from "@codemirror/view";
 import { EditorState, Compartment } from "@codemirror/state";
 import { defaultKeymap, indentWithTab } from "@codemirror/commands";
 import {
@@ -213,7 +213,9 @@ const Editor: Component<Props> = (props) => {
         if (!mime) return;
         const content = props.store.get_content(file);
         if (!(content instanceof Uint8Array)) return;
-        const blob = new Blob([content.buffer as ArrayBuffer], { type: mime });
+        const bytes = new Uint8Array(content.byteLength);
+        bytes.set(content);
+        const blob = new Blob([bytes], { type: mime });
         set_image_url(URL.createObjectURL(blob));
       },
     ),
@@ -263,7 +265,7 @@ const Editor: Component<Props> = (props) => {
       EditorView.updateListener.of((update) => {
         if (update.selectionSet || update.docChanged) {
           update_cursor_presence(update.view, update.docChanged);
-          schedule_forward_synctex(update);
+          schedule_forward_synctex();
         }
       }),
     ];
@@ -276,13 +278,13 @@ const Editor: Component<Props> = (props) => {
     });
   }
 
-  function schedule_forward_synctex(update: ViewUpdate) {
+  function schedule_forward_synctex() {
     if (sync_timer !== undefined) clearTimeout(sync_timer);
     sync_timer = setTimeout(() => {
-      if (suppress_forward_sync) {
+      if (suppress_forward_sync || !view) {
         return;
       }
-      const line = update.state.doc.lineAt(update.state.selection.main.head).number;
+      const line = view.state.doc.lineAt(view.state.selection.main.head).number;
       worker_client.sync_forward(props.store.current_file(), line);
     }, 300);
   }
@@ -337,6 +339,16 @@ const Editor: Component<Props> = (props) => {
     ),
   );
 
+  createEffect(() => {
+    const active_files = new Set(props.store.file_names());
+    for (const [path, manager] of undo_managers) {
+      if (!active_files.has(path)) {
+        manager.destroy();
+        undo_managers.delete(path);
+      }
+    }
+  });
+
   createEffect(
     on(
       () => props.word_wrap,
@@ -387,7 +399,7 @@ const Editor: Component<Props> = (props) => {
     for (const d of diags) {
       if (!d.file || !d.line) continue;
       if (d.file !== current) continue;
-      const line_num = Math.min(d.line, view.state.doc.lines);
+      const line_num = Math.max(1, Math.min(d.line, view.state.doc.lines));
       const line_obj = view.state.doc.line(line_num);
       cm_diags.push({
         from: line_obj.from,
@@ -405,7 +417,7 @@ const Editor: Component<Props> = (props) => {
     if (!req || !view) return;
     const file_matches = req.file === props.store.current_file();
     if (!file_matches) return;
-    const line_num = Math.min(req.line, view.state.doc.lines);
+    const line_num = Math.max(1, Math.min(req.line, view.state.doc.lines));
     const line_obj = view.state.doc.line(line_num);
     suppress_forward_sync = true;
     view.dispatch({
@@ -434,6 +446,9 @@ const Editor: Component<Props> = (props) => {
     if (sync_timer !== undefined) clearTimeout(sync_timer);
     if (goto_reset_timer !== undefined) clearTimeout(goto_reset_timer);
     view?.destroy();
+    view = undefined;
+    for (const manager of undo_managers.values()) manager.destroy();
+    undo_managers.clear();
   });
 
   return (

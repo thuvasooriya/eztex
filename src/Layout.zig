@@ -1578,7 +1578,7 @@ export fn createFontFromFile(filename: [*:0]const u8, index: c_int, point_size: 
     font.point_size = @floatCast(fix_to_d(point_size));
 
     if (initialize_ft_internal(font, filename, index) != 0) {
-        free(@ptrCast(raw));
+        deleteFont(font);
         return null;
     }
 
@@ -1736,17 +1736,16 @@ export fn layoutChars(
 
     const n_feat: c_uint = if (e.n_features > 0) @intCast(e.n_features) else 0;
 
-    // try cached shape plan first
-    var plan = hb_shape_plan_create_cached(hb_face_ptr, &seg_props, e.features, n_feat, shapers_to_use) orelse return 0;
-
-    var success = hb_shape_plan_execute(plan, hb_font_ptr, buf, e.features, n_feat);
-
-    // free prior used_shaper
     if (e.used_shaper) |shaper| {
         const ptr: ?*anyopaque = @ptrCast(@constCast(shaper));
         free(ptr);
         e.used_shaper = null;
     }
+
+    // try cached shape plan first
+    var plan = hb_shape_plan_create_cached(hb_face_ptr, &seg_props, e.features, n_feat, shapers_to_use) orelse return 0;
+
+    var success = hb_shape_plan_execute(plan, hb_font_ptr, buf, e.features, n_feat);
 
     if (success != 0) {
         const shaper = hb_shape_plan_get_shaper(plan);

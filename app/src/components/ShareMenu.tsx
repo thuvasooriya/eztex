@@ -62,24 +62,30 @@ const ShareMenu: Component<Props> = (props) => {
   const [current_owned_room, set_current_owned_room] = createSignal<OwnedRoom | null>(null);
   let rooms_backup_input_ref: HTMLInputElement | undefined;
   let copied_link_timer: ReturnType<typeof setTimeout> | undefined;
+  let mounted = true;
 
   const can_export_rooms = createMemo(() => exportable_room_count() > 0);
 
   onCleanup(() => {
+    mounted = false;
     if (copied_link_timer !== undefined) clearTimeout(copied_link_timer);
   });
 
   function flash_copied(kind: "write" | "read") {
+    if (!mounted) return;
     set_copied_link(kind);
     if (copied_link_timer !== undefined) clearTimeout(copied_link_timer);
-    copied_link_timer = setTimeout(() => set_copied_link(null), 2000);
+    copied_link_timer = setTimeout(() => {
+      if (mounted) set_copied_link(null);
+    }, 2000);
   }
 
   async function refresh_exportable_room_count() {
     try {
-      set_exportable_room_count(await get_exportable_room_count(props.room_registry));
+      const count = await get_exportable_room_count(props.room_registry);
+      if (mounted) set_exportable_room_count(count);
     } catch {
-      set_exportable_room_count(0);
+      if (mounted) set_exportable_room_count(0);
     }
   }
 
@@ -114,11 +120,12 @@ const ShareMenu: Component<Props> = (props) => {
       const project = await repo.get_project(pid);
       const links = await create_room_links(props.room_registry, pid, project?.name ?? "Untitled Project");
       await bind_project_to_room(props.room_registry, pid, links.room_id);
+      if (!mounted) return;
       set_share_links({ room_id: links.room_id, write_url: links.write_url, read_url: links.read_url });
       props.store.set_room_id(links.room_id);
       await refresh_exportable_room_count();
     } finally {
-      set_creating_room(false);
+      if (mounted) set_creating_room(false);
     }
   }
 
@@ -136,6 +143,7 @@ const ShareMenu: Component<Props> = (props) => {
     props.store.set_room_id(undefined);
     set_share_links(null);
     await refresh_exportable_room_count();
+    if (!mounted) return;
     props.on_close();
   }
 
@@ -155,10 +163,12 @@ const ShareMenu: Component<Props> = (props) => {
       props.store.set_room_id(undefined);
       set_share_links(null);
       await refresh_exportable_room_count();
+      if (!mounted) return;
       props.on_close();
       return;
     }
 
+    if (!mounted) return;
     props.on_alert("Delete Failed", result.message);
   }
 
@@ -195,18 +205,21 @@ const ShareMenu: Component<Props> = (props) => {
 
     try {
       const result = await load_rooms_backup_from_file(props.room_registry, file);
+      if (!mounted) return;
       props.on_alert("Rooms Imported", `Imported ${result.imported} room(s). Skipped ${result.skipped}.`);
       await refresh_exportable_room_count();
       const room_id = props.store.room_id();
       if (room_id) {
         try {
-          set_current_owned_room(await get_owned_room(props.room_registry, room_id));
+          const room = await get_owned_room(props.room_registry, room_id);
+          if (mounted) set_current_owned_room(room);
         } catch {
-          set_current_owned_room(null);
+          if (mounted) set_current_owned_room(null);
         }
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to import room backup.";
+      if (!mounted) return;
       props.on_alert("Import Error", message);
     }
 

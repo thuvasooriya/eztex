@@ -252,7 +252,11 @@ export function rename_project_file(doc: Y.Doc, from: string, to: string): boole
 
 export function encode_state_vector_base64(doc: Y.Doc): string {
   const sv = Y.encodeStateVector(doc);
-  const binary = String.fromCharCode(...sv);
+  let binary = "";
+  const chunk_size = 0x8000;
+  for (let i = 0; i < sv.length; i += chunk_size) {
+    binary += String.fromCharCode(...sv.subarray(i, i + chunk_size));
+  }
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
 }
 

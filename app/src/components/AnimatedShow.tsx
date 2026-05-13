@@ -24,6 +24,8 @@ export default function AnimatedShow(props: Props): JSX.Element {
     if (visible) {
       // opening: mount immediately, clear any pending close
       if (cleanup_timer) { clearTimeout(cleanup_timer); cleanup_timer = undefined; }
+      const el = container_ref?.firstElementChild as HTMLElement | undefined;
+      el?.classList.remove(props.exit_class ?? "closing");
       set_mounted(true);
     } else if (mounted()) {
       // closing: add exit class, wait for animation, then unmount

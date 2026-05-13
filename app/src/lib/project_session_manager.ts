@@ -316,8 +316,13 @@ export class ProjectSessionManager {
     const session = this.current_session;
     if (!session) return;
 
+    let flush_error: unknown;
     if (reason !== "delete") {
-      await this.flush();
+      try {
+        await this.flush();
+      } catch (err) {
+        flush_error = err;
+      }
     }
 
     session.broadcast.send_session_closing();
@@ -342,6 +347,8 @@ export class ProjectSessionManager {
     if (reason === "switch") {
       this.on_session_changed?.(null);
     }
+
+    if (flush_error) throw flush_error;
   }
 
   async delete_project(project_id: ProjectId): Promise<void> {

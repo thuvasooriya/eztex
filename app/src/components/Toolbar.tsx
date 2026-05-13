@@ -160,14 +160,14 @@ const Toolbar: Component<Props> = (props) => {
     cleanup_compile_persist = worker_client.on_compile_done(() => {
       const url = worker_client.pdf_url();
       if (!url) return;
+      const pid = props.store.project_id();
+      const fs = folder_sync();
       fetch(url)
         .then((r) => r.arrayBuffer())
         .then((buf) => {
           const bytes = new Uint8Array(buf);
-          const pid = props.store.project_id();
-          if (pid) _repo.save_pdf(bytes, pid).catch(() => {});
-          const fs = folder_sync();
-          if (fs && fs.state().active) {
+          if (pid && props.store.project_id() === pid) _repo.save_pdf(bytes, pid).catch(() => {});
+          if (fs && folder_sync() === fs && fs.state().active) {
             fs.write_pdf(bytes).catch(() => {});
           }
         })

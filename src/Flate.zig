@@ -35,7 +35,7 @@ fn sniff_container(data: []const u8) flate.Container {
     // gzip magic: 1f 8b
     if (data[0] == 0x1f and data[1] == 0x8b) return .gzip;
     // zlib header: CM=8 (lower nibble of CMF), (CMF*256 + FLG) % 31 == 0
-    if (data[0] & 0x0f == 8) {
+    if ((data[0] & 0x0f) == 8) {
         const cmf_flg: u16 = @as(u16, data[0]) << 8 | @as(u16, data[1]);
         if (cmf_flg % 31 == 0) return .zlib;
     }

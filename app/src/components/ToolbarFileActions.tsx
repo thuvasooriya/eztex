@@ -190,7 +190,7 @@ const ToolbarFileActions: Component<Props> = (props) => {
     a.href = url;
     a.download = "project.zip";
     a.click();
-    URL.revokeObjectURL(url);
+    setTimeout(() => URL.revokeObjectURL(url), 0);
   }
 
   async function handle_download_pdf() {

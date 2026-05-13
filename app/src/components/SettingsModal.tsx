@@ -31,6 +31,7 @@ const SettingsModal: Component<Props> = (props) => {
   const [cache_bytes, set_cache_bytes] = createSignal(0);
   const [clearing_cache, set_clearing_cache] = createSignal(false);
   let estimate_opfs_timer: ReturnType<typeof setTimeout> | undefined;
+  let mounted = true;
 
   async function estimate_opfs() {
     try {
@@ -50,9 +51,9 @@ const SettingsModal: Component<Props> = (props) => {
         const cache_dir = await root.getDirectoryHandle("eztex-cache");
         await walk(cache_dir);
       } catch { /* cache dir doesn't exist yet */ }
-      set_cache_bytes(total);
+      if (mounted) set_cache_bytes(total);
     } catch {
-      set_cache_bytes(0);
+      if (mounted) set_cache_bytes(0);
     }
   }
 
@@ -62,7 +63,7 @@ const SettingsModal: Component<Props> = (props) => {
       await props.on_clear_cache();
       await estimate_opfs();
     } finally {
-      set_clearing_cache(false);
+      if (mounted) set_clearing_cache(false);
     }
   }
 
@@ -71,6 +72,7 @@ const SettingsModal: Component<Props> = (props) => {
   });
 
   onCleanup(() => {
+    mounted = false;
     if (estimate_opfs_timer !== undefined) clearTimeout(estimate_opfs_timer);
   });
 

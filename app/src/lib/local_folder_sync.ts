@@ -124,12 +124,17 @@ async function write_file(dir: FileSystemDirectoryHandle, path: string, content:
   }
   const file_handle = await current.getFileHandle(parts[parts.length - 1], { create: true });
   const writable = await file_handle.createWritable();
-  if (content instanceof Uint8Array) {
+  let wrote = false;
+  try {
     await writable.write(content);
-  } else {
-    await writable.write(content);
+    wrote = true;
+  } finally {
+    if (wrote) {
+      await writable.close();
+    } else {
+      await writable.abort().catch(async () => { await writable.close().catch(() => {}); });
+    }
   }
-  await writable.close();
 }
 
 async function delete_file(dir: FileSystemDirectoryHandle, path: string): Promise<void> {
