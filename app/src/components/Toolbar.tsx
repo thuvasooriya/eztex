@@ -508,9 +508,9 @@ const Toolbar: Component<Props> = (props) => {
       </Show>
 
       <div class="toolbar-right">
-        <div class="share-presence" ref={share_presence_ref}>
+        <div class="rtroom-presence" ref={share_presence_ref}>
           <Show when={connected_users().length > 0}>
-            <div class="share-avatar-stack avatar-stack" title={`${connected_users().length} collaborator(s)`}>
+            <div class="rtroom-avatar-stack avatar-stack" title={`${connected_users().length} collaborator(s)`}>
               <For each={connected_users()}>
                 {(user) => (
                   <UserAvatar
@@ -540,7 +540,7 @@ const Toolbar: Component<Props> = (props) => {
         </div>
         <div class="upload-menu-wrapper" ref={share_btn_ref}>
           <button
-            class={`toolbar-toggle share-state-${share_state()}`}
+            class={`toolbar-toggle rtroom-state-${share_state()}`}
             title={share_status_label()}
             aria-label={share_status_label()}
             aria-haspopup="menu"
@@ -568,7 +568,7 @@ const Toolbar: Component<Props> = (props) => {
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a2 2 0 0 1 2 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 0 1 7 7h1a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-1v1a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-1H3a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1h1a7 7 0 0 1 7-7h1V5.73A2 2 0 0 1 12 2z"/><circle cx="9" cy="14" r="1" fill="currentColor"/><circle cx="15" cy="14" r="1" fill="currentColor"/></svg>
             <Show when={agent_review_store().pending().length > 0}>
-              <span class="share-peer-badge agent-pending-badge">{agent_review_store().pending().length}</span>
+              <span class="rtroom-peer-badge agent-pending-badge">{agent_review_store().pending().length}</span>
             </Show>
           </button>
         </Show>

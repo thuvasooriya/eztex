@@ -229,7 +229,7 @@ const ShareMenu: Component<Props> = (props) => {
   return (
     <>
       <AnimatedShow when={props.show}>
-        <div class="upload-dropdown share-dropdown" role="menu" aria-label="Share project">
+        <div class="upload-dropdown rtroom-dropdown" role="menu" aria-label="Share project">
           <Show when={!props.store.room_id()}>
             <button class="upload-dropdown-item" role="menuitem" onClick={() => { void handle_create_room(); }} disabled={creating_room()}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -242,14 +242,14 @@ const ShareMenu: Component<Props> = (props) => {
             <div class="upload-dropdown-divider" role="separator" />
           </Show>
           <Show when={props.store.room_id()}>
-            <div class="share-dropdown-status">
-              <span class="share-status-dot" classList={{ connected: collab.status() === "connected" }} />
-              <span class="share-status-text">
+            <div class="rtroom-status">
+              <span class="rtroom-dot" classList={{ connected: collab.status() === "connected" }} />
+              <span class="rtroom-status-text">
                 {collab.status() === "deleted" ? "Room deleted" : collab.status() === "connected" ? "Connected" : collab.status() === "connecting" ? "Connecting..." : "Disconnected"}
               </span>
-              <span class="share-room-id">Room: {props.store.room_id()}</span>
+              <span class="rtroom-id">Room: {props.store.room_id()}</span>
               <Show when={collab.permission() === "read"}>
-                <span class="share-permission-badge">Read-only</span>
+                <span class="rtroom-permission-badge">Read-only</span>
               </Show>
             </div>
             <div class="upload-dropdown-divider" role="separator" />

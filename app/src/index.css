@@ -3784,35 +3784,35 @@ body {
   white-space: nowrap;
 }
 
-/* === Wave 1: share / collaboration === */
+/* === Wave 1: room collaboration === */
 
-.share-dropdown {
+.rtroom-dropdown {
   min-width: 200px;
   font-family: var(--font-mono);
 }
 
-.share-presence {
+.rtroom-presence {
   position: relative;
   display: flex;
   align-items: center;
   min-height: 30px;
 }
 
-.share-avatar-stack {
+.rtroom-avatar-stack {
   display: inline-flex;
   align-items: center;
   margin-left: 8px;
 }
 
-.share-state-connected.toolbar-toggle {
+.rtroom-state-connected.toolbar-toggle {
   color: var(--green);
 }
 
-.share-state-syncing.toolbar-toggle {
+.rtroom-state-syncing.toolbar-toggle {
   color: var(--yellow);
 }
 
-.share-state-error.toolbar-toggle {
+.rtroom-state-error.toolbar-toggle {
   color: var(--red);
 }
 
@@ -3906,7 +3906,7 @@ body {
   border-color: var(--border-light);
 }
 
-.share-peer-badge {
+.rtroom-peer-badge {
   position: absolute;
   top: -2px;
   right: -2px;
@@ -3919,7 +3919,7 @@ body {
   line-height: 14px;
 }
 
-.share-dropdown-status {
+.rtroom-status {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -3930,25 +3930,25 @@ body {
   color: var(--fg-muted);
 }
 
-.share-room-id {
+.rtroom-id {
   flex-basis: 100%;
   padding-left: 14px;
   font-size: 10px;
   color: var(--fg-dark);
 }
 
-.share-status-dot {
+.rtroom-dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: var(--fg-dark);
 }
 
-.share-status-dot.connected {
+.rtroom-dot.connected {
   background: var(--green);
 }
 
-.share-permission-badge {
+.rtroom-permission-badge {
   font-size: 10px;
   padding: 1px 5px;
   border-radius: var(--radius-sm);
